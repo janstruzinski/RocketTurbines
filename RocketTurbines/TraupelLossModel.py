@@ -1,0 +1,3 @@
+class TraupelLossModel:
+    def __init__(self):
+        ...
