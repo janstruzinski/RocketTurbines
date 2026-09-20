@@ -21,7 +21,8 @@ class Turbine1D:
         # 1. This class utilizes ideal gas model for calculations.
         # 2. Velocity at station 0 is assumed to be negligable.
         # 3. Flow areas at station 1 and 2 are equal.
-        # 4. Constant Euler diameter. 
+        # 4. Constant Euler diameter.
+        # 5. Axial width of the rotor blade row assumed to be equal to chord of the blade.
 
         # Geometry stored in the object properties
         self.D_hub = None   # Hub diameter, m
@@ -32,9 +33,20 @@ class Turbine1D:
         self.R_tip = None   # Tip radius, m
         self.R_mean = None  # Mean radius, m
         self.R_Euler = None # Euler radius, m
-        self.l_blade = None # Blade length, m
-        self.s_ax = None    # Axial distance between stator and rotor, m
-        self.s_r = None     # Radial distance between stator and rotor, m
+        self.l_stator = None  # Stator blade/nozzle radial length, m
+        self.l_rotor = None # Rotor blade radial length, m
+        self.s_ax = None    # Axial distance between stator blade/nozzles and rotor blades, m
+        self.s_r = None     # Radial distance between rotor blades / shroud and the casing, m
+        self.s_ax_shroud = None # Axial distance between rotor shroud and the casing, m
+        self.t_shroud = None # Rotor shroud thickness, m
+        self.h_shroud = None # Rotor blade overlap with the casing (how much above outer stator diameter rotor blades
+        # end and shroud begins when it is used), m
+        self.c_stator = None # Stator chord, m
+        self.p_stator = None # Stator pitch at Euler radius, m
+        self.c_rotor = None # Rotor chord, m
+        self.p_rotor = None # Rotor pitch at Euler radius, m
+        self.t_TE_stator = None # Stator trailing edge thickness at Euler radius, m.
+        self.t_TE_rotor = None # Rotor trailing edge thickness, m.
         self.alfa_1_metal_deg = None  # Metal outlet angle of the stator blades/nozzle, deg
         self.beta_1_metal_deg = None  # Metal inlet angle of the rotor blades, deg
         self.beta_2_metal_deg = None  # Metal outlet angle of the rotor blades, deg
@@ -117,6 +129,9 @@ class Turbine1D:
                                                  "alpha_2_deg": None,  # Absolute flow angle at station 2, degree
                                                  "beta_1_deg": None,  # Relative flow angle at station 1, degree
                                                  "beta_2_deg": None,  # Relative flow angle at station 2, degree
+                                                 "incidence": None, # Incidence angle between flow and rotor blade, rad
+                                                 "incidence_deg": None, # Incidence angle between flow and rotor blade,
+                                                 # deg
                                                  }
         # Analysis results at the design point for the blade row alone if there were no clearance, disk friction or
         # partial admission losses.
@@ -139,6 +154,7 @@ class Turbine1D:
 
     def size_turbine(self, gas, loading_coefficient, flow_coefficient, reaction_isentropic, pressure_ratio, RPM,
                      shaft_power, mdot, T_0, p_0, radial_clearance, no_blades_stator, no_blades_rotor,
+                     chord_over_pitch_stator, chord_over_pitch_rotor,
                      admission_fraction, loss_model, delta_s_estimate=[0, 0, 0]):
         """A method to size the turbine based on given requirements. It changes properties of the object.
 
@@ -155,10 +171,12 @@ class Turbine1D:
             static temperature there due to negligible velocity.
         :param float or integer p_0: Total pressure (Pa) at station 0. It is assumed it is approximately equal to
             static pressure there due to negligible velocity.
-        :param float or integer radial_clearance: Radial clearance of the rotor blade.
-        :param integer no_blades_stator: Number of stator blades/nozzles.
-        :param integer no_blades_rotor: Number of rotor blades.
-        :param float admission_fraction: Admission fraction of the turbine stage.
+        :param float or integer radial_clearance: Radial clearance (m) of the rotor blade.
+        :param integer no_blades_stator: Number of stator (-) blades/nozzles.
+        :param integer no_blades_rotor: Number of rotor (-) blades.
+        :param float or integer chord_over_pitch_stator: Ratio of stator chord to its blade/nozzle pitch (-).
+        :param float or integer chord_over_pitch_rotor: Ratio of rotor chord to its blade pitch (-).
+        :param float admission_fraction: Admission fraction (-) of the turbine stage.
         :param loss_model: LossModel object to be used in the analysis.
         :param list delta_s_estimate: List of initial estimates of the entropy rises (J/kg/K) due to stator, rotor and
          additional rotor losses. Additional rotor losses represent clearance, partial admission or disk friction
@@ -171,7 +189,8 @@ class Turbine1D:
 
         # Calculate angular speed and Euler diameter of the turbine
         omega = RPM * 2 * np.pi / 60
-        D_Euler = 2 * u / omega
+        self.D_Euler = 2 * u / omega
+        self.R_Euler = self.D_Euler / 2
 
         # Put design variables in analysis_results_at_design_point already
         self.analysis_results_at_design_point.update({"gas": gas,
@@ -188,13 +207,20 @@ class Turbine1D:
                                                       "p_0": p_0,
                                                       "loss_model": loss_model.name})
 
+
         # Calculate entropy rise across each blade row. Entropy rise depends on the loss model, which depends on the
         # velocity, and thus entropy as well. The model is thus implicit and requires a numerical solve.
         # First define the function to get entropy residual
         def get_entropy_residual(delta_s):
             return self.calculate_entropy_rise(delta_s[0], delta_s[1], delta_s[2], loss_model)[0]
+        # Get an estimate of entropy rise scales for normalization of the residual. This estimate are the entropy
+        # scales for assumed values equal to zero. This represents the result of loss model as if all input velocities
+        # and flow angles were ideal.
+        entropy_scales = get_entropy_residual([0, 0, 0])
         # Solve for entropy increase
-        entropy_solution = root(get_entropy_residual, delta_s_estimate, method="hybr")
+        entropy_solution = root(get_entropy_residual, delta_s_estimate, method="hybr",
+                                options={"xtol":1e-6, "eps": 1e-12, "maxfev": 1000, "factor": 1,
+                                         "diag": 1/entropy_scales})
         # Raise an error if not converged
         if not entropy_solution.success:
             raise RuntimeError("Numerical solve for the stator and rotor entropy rises did not converge.")
@@ -202,6 +228,7 @@ class Turbine1D:
         delta_s_stator, delta_s_rotor, delta_s_rotor_additional = entropy_solution.x
         _, analysis_results, blade_row_results = \
             self.calculate_entropy_rise(delta_s_stator, delta_s_rotor, delta_s_rotor_additional, loss_model)
+
 
         # Update analysis_results_at_design_point and blade row results
         self.analysis_results_at_design_point = analysis_results
@@ -268,13 +295,16 @@ class Turbine1D:
         residual_at_bracket = [get_M_u_residual(M_u) for M_u in bracket]
         # If it returns opposite signs, use toms748 bracketing scheme
         if residual_at_bracket[0] * residual_at_bracket[1] < 0:
-            M_u_solution = root_scalar(get_M_u_residual, bracket=bracket, method="toms748")
+            M_u_solution = root_scalar(get_M_u_residual, bracket=bracket, method="toms748", options={"k": 2},
+                                       maxiter=1000, xtol=1e-10, rtol=1e-8)
             # If the solution does not converge, attempt Newton scheme
             if not M_u_solution.converged:
-                M_u_solution = root_scalar(get_M_u_residual, x0=M_u_estimate, method="newton")
+                M_u_solution = root_scalar(get_M_u_residual, x0=M_u_estimate, method="newton",
+                                           maxiter=1000, xtol=1e-10, rtol=1e-8)
         # If the bracket does not return opposite results, also use Newton scheme
         else:
-            M_u_solution = root_scalar(get_M_u_residual, x0=M_u_estimate, method="newton")
+            M_u_solution = root_scalar(get_M_u_residual, x0=M_u_estimate, method="newton",
+                                       maxiter=1000, xtol=1e-10, rtol=1e-8)
         # Raise error if the solution is not converged
         if not M_u_solution.converged:
             raise RuntimeError("Numerical solve for M_u did not converge.")
@@ -282,6 +312,7 @@ class Turbine1D:
         M_u = M_u_solution.root
         analysis_results, residual = self.__calculate_thermodynamic_properties(
             M_u, delta_s_stator_total, delta_s_rotor_total, delta_s_rotor_additional)
+
 
         # Flow angles can be now calculated. These are equal to metal angles. These are affected by the total entropy
         # generation in the rotor, as it affects theta_1 through rho_2.
@@ -294,7 +325,10 @@ class Turbine1D:
                                  "alpha_1_deg": alpha_1 * 180 / np.pi,
                                  "alpha_2_deg": alpha_2 * 180 / np.pi,
                                  "beta_1_deg": beta_1 * 180 / np.pi,
-                                 "beta_2_deg": beta_2 * 180 / np.pi})
+                                 "beta_2_deg": beta_2 * 180 / np.pi,
+                                 "incidence": 0,
+                                 "incidence_deg": 0})
+
 
         # Recalculate velocities for the rotor and its calculated angles, but without additional losses like friction,
         # clearance or partial admission, as the loss model may require separate blade row velocities. Such velocity
@@ -322,13 +356,16 @@ class Turbine1D:
         residual_at_branch = [get_theta_2_blade_residual(theta) for theta in branch]
         # Use toms748 if bracket gives opposite results
         if residual_at_branch[0] * residual_at_branch[1] < 0:
-            theta_2_blade_solution = root_scalar(get_theta_2_blade_residual, bracket=branch, method="toms748")
+            theta_2_blade_solution = root_scalar(get_theta_2_blade_residual, bracket=branch, method="toms748",
+                                                 options={"k": 2}, maxiter=1000, xtol=1e-10, rtol=1e-8)
             # If the solution does not converge, attempt Newton scheme with theta_2 as initial estimate
             if not theta_2_blade_solution.converged:
-                theta_2_blade_solution = root_scalar(get_M_u_residual, x0=theta_2, method="newton")
+                theta_2_blade_solution = root_scalar(get_theta_2_blade_residual, x0=theta_2, method="newton".upper(),
+                                                     maxiter=1000, xtol=1e-10, rtol=1e-8)
         # If bracket does not give opposite results, also use Newton scheme with theta_2 as initial estimate
         else:
-            theta_2_blade_solution = root_scalar(get_theta_2_blade_residual, x0=theta_2, method="newton")
+            theta_2_blade_solution = root_scalar(get_theta_2_blade_residual, x0=theta_2, method="newton",
+                                                 maxiter=1000, xtol=1e-10, rtol=1e-8)
         # Raise an error if the solution is not converged
         if not theta_2_blade_solution.converged:
             raise RuntimeError("Numerical solve for theta_2_blade did not converge.")
@@ -337,23 +374,30 @@ class Turbine1D:
         blade_row_results = self.__calculate_blade_row_velocities(alpha_1, beta_1, beta_2, theta_2_blade,
                                                                   analysis_results)
 
+        # Some additional geometry must be calculated for the loss model
+
+
+
         # Call loss model, calculate entropy rise and loss coefficients.
         delta_s_stator_output, delta_s_rotor_output, delta_s_rotor_additional_output =\
             loss_model.calculate_entropy_increase(...)
+
 
         # Calculate residual
         residual = [delta_s_stator_output - delta_s_stator, delta_s_rotor_output - delta_s_rotor,
                     delta_s_rotor_additional_output - delta_s_rotor_additional]
 
+
         # Return all calculated results
         return residual, analysis_results, blade_row_results
 
-    def __calculate_thermodynamic_properties(self, M_u, delta_s_stator, delta_s_rotor, delta_s_rotor_additional):
+    def __calculate_thermodynamic_properties(self, M_u, total_delta_s_stator, total_delta_s_rotor,
+                                             delta_s_rotor_additional):
         """A method to calculate thermodynamic properties, velocities and Mach numbers at turbine stations 1 and 2.
 
         :param float M_u: Mach number based on blade velocity at the Euler radius.
-        :param float delta_s_stator: Total specific entropy rise across the stator (J/kg/K).
-        :param float delta_s_rotor: Total specific entropy rise across the rotor (J/kg/K).
+        :param float total_delta_s_stator: Total specific entropy rise across the stator (J/kg/K).
+        :param float total_delta_s_rotor: Total specific entropy rise across the rotor (J/kg/K).
         :param float delta_s_rotor_additional: Specific entropy rise due to clearance, partial admission and disk
             friction losses in the rotor (J/kg/K).
         :return: Dictionary with turbine analysis results and residual of the rotational Mach number equation,
@@ -372,7 +416,7 @@ class Turbine1D:
         u = self.analysis_results_at_design_point["u"]
 
         # Calculate total entropy increase
-        delta_s = delta_s_rotor + delta_s_stator
+        delta_s = total_delta_s_rotor + total_delta_s_stator
         # Calculate h_0
         h_0 = gas.Cp * T_0
         # Calculate h_0_over_h_2
@@ -385,7 +429,7 @@ class Turbine1D:
         # Calculate h_1_over_h_2_isentropic
         h_1_over_h_2_isentropic = R_h_ideal * (h_t0_over_h_t2 - 1) * h_t2_over_h_2 + 1
         # Calculate h_1_over_h_2
-        h_1_over_h_2 = h_1_over_h_2_isentropic * np.exp(-delta_s_rotor * (gas.gamma - 1) / (gas.R * gas.gamma))
+        h_1_over_h_2 = h_1_over_h_2_isentropic * np.exp(-total_delta_s_rotor * (gas.gamma - 1) / (gas.R * gas.gamma))
         # Calculate nonisentropic degree of reaction, R_h
         R_h = ((h_1_over_h_2 - 1) / (h_t0_over_h_t2 - 1)) / h_1_over_h_2_isentropic
 
@@ -399,7 +443,7 @@ class Turbine1D:
         # Calculate p_1, T_1, rho_1, h_1, h_t1
         h_1 = h_2 * h_1_over_h_2
         T_1 = h_1 / gas.Cp
-        p_1 = p_2 * np.exp(delta_s_rotor / gas.R) * h_1_over_h_2**(gas.gamma / (gas.gamma - 1))
+        p_1 = p_2 * np.exp(total_delta_s_rotor / gas.R) * h_1_over_h_2**(gas.gamma / (gas.gamma - 1))
         rho_1 = gas.calculate_density(p_1, T_1)
         # Energy is conserved between station 0 and station 1, so:
         h_t1 = h_0
@@ -428,7 +472,8 @@ class Turbine1D:
         a_1_ideal = gas.calculate_sound_velocity(T_1_ideal)
         # Real and ideal velocity and Mach number in stationary reference frame:
         v_1 = np.sqrt(2 * (h_0 - h_1))
-        v_1_ideal = np.sqrt(v_1**2 + 2 * ...)
+        delta_h_loss_stator = h_1 - h_1_ideal
+        v_1_ideal = np.sqrt(v_1**2 + 2 * delta_h_loss_stator)
         M_s1 = v_1 / a_1
         M_s1_ideal = v_1_ideal / a_1_ideal
         # Now real values in rotary reference frame:
@@ -453,7 +498,8 @@ class Turbine1D:
         dummy_a2 = dummy_a1 - psi
         dummy_b2 = dummy_a2 - 1
         w_2 = u * np.sqrt(theta_2**2 + dummy_b2**2)
-        w_2_ideal = np.sqrt(w_2**2 + 2 * ...)
+        delta_h_loss_rotor = h_2 - h_2_ideal
+        w_2_ideal = np.sqrt(w_2**2 + 2 * delta_h_loss_rotor)
         M_r2 = w_2 / a_2
         M_r2_ideal = w_2_ideal / a_2_ideal
 
@@ -472,7 +518,7 @@ class Turbine1D:
                                  "h_1": h_1,
                                  "h_t1": h_t1,
                                  "h_1_ideal": h_1_ideal,
-                                 "delta_s_stator": delta_s_stator,
+                                 "delta_s_stator": total_delta_s_stator,
                                  "a_1": a_1,
                                  "a_1_ideal": a_1_ideal,
                                  "v_1": v_1,
@@ -488,7 +534,7 @@ class Turbine1D:
                                  "h_2": h_2,
                                  "h_t2": h_t2,
                                  "h_2_ideal": h_2_ideal,
-                                 "delta_s_rotor": delta_s_rotor - delta_s_rotor_additional,
+                                 "delta_s_rotor": total_delta_s_rotor - delta_s_rotor_additional,
                                  "delta_s_rotor_additional": delta_s_rotor_additional,
                                  "a_2": a_2,
                                  "a_2_ideal": a_2_ideal,
@@ -565,9 +611,11 @@ class Turbine1D:
         delta_s_rotor = analysis_results["delta_s_rotor"]
         # Blade velocity is also the same
         u = analysis_results["u"]
+
         # Based on assumed theta_2_blade, calculate velocities for the blade row alone at station 2.
         w_2_blade = np.sqrt(u**2 * theta_2_blade**2 * (1 + np.tan(beta_2_metal)**2))
         v_2_blade = np.sqrt(u**2 * (theta_2_blade**2 + (1 + theta_2_blade * np.tan(beta_2_metal))**2))
+
         # From the conservation of rotalphy, get enthalpy and temperature at station 2
         h_2_blade = h_1_blade + (w_1_blade**2 - w_2_blade**2) / 2
         T_2_blade = h_2_blade / gas.Cp
@@ -575,15 +623,18 @@ class Turbine1D:
         # than pressure at station 2 for the whole stage.
         p_2_blade = p_1_blade * np.exp((gas.Cp * np.log(T_2_blade / T_1_blade) - delta_s_rotor) / gas.R)
         rho_2_blade = gas.calculate_density(p_2_blade, T_2_blade)
+
         # From continuity, theta_2_blade_output can be calculated. The difference between the assumed and calculated
         # values can be also calculated.
         theta_2_blade_output = rho_1_blade * theta_1_blade / rho_2_blade
         residual = theta_2_blade_output - theta_2_blade
+
         # Some other quantities can be also calculated for the blade row alone.
         alpha_2_blade = np.atan2(1 + theta_2_blade * np.tan(beta_2_metal), theta_2_blade_output)
         psi_blade = theta_1_blade * np.tan(alpha_1_metal) - theta_2_blade_output * np.tan(beta_2_metal) - 1
         R_h_blade = (h_1_blade - h_2_blade) / (h_0 - h_2_blade)
         p_0_over_p_2_blade = p_0 / p_2_blade
+
         # Now pack the results and return them together with residual
         blade_row_results = {"v_1_blade": v_1_blade,
                              "w_1_blade": w_1_blade,
