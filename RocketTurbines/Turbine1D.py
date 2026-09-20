@@ -37,17 +37,21 @@ class Turbine1D:
         self.l_rotor = None # Rotor blade radial length, m
         self.s_ax = None    # Axial distance between stator blade/nozzles and rotor blades, m
         self.s_r = None     # Radial distance between rotor blades / shroud and the casing, m
+        self.shrouded_rotor = None # Boolean whether rotor is shrouded
         self.s_ax_shroud = None # Axial distance between rotor shroud and the casing, m
         self.t_shroud = None # Rotor shroud thickness, m
         self.h_shroud = None # Rotor blade overlap with the casing (how much above outer stator diameter rotor blades
         # end and shroud begins when it is used), m
+        self.h_shroud_over_blade_length = None # Overlap of the blade with the casing over rotor blade length, -
+        self.s_ax_shroud_over_h_shroud = None # Axial distance between shroud and the casing over blade overlap with
+        # it, -
         self.c_stator = None # Stator chord, m
         self.p_stator = None # Stator pitch at Euler radius, m
         self.c_rotor = None # Rotor chord, m
         self.p_rotor = None # Rotor pitch at Euler radius, m
         self.t_TE_stator = None # Stator trailing edge thickness at Euler radius, m.
         self.t_TE_rotor = None # Rotor trailing edge thickness, m.
-        self.alfa_1_metal_deg = None  # Metal outlet angle of the stator blades/nozzle, deg
+        self.alpha_1_metal_deg = None  # Metal outlet angle of the stator blades/nozzle, deg
         self.beta_1_metal_deg = None  # Metal inlet angle of the rotor blades, deg
         self.beta_2_metal_deg = None  # Metal outlet angle of the rotor blades, deg
         self.no_blades_rotor = None # Number of blades in the rotor, -
@@ -154,8 +158,10 @@ class Turbine1D:
 
     def size_turbine(self, gas, loading_coefficient, flow_coefficient, reaction_isentropic, pressure_ratio, RPM,
                      shaft_power, mdot, T_0, p_0, radial_clearance, no_blades_stator, no_blades_rotor,
-                     chord_over_pitch_stator, chord_over_pitch_rotor,
-                     admission_fraction, loss_model, delta_s_estimate=[0, 0, 0]):
+                     chord_over_pitch_stator, t_TE_stator, t_TE_rotor,
+                     loss_model, admission_fraction=1, chord_over_pitch_rotor=2.5, s_ax_over_pitch_rotor=0.35,
+                     delta_s_estimate=[0, 0, 0], shrouded_rotor=False, h_shroud_over_blade_length=0.008,
+                     s_ax_shroud_over_h_shroud=2, t_shroud=None):
         """A method to size the turbine based on given requirements. It changes properties of the object.
 
         :param IdealGas gas: IdealGas object representing working gas of the turbine.
@@ -175,12 +181,24 @@ class Turbine1D:
         :param integer no_blades_stator: Number of stator (-) blades/nozzles.
         :param integer no_blades_rotor: Number of rotor (-) blades.
         :param float or integer chord_over_pitch_stator: Ratio of stator chord to its blade/nozzle pitch (-).
-        :param float or integer chord_over_pitch_rotor: Ratio of rotor chord to its blade pitch (-).
-        :param float admission_fraction: Admission fraction (-) of the turbine stage.
+        :param float or integer chord_over_pitch_rotor: Ratio of rotor chord to its blade pitch (-). By default,
+         equal to 2.5, which is in the range of 2.5-3.3 recommended for supersonic impulse rotor cascades by Traupel
+         in "Thermal Turbomachines".
+        :param float or integer admission_fraction: Admission fraction (-) of the turbine stage. By default, 1.
+        :param float or integer t_TE_stator: Thickness (m) of the trailing edge for the stator.
+        :param float or integer t_TE_rotor: Thickness (m) of the trailing edge for the rotor.
+        :param float or integer s_ax_over_pitch_rotor: Axial distance between stator and rotor over rotor pitch (-).
+         By default, 0.35, which is in the range of 0.3-0.35 given by Traupel.
+        :param boolean shrouded_rotor: Boolean whether the rotor is shrouded. By default, False.
+        :param float h_shroud_over_blade_length: Overlap of the blade with the casing over rotor blade length.
+         By default, 0.008, which is below the value of 0.01 recommended by Traupel.
+        :param float or integer s_ax_shroud_over_h_shroud: Axial distance between shroud and the casing over blade
+         overlap with it. By default, 2, which is above the value of 1.5 recommended by Traupel.
+        :param float or integer t_shroud: Shroud thickness, m. By default, None.
         :param loss_model: LossModel object to be used in the analysis.
         :param list delta_s_estimate: List of initial estimates of the entropy rises (J/kg/K) due to stator, rotor and
          additional rotor losses. Additional rotor losses represent clearance, partial admission or disk friction
-          losses.
+          losses. By default, [0, 0, 0].
         """
 
         # Calculate the blade speed from given requirements
@@ -191,6 +209,25 @@ class Turbine1D:
         omega = RPM * 2 * np.pi / 60
         self.D_Euler = 2 * u / omega
         self.R_Euler = self.D_Euler / 2
+
+        # Calculate available geometry already
+        self.c_stator = self.D_Euler * np.pi / no_blades_stator
+        self.c_rotor = self.D_Euler * np.pi / no_blades_rotor
+        self.p_stator = self.c_stator / chord_over_pitch_stator
+        self.p_rotor = self.c_rotor / chord_over_pitch_rotor
+        self.s_ax = self.p_rotor * s_ax_over_pitch_rotor
+
+        # Assign remaining geometry that is already known
+        self.t_TE_rotor = t_TE_rotor
+        self.t_TE_stator = t_TE_stator
+        self.admission_fraction = admission_fraction
+        self.s_r = radial_clearance
+        self.no_blades_rotor = no_blades_rotor
+        self.no_blades_stator = no_blades_stator
+        self.shrouded_rotor = shrouded_rotor
+        self.t_shroud = t_shroud
+        self.h_shroud_over_blade_length = h_shroud_over_blade_length
+        self.s_ax_shroud_over_h_shroud = s_ax_shroud_over_h_shroud
 
         # Put design variables in analysis_results_at_design_point already
         self.analysis_results_at_design_point.update({"gas": gas,
@@ -235,11 +272,11 @@ class Turbine1D:
         self.blade_row_results_at_design_point = blade_row_results
 
         # Get flow angles, which become metal angles
-        alpha_1_metal = self.analysis_results_at_design_point["alpha_1"]
-        beta_1_metal = self.analysis_results_at_design_point["beta_1"]
-        beta_2_metal = self.analysis_results_at_design_point["alpha_2"]
+        self.alpha_1_metal_deg = self.analysis_results_at_design_point["alpha_1"]
+        self.beta_1_metal_deg = self.analysis_results_at_design_point["beta_1"]
+        self.beta_2_metal_deg = self.analysis_results_at_design_point["alpha_2"]
 
-        # Calculate and assign object properties related to geometry
+        # Calculate and assign remaining properties related to geometry
 
         ...
 
@@ -390,6 +427,38 @@ class Turbine1D:
 
         # Return all calculated results
         return residual, analysis_results, blade_row_results
+
+    def __calculate_geometry(self, analysis_results):
+        """A method to calculate some of the turbine geometry."""
+
+        # First obtain design blade velocity and theta_2.
+        u = analysis_results["u"]
+        theta_2 = analysis_results["theta_2"]
+
+        # Calculate axial velocity.
+        v_ax = theta_2 * u
+
+        # From massflow, density and axial velocity, calculate annulus area.
+        mdot = analysis_results["mdot"]
+        rho_2 = analysis_results["rho_2"]
+        area = mdot / (v_ax * rho_2 * self.admission_fraction)
+
+        # From annulus area, calculate blade length.
+        D_hub = np.sqrt(self.D_Euler**2 - (2 * area / np.pi))
+        D_tip = np.sqrt(self.D_Euler**2 + (2 * area / np.pi))
+        D_mean = (D_hub + D_tip) / 2
+        l_blade = (D_tip - D_hub) / 2
+
+        # If shroud is used, calculate remaining variables. Otherwise, these are None.
+        if self.shrouded_rotor:
+            h_shroud = self.h_shroud_over_blade_length * l_blade
+            s_ax_shroud = self.s_ax_shroud_over_h_shroud * h_shroud
+        else:
+            h_shroud = None
+            s_ax_shroud = None
+
+        # Return the results
+        return D_hub, D_tip, D_mean, l_blade, h_shroud, s_ax_shroud
 
     def __calculate_thermodynamic_properties(self, M_u, total_delta_s_stator, total_delta_s_rotor,
                                              delta_s_rotor_additional):
