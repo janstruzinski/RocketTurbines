@@ -277,8 +277,12 @@ class Turbine1D:
         self.beta_2_metal_deg = self.analysis_results_at_design_point["alpha_2"]
 
         # Calculate and assign remaining properties related to geometry
-
-        ...
+        self.D_hub, self.D_tip, self.D_mean, self.l_rotor, self.h_shroud, self.s_ax_shroud =\
+            self.__calculate_geometry(self.analysis_results_at_design_point)
+        self.l_stator = self.l_rotor
+        self.R_mean = self.D_mean / 2
+        self.R_hub = self.D_hub / 2
+        self.R_tip = self.D_tip / 2
 
     def calculate_entropy_rise(self, delta_s_stator, delta_s_rotor, delta_s_rotor_additional, loss_model):
         """A method to calculate residuals between the assumed entropy rises and the entropy rises returned by the loss
@@ -411,13 +415,46 @@ class Turbine1D:
         blade_row_results = self.__calculate_blade_row_velocities(alpha_1, beta_1, beta_2, theta_2_blade,
                                                                   analysis_results)
 
-        # Some additional geometry must be calculated for the loss model
+        # Some additional geometry must be calculated for the loss model. Pack to dictionary to pass to the loss model.
+        D_hub, D_tip, D_mean, l_rotor, h_shroud, s_ax_shroud = self.__calculate_geometry(analysis_results)
+        l_stator = l_rotor
+        turbine_geometry = {"D_hub": D_hub,  # m
+                            "D_tip": D_tip,  # m
+                            "D_mean": D_mean,  # m
+                            "D_Euler": self.D_Euler,  # m
+                            "R_hub": D_hub / 2,  # m
+                            "R_tip": D_tip / 2,  # m
+                            "R_mean": D_mean / 2,  # m
+                            "R_Euler": self.R_Euler,  # m
+                            "l_stator": l_stator,  # m
+                            "l_rotor": l_rotor,  # m
+                            "s_ax": self.s_ax,  # m
+                            "s_r": self.s_r,  # m
+                            "shrouded_rotor": self.shrouded_rotor,  # -
+                            "s_ax_shroud": s_ax_shroud,  # m
+                            "t_shroud": self.t_shroud,  # m
+                            "h_shroud": h_shroud,  # m
+                            "h_shroud_over_blade_length": self.h_shroud_over_blade_length,  # -
+                            "s_ax_shroud_over_h_shroud": self.s_ax_shroud_over_h_shroud,  # -
+                            "c_stator": self.c_stator,  # m
+                            "p_stator": self.p_stator,  # m
+                            "c_rotor": self.c_rotor,  # m
+                            "p_rotor": self.p_rotor,  # m
+                            "t_TE_stator": self.t_TE_stator,  # m
+                            "t_TE_rotor": self.t_TE_rotor,  # m
+                            "alpha_1_metal_deg": alpha_1 * 180 / np.pi,  # deg
+                            "beta_1_metal_deg": beta_1 * 180 / np.pi,  # deg
+                            "beta_2_metal_deg": beta_2 * 180 / np.pi,  # deg
+                            "no_blades_rotor": self.no_blades_rotor,  # -
+                            "no_blades_stator": self.no_blades_stator,  # -
+                            "admission_fraction": self.admission_fraction}  # -
+
 
 
 
         # Call loss model, calculate entropy rise and loss coefficients.
         delta_s_stator_output, delta_s_rotor_output, delta_s_rotor_additional_output =\
-            loss_model.calculate_entropy_increase(...)
+            loss_model.calculate_entropy_increase(analysis_results, turbine_geometry)
 
 
         # Calculate residual
@@ -722,10 +759,10 @@ class Turbine1D:
         return blade_row_results, residual
 
 
-    def assign_geometry(self):
-        #TODO Create a function to manually assign all geometry
-        ...
-
-    def analyse_turbine(self):
-        # TODO Create a function to analyze the turbine off-desing
-        ...
+    # def assign_geometry(self):
+    #     #TODO Create a function to manually assign all geometry
+    #     ...
+    #
+    # def analyse_turbine(self):
+    #     # TODO Create a function to analyze the turbine off-desing
+    #     ...
