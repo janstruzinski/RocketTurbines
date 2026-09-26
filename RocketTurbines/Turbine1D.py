@@ -45,9 +45,11 @@ class Turbine1D:
         self.h_shroud_over_blade_length = None # Overlap of the blade with the casing over rotor blade length, -
         self.s_ax_shroud_over_h_shroud = None # Axial distance between shroud and the casing over blade overlap with
         # it, -
-        self.c_stator = None # Stator chord, m
+        self.c_stator = None # Stator chord, m. Assumed to be equal to stator blade width / length of projection over
+        # meridional axis.
         self.p_stator = None # Stator pitch at Euler radius, m
-        self.c_rotor = None # Rotor chord, m
+        self.c_rotor = None # Rotor chord, m. Assumed to be equal to rotor blade width / length of projection over
+        # meridional axis
         self.p_rotor = None # Rotor pitch at Euler radius, m
         self.t_TE_stator = None # Stator trailing edge thickness at Euler radius, m.
         self.t_TE_rotor = None # Rotor trailing edge thickness, m.
@@ -185,8 +187,10 @@ class Turbine1D:
          equal to 2.5, which is in the range of 2.5-3.3 recommended for supersonic impulse rotor cascades by Traupel
          in "Thermal Turbomachines".
         :param float or integer admission_fraction: Admission fraction (-) of the turbine stage. By default, 1.
-        :param float or integer t_TE_stator: Thickness (m) of the trailing edge for the stator.
-        :param float or integer t_TE_rotor: Thickness (m) of the trailing edge for the rotor.
+        :param float or integer t_TE_stator: Tangential thickness (m) of the trailing edge for the stator.
+         In other words, length of the projection of the thickness on the tangential axis.
+        :param float or integer t_TE_rotor: Tangential thickness (m) of the trailing edge for the rotor.
+         In other words, length of the projection of the thickness on the tangential axis.
         :param float or integer s_ax_over_pitch_rotor: Axial distance between stator and rotor over rotor pitch (-).
          By default, 0.35, which is in the range of 0.3-0.35 given by Traupel.
         :param boolean shrouded_rotor: Boolean whether the rotor is shrouded. By default, False.
@@ -392,7 +396,7 @@ class Turbine1D:
         # Define residual function to solve
         def get_theta_2_blade_residual(theta_2_blade):
             _, residual = self.__calculate_blade_row_velocities(
-                alpha_1, beta_1, beta_2, theta_2_blade, analysis_results)
+                alpha_1, beta_2, theta_2_blade, analysis_results)
             return residual
         residual_at_branch = [get_theta_2_blade_residual(theta) for theta in branch]
         # Use toms748 if bracket gives opposite results
@@ -412,7 +416,7 @@ class Turbine1D:
             raise RuntimeError("Numerical solve for theta_2_blade did not converge.")
         # Obtain remaining results
         theta_2_blade = theta_2_blade_solution.root
-        blade_row_results = self.__calculate_blade_row_velocities(alpha_1, beta_1, beta_2, theta_2_blade,
+        blade_row_results = self.__calculate_blade_row_velocities(alpha_1, beta_2, theta_2_blade,
                                                                   analysis_results)
 
         # Some additional geometry must be calculated for the loss model. Pack to dictionary to pass to the loss model.
@@ -685,13 +689,12 @@ class Turbine1D:
         # Return all flow angles
         return alpha_1, beta_1, alpha_2, beta_2
 
-    def __calculate_blade_row_velocities(self, alpha_1_metal, beta_1_metal, beta_2_metal, theta_2_blade,
+    def __calculate_blade_row_velocities(self, alpha_1_metal, beta_2_metal, theta_2_blade,
                                          analysis_results):
         """A method to calculate velocities and thermodynamic properties for the blade row alone, without additional
         rotor losses such as clearance, partial admission or disk friction losses.
 
         :param float alpha_1_metal: Outlet metal angle of the stator blades/nozzles (rad).
-        :param float beta_1_metal: Inlet metal angle of the rotor blades (rad).
         :param float beta_2_metal: Outlet metal angle of the rotor blades (rad).
         :param float theta_2_blade: Assumed flow coefficient (-) at station 2 for the blade row alone.
         :param dict analysis_results: Dictionary with turbine analysis results required to calculate the blade row
@@ -736,8 +739,8 @@ class Turbine1D:
         residual = theta_2_blade_output - theta_2_blade
 
         # Some other quantities can be also calculated for the blade row alone.
-        alpha_2_blade = np.atan2(1 + theta_2_blade * np.tan(beta_2_metal), theta_2_blade_output)
-        psi_blade = theta_1_blade * np.tan(alpha_1_metal) - theta_2_blade_output * np.tan(beta_2_metal) - 1
+        alpha_2_blade = np.atan2(1 + theta_2_blade * np.tan(beta_2_metal), theta_2_blade)
+        psi_blade = theta_1_blade * np.tan(alpha_1_metal) - theta_2_blade * np.tan(beta_2_metal) - 1
         R_h_blade = (h_1_blade - h_2_blade) / (h_0 - h_2_blade)
         p_0_over_p_2_blade = p_0 / p_2_blade
 
