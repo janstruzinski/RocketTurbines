@@ -380,6 +380,9 @@ class TraupelLossModel(LossModel):
         self.interpolator_z_average = lambda incidence_angle: (
             self.interpolator_z_a(incidence_angle) + self.interpolator_z_b(incidence_angle)) / 2
 
+        # HALF LABIRYNTH FLOW FUNCTION
+        # Omega^2 factor data
+
     def __interpolate_data(self, *coordinates, bounds, interpolator, coefficient_name):
         """Interpolate one point and apply the selected rule outside the digitized graph."""
 
@@ -423,7 +426,7 @@ class TraupelLossModel(LossModel):
         """A method to calculate the Mach-number correction factor chi_M for the configured blade row.
 
         :param float outlet_Mach_number: Blade-row Mach number (-).
-        :param str blade_row: Blade row to evaluate, either "stator" or "rotor". Its curve is selected by the
+        :param str blade_row: Blade row to evaluate, either "stator" or "rotor". Its chi_M curve is selected by the
             stator or rotor setting given when the object was initialized.
         :return: Mach-number correction factor chi_M (-).
         :rtype: float
@@ -507,16 +510,18 @@ class TraupelLossModel(LossModel):
 
         return self.interpolator_c_f(Re, relative_roughness)
 
-    def calculate_K_sigma(self, sine_angle, velocity_change_ratio, x):
+    def calculate_K_sigma(self, outlet_angle, velocity_change_ratio, normalized_clearance):
         """A method to calculate the clearance-loss factor K_sigma.
 
-        :param float sine_angle: Sine of the blade-row outlet angle (-).
+        :param float outlet_angle: Blade-row outlet angle measured from the vertical direction (rad).
         :param float velocity_change_ratio: Circumferential-velocity change over normal velocity (-).
-        :param float x: Clearance ratio delta/s minus 0.002 (-).
+        :param float normalized_clearance: Clearance ratio delta/s minus 0.002 (-).
         :return: Clearance-loss factor K_sigma (-).
         :rtype: float
         """
 
+        # Figure 8.4.16 uses the sine of Traupel's outlet angle as its first coordinate.
+        sine_angle = np.sin(outlet_angle)
         return self.interpolator_K_sigma(sine_angle, velocity_change_ratio, x)
 
     def calculate_C_M(self, Re):
@@ -543,28 +548,93 @@ class TraupelLossModel(LossModel):
                          "high": self.interpolator_z_a}
         return interpolators[self.incidence_loss](incidence_angle)
 
-    def calculate_entropy_increase(self, analysis_results, turbine_geometry):
-        ...
-
     def calculate_blade_row_aerodynamic_loss(self, blade_row, inlet_angle, outlet_angle, t_TE_over_pitch,
                                              relative_roughness, blade_length_over_mean_diameter,
-                                             chord_over_blade_length, chord_over_pitch, outlet_Mach_number, Reynolds_number,
-                                             speed_parameter, blade_velocity_ratio):
-        # Aerodynamic efficiency of the stage has the form of eta = 1 - (zeta_p + zeta_f + zeta_rest + zeta_z)
-        # First calculate zeta_p = chi_R * chi_M * zeta_p0 + zeta_h + zeta_C
+                                             chord_over_blade_length, chord_over_pitch, outlet_Mach_number,
+                                             Reynolds_number, speed_parameter, blade_velocity_ratio,
+                                             axial_clearance_over_blade_length, shrouded_row=False,
+                                             shroud_axial_clearance_over_blade_length=None):
+        # Aerodynamic loss coefficient of the blade row has the form of zeta = zeta_p + zeta_f + zeta_rest
+        # First calculate profiles loss, zeta_p = chi_R * chi_M * zeta_p0 + zeta_h + zeta_C
         # Calculate chi_R
         chi_R = self.calculate_chi_R(Reynolds_number, relative_roughness)
         # Calculate chi_M
         chi_M = self.calculate_chi_M(outlet_Mach_number, blade_row)
         # Calculate zeta_p0
-        zeta_p0 = self.calculate_zeta_p0(inlet_angle, outlet_angle)
+        zeta_p0 = self.calculate_zeta_p0(inlet_angle * 180 / np.pi, outlet_angle * 180 / np.pi)
+        corrected_zeta_p0 = chi_R * chi_M * zeta_p0
+        # Calculate zeta_h
+        zeta_h = self.calculate_zeta_h(t_TE_over_pitch/corrected_zeta_p0, t_TE_over_pitch, Reynolds_number)
+        # Calcuale zeta C
+        zeta_C = (t_TE_over_pitch / (1 - t_TE_over_pitch))**2 * np.sin(outlet_angle)**2
+        # Sum individual coefficients
+        zeta_p = chi_R * chi_M * zeta_p0 + zeta_h + zeta_C
 
+        # Calculate fanning loss coefficients
+        zeta_f = self.calculate_zeta_f(blade_length_over_mean_diameter, speed_parameter)
 
+        # Calculate approximation of the zeta_p over the whole blade
+        integrated_zeta_p = zeta_p + zeta_f
 
+        # Calculate the residual loss due to endwall effects. First calculate critical length ratio.
+        if blade_row == "stator":
+            coefficient = 7
+        else:
+            coefficient = 10 if self.rotor in ("impulse_low_M", "impulse_high_M") else 7
+        critical_blade_length_to_pitch_ratio = np.sqrt(integrated_zeta_p) * coefficient
+        blade_length_to_pitch_ratio = chord_over_pitch / chord_over_blade_length
+        # The residual loss calculations depend on if the blade_length_to_pitch_ratio is above or below the critical
+        # ratio. However, both branches require zeta_a.
+        if shrouded_row:
+            zeta_a = (0.04 / np.sin(outlet_angle)) * shroud_axial_clearance_over_blade_length
+        else:
+            # If the blade row is the rotor, zeta_a is zero, because there is no blade row afterwards
+            if blade_row == "rotor": zeta_a = 0
+            # If the blade row is the stator, calculate zeta_a
+            elif blade_row == "stator":
+                c_f = self.calculate_c_f(Reynolds_number, relative_roughness)
+                zeta_a = (c_f / np.sin(inlet_angle)) * (1 + blade_length_over_mean_diameter) * \
+                         axial_clearance_over_blade_length
+        # Also calculate F factor which is needed for both branches
+        flow_angle_change = 180 - (inlet_angle + outlet_angle) * 180 / np.pi
+        F_coefficient = self.calculate_F(flow_angle_change, blade_velocity_ratio)
+        # Calculate the residual loss if length ratio is above the critical value
+        if blade_length_to_pitch_ratio >= critical_blade_length_to_pitch_ratio:
+            zeta_rest = zeta_a + (zeta_p / zeta_p0) * F_coefficient / blade_length_to_pitch_ratio
+        # Calculate the residual loss if length ratio is below the critical value
+        else:
+            # Choose A coefficient. According to Traupel, it has avalue of 0.02 for strongly accelerating cascades,
+            # or 0.035 for impulse rotors.
+            if blade_row == "stator":
+                A_coefficient = 0.02
+            else:
+                A_coefficient = 0.035 if self.rotor in ("impulse_low_M", "impulse_high_M") else 0.02
+            zeta_rest = zeta_a + (zeta_p / zeta_p0) * F_coefficient / critical_blade_length_to_pitch_ratio \
+                        + A_coefficient * chord_over_pitch * \
+                        (1 / blade_length_to_pitch_ratio - 1 / critical_blade_length_to_pitch_ratio)
+
+        # Calculate and return total aerodynamic loss coefficient
+        zeta_total_aerodynamic = integrated_zeta_p + zeta_rest
+        return zeta_total_aerodynamic
+
+    def calculate_shrouded_rotor_clearance_loss(self, tip_diameter, seal_clearance, teeth_number):
         ...
 
-    def calculate_clearance_loss(self):
-        ...
+    def calculate_unshrouded_rotor_clearance_loss(self, normalized_inlet_velocity,
+                                                  isentropic_loading_coefficient, clearance_over_blade_length,
+                                                  chord_over_blade_length, tip_over_mean_diameter, isentropic_reaction,
+                                                  outlet_angle, circumferential_velocity_change, axial_velocity):
+        # First calculate normalized clerance and K_sigma
+        normalized_clearance = max(clearance_over_blade_length / chord_over_blade_length - 0.002, 0)
+        velocity_change_ratio = circumferential_velocity_change / axial_velocity
+        K_sigma = self.calculate_K_sigma(outlet_angle, velocity_change_ratio, normalized_clearance)
+
+        # Now calculate zeta_clearance_rotor
+        zeta_clearance_rotor = \
+            K_sigma * (2 * isentropic_reaction * isentropic_loading_coefficient + normalized_inlet_velocity**2) * \
+            max(clearance_over_blade_length - 0.002 * chord_over_blade_length, 0) * tip_over_mean_diameter / \
+            (2 * isentropic_loading_coefficient)
+        return max(zeta_clearance_rotor, 0)
 
     def calculate_partial_admission_loss(self):
         ...
@@ -573,4 +643,7 @@ class TraupelLossModel(LossModel):
         ...
 
     def calculate_incidence_losses(self):
+        ...
+
+    def calculate_entropy_increase(self, analysis_results, turbine_geometry):
         ...
