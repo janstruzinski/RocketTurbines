@@ -381,7 +381,136 @@ class TraupelLossModel(LossModel):
             self.interpolator_z_a(incidence_angle) + self.interpolator_z_b(incidence_angle)) / 2
 
         # HALF LABIRYNTH FLOW FUNCTION
-        # Omega^2 factor data
+        # Uncapped Phi^2 data from the manually extended Figure 10.4.2, sampled down to p_2/p_1 = 0.3.
+        # The upper plot selects a common abscissa from p_2/p_1 and the tooth-count curve; the lower plot gives Phi^2.
+        p_2_over_p_1 = np.array([0.3, 0.4, 0.5, 0.525, 0.55, 0.6, 0.7, 0.8, 0.9, 1.0])
+        teeth_spacing_over_seal_clearance = np.array([5, 6, 7, 8, 10, 13])
+        teeth_number = np.array([4, 5, 6, 8, 10, 12, 15])
+        # Each pressure-ratio slice has one row per spacing curve and one column per tooth-count curve.
+        # These values follow the curves beyond g; calculate_phi applies the physical flow limit separately.
+        phi_squared = np.array([
+            # p_2_over_p_1 = 0.3
+            [
+                [0.2914, 0.2551, 0.2337, 0.1982, 0.1721, 0.1508, 0.1262],  # teeth_spacing_over_seal_clearance = 5
+                [0.2706, 0.2380, 0.2170, 0.1823, 0.1571, 0.1374, 0.1146],  # teeth_spacing_over_seal_clearance = 6
+                [0.2552, 0.2224, 0.2019, 0.1681, 0.1440, 0.1255, 0.1041],  # teeth_spacing_over_seal_clearance = 7
+                [0.2458, 0.2121, 0.1910, 0.1579, 0.1340, 0.1163, 0.0959],  # teeth_spacing_over_seal_clearance = 8
+                [0.2206, 0.1884, 0.1694, 0.1388, 0.1174, 0.1016, 0.0838],  # teeth_spacing_over_seal_clearance = 10
+                [0.2007, 0.1721, 0.1536, 0.1243, 0.1046, 0.0895, 0.0732],  # teeth_spacing_over_seal_clearance = 13
+            ],
+            # p_2_over_p_1 = 0.4
+            [
+                [0.2778, 0.2459, 0.2254, 0.1917, 0.1672, 0.1430, 0.1215],  # teeth_spacing_over_seal_clearance = 5
+                [0.2589, 0.2289, 0.2090, 0.1762, 0.1525, 0.1301, 0.1100],  # teeth_spacing_over_seal_clearance = 6
+                [0.2436, 0.2136, 0.1940, 0.1621, 0.1398, 0.1187, 0.0999],  # teeth_spacing_over_seal_clearance = 7
+                [0.2334, 0.2030, 0.1831, 0.1519, 0.1299, 0.1099, 0.0922],  # teeth_spacing_over_seal_clearance = 8
+                [0.2087, 0.1801, 0.1623, 0.1336, 0.1138, 0.0961, 0.0805],  # teeth_spacing_over_seal_clearance = 10
+                [0.1909, 0.1640, 0.1468, 0.1193, 0.1012, 0.0845, 0.0702],  # teeth_spacing_over_seal_clearance = 13
+            ],
+            # p_2_over_p_1 = 0.5
+            [
+                [0.2641, 0.2350, 0.2115, 0.1782, 0.1541, 0.1305, 0.1105],  # teeth_spacing_over_seal_clearance = 5
+                [0.2466, 0.2182, 0.1954, 0.1632, 0.1402, 0.1187, 0.0995],  # teeth_spacing_over_seal_clearance = 6
+                [0.2311, 0.2032, 0.1805, 0.1497, 0.1284, 0.1079, 0.0905],  # teeth_spacing_over_seal_clearance = 7
+                [0.2206, 0.1922, 0.1699, 0.1399, 0.1189, 0.0993, 0.0834],  # teeth_spacing_over_seal_clearance = 8
+                [0.1964, 0.1704, 0.1504, 0.1227, 0.1040, 0.0869, 0.0725],  # teeth_spacing_over_seal_clearance = 10
+                [0.1798, 0.1546, 0.1349, 0.1092, 0.0919, 0.0760, 0.0633],  # teeth_spacing_over_seal_clearance = 13
+            ],
+            # p_2_over_p_1 = 0.525
+            [
+                [0.2595, 0.2302, 0.2066, 0.1737, 0.1493, 0.1266, 0.1070],  # teeth_spacing_over_seal_clearance = 5
+                [0.2423, 0.2136, 0.1906, 0.1587, 0.1361, 0.1149, 0.0963],  # teeth_spacing_over_seal_clearance = 6
+                [0.2266, 0.1985, 0.1759, 0.1455, 0.1242, 0.1044, 0.0876],  # teeth_spacing_over_seal_clearance = 7
+                [0.2163, 0.1877, 0.1655, 0.1355, 0.1151, 0.0962, 0.0805],  # teeth_spacing_over_seal_clearance = 8
+                [0.1923, 0.1664, 0.1461, 0.1188, 0.1005, 0.0841, 0.0700],  # teeth_spacing_over_seal_clearance = 10
+                [0.1758, 0.1507, 0.1310, 0.1058, 0.0885, 0.0735, 0.0612],  # teeth_spacing_over_seal_clearance = 13
+            ],
+            # p_2_over_p_1 = 0.55
+            [
+                [0.2538, 0.2242, 0.2006, 0.1684, 0.1442, 0.1225, 0.1032],  # teeth_spacing_over_seal_clearance = 5
+                [0.2367, 0.2078, 0.1847, 0.1536, 0.1312, 0.1110, 0.0929],  # teeth_spacing_over_seal_clearance = 6
+                [0.2211, 0.1928, 0.1703, 0.1407, 0.1197, 0.1008, 0.0844],  # teeth_spacing_over_seal_clearance = 7
+                [0.2109, 0.1819, 0.1600, 0.1309, 0.1108, 0.0929, 0.0775],  # teeth_spacing_over_seal_clearance = 8
+                [0.1874, 0.1612, 0.1409, 0.1147, 0.0969, 0.0812, 0.0674],  # teeth_spacing_over_seal_clearance = 10
+                [0.1710, 0.1458, 0.1262, 0.1020, 0.0852, 0.0709, 0.0589],  # teeth_spacing_over_seal_clearance = 13
+            ],
+            # p_2_over_p_1 = 0.6
+            [
+                [0.2400, 0.2092, 0.1865, 0.1561, 0.1325, 0.1131, 0.0946],  # teeth_spacing_over_seal_clearance = 5
+                [0.2231, 0.1931, 0.1711, 0.1419, 0.1204, 0.1020, 0.0851],  # teeth_spacing_over_seal_clearance = 6
+                [0.2081, 0.1783, 0.1572, 0.1300, 0.1095, 0.0926, 0.0771],  # teeth_spacing_over_seal_clearance = 7
+                [0.1971, 0.1678, 0.1472, 0.1204, 0.1010, 0.0855, 0.0704],  # teeth_spacing_over_seal_clearance = 8
+                [0.1747, 0.1483, 0.1294, 0.1054, 0.0885, 0.0745, 0.0614],  # teeth_spacing_over_seal_clearance = 10
+                [0.1589, 0.1330, 0.1153, 0.0932, 0.0775, 0.0649, 0.0536],  # teeth_spacing_over_seal_clearance = 13
+            ],
+            # p_2_over_p_1 = 0.7
+            [
+                [0.1994, 0.1716, 0.1510, 0.1254, 0.1053, 0.0904, 0.0747],  # teeth_spacing_over_seal_clearance = 5
+                [0.1836, 0.1567, 0.1377, 0.1138, 0.0948, 0.0809, 0.0671],  # teeth_spacing_over_seal_clearance = 6
+                [0.1693, 0.1436, 0.1257, 0.1034, 0.0862, 0.0735, 0.0605],  # teeth_spacing_over_seal_clearance = 7
+                [0.1590, 0.1336, 0.1165, 0.0953, 0.0792, 0.0671, 0.0550],  # teeth_spacing_over_seal_clearance = 8
+                [0.1399, 0.1171, 0.1017, 0.0833, 0.0689, 0.0584, 0.0476],  # teeth_spacing_over_seal_clearance = 10
+                [0.1253, 0.1043, 0.0896, 0.0728, 0.0602, 0.0508, 0.0413],  # teeth_spacing_over_seal_clearance = 13
+            ],
+            # p_2_over_p_1 = 0.8
+            [
+                [0.1436, 0.1223, 0.1071, 0.0879, 0.0729, 0.0623, 0.0510],  # teeth_spacing_over_seal_clearance = 5
+                [0.1307, 0.1108, 0.0964, 0.0786, 0.0654, 0.0559, 0.0458],  # teeth_spacing_over_seal_clearance = 6
+                [0.1192, 0.1006, 0.0877, 0.0714, 0.0589, 0.0504, 0.0412],  # teeth_spacing_over_seal_clearance = 7
+                [0.1104, 0.0928, 0.0806, 0.0652, 0.0536, 0.0460, 0.0378],  # teeth_spacing_over_seal_clearance = 8
+                [0.0965, 0.0810, 0.0701, 0.0566, 0.0463, 0.0398, 0.0324],  # teeth_spacing_over_seal_clearance = 10
+                [0.0849, 0.0708, 0.0613, 0.0493, 0.0402, 0.0343, 0.0278],  # teeth_spacing_over_seal_clearance = 13
+            ],
+            # p_2_over_p_1 = 0.9
+            [
+                [0.0754, 0.0651, 0.0560, 0.0435, 0.0371, 0.0312, 0.0255],  # teeth_spacing_over_seal_clearance = 5
+                [0.0676, 0.0584, 0.0503, 0.0388, 0.0329, 0.0277, 0.0232],  # teeth_spacing_over_seal_clearance = 6
+                [0.0610, 0.0526, 0.0453, 0.0351, 0.0298, 0.0252, 0.0206],  # teeth_spacing_over_seal_clearance = 7
+                [0.0555, 0.0480, 0.0414, 0.0319, 0.0269, 0.0225, 0.0184],  # teeth_spacing_over_seal_clearance = 8
+                [0.0480, 0.0416, 0.0356, 0.0275, 0.0232, 0.0195, 0.0159],  # teeth_spacing_over_seal_clearance = 10
+                [0.0417, 0.0359, 0.0307, 0.0234, 0.0196, 0.0165, 0.0137],  # teeth_spacing_over_seal_clearance = 13
+            ],
+            # p_2_over_p_1 = 1.0
+            [
+                [0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000],  # teeth_spacing_over_seal_clearance = 5
+                [0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000],  # teeth_spacing_over_seal_clearance = 6
+                [0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000],  # teeth_spacing_over_seal_clearance = 7
+                [0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000],  # teeth_spacing_over_seal_clearance = 8
+                [0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000],  # teeth_spacing_over_seal_clearance = 10
+                [0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000],  # teeth_spacing_over_seal_clearance = 13
+            ],
+        ])
+        interpolator_phi_squared = RegularGridInterpolator(
+            (p_2_over_p_1, teeth_spacing_over_seal_clearance, teeth_number), phi_squared,
+            method=interpolation_method, bounds_error=False, fill_value=None)
+        phi_squared_bounds = ((p_2_over_p_1[0], p_2_over_p_1[-1]),
+                              (teeth_spacing_over_seal_clearance[0], teeth_spacing_over_seal_clearance[-1]),
+                              (teeth_number[0], teeth_number[-1]))
+        self.interpolator_phi_squared = lambda pressure_ratio, spacing_ratio, tooth_count: self.__interpolate_data(
+            pressure_ratio, spacing_ratio, tooth_count, bounds=phi_squared_bounds,
+            interpolator=interpolator_phi_squared, coefficient_name="phi_squared")
+
+        # Solid g curves in the upper plot determine critical pressure ratios. Below these pressure ratios, phi does
+        # not increase. Only teeth_spacing_over_seal_clearance = 5, 7, 10 and 13 have g curves.
+        # Critical pressure ratio interpolator supplies intermediate ratios.
+        teeth_spacing_over_seal_clearance_g = np.array([5, 7, 10, 13])
+        # Rows follow the four g curves and columns follow teeth_number, as in the Phi^2 table.
+        critical_pressure_ratio = np.array([
+            [0.5626, 0.5348, 0.5142, 0.4824, 0.4562, 0.4244, 0.3960],  # teeth_spacing_over_seal_clearance = 5
+            [0.5338, 0.5084, 0.4863, 0.4525, 0.4260, 0.3953, 0.3646],  # teeth_spacing_over_seal_clearance = 7
+            [0.5104, 0.4823, 0.4588, 0.4229, 0.3951, 0.3637, 0.3300],  # teeth_spacing_over_seal_clearance = 10
+            [0.4954, 0.4665, 0.4429, 0.4054, 0.3750, 0.3453, 0.3093],  # teeth_spacing_over_seal_clearance = 13
+        ])
+        # Transpose the table to accept tooth count first and spacing ratio second.
+        interpolator_critical_pressure_ratio = RegularGridInterpolator(
+            (teeth_number, teeth_spacing_over_seal_clearance_g), critical_pressure_ratio.T,
+            method=interpolation_method, bounds_error=False, fill_value=None)
+        critical_pressure_ratio_bounds = ((teeth_number[0], teeth_number[-1]),
+                                          (teeth_spacing_over_seal_clearance_g[0],
+                                           teeth_spacing_over_seal_clearance_g[-1]))
+        self.interpolator_critical_pressure_ratio = lambda tooth_count, spacing_ratio: self.__interpolate_data(
+            tooth_count, spacing_ratio, bounds=critical_pressure_ratio_bounds,
+            interpolator=interpolator_critical_pressure_ratio, coefficient_name="critical_pressure_ratio")
 
     def __interpolate_data(self, *coordinates, bounds, interpolator, coefficient_name):
         """Interpolate one point and apply the selected rule outside the digitized graph."""
@@ -522,7 +651,7 @@ class TraupelLossModel(LossModel):
 
         # Figure 8.4.16 uses the sine of Traupel's outlet angle as its first coordinate.
         sine_angle = np.sin(outlet_angle)
-        return self.interpolator_K_sigma(sine_angle, velocity_change_ratio, x)
+        return self.interpolator_K_sigma(sine_angle, velocity_change_ratio, normalized_clearance)
 
     def calculate_C_M(self, Re):
         """A method to calculate the disk-friction coefficient C_M.
@@ -547,6 +676,26 @@ class TraupelLossModel(LossModel):
                          "medium": self.interpolator_z_average,
                          "high": self.interpolator_z_a}
         return interpolators[self.incidence_loss](incidence_angle)
+
+    def calculate_phi(self, p_2_over_p_1, teeth_spacing_over_seal_clearance, teeth_number):
+        """A method to calculate the half-labyrinth flow function phi from Figure 10.4.2.
+        The flow remains constant below the critical pressure ratio given by the corresponding g curve.
+
+        :param float p_2_over_p_1: Outlet-to-inlet pressure ratio of the seal (-).
+        :param float teeth_spacing_over_seal_clearance: Tooth spacing over seal clearance, a/delta (-).
+        :param int or float teeth_number: Number of seal teeth (-).
+        :return: Half-labyrinth flow function phi (-).
+        :rtype: float
+        """
+
+        # Read the g limit for this geometry and stop reducing the pressure ratio once the flow is at its maximum.
+        critical_pressure_ratio = self.interpolator_critical_pressure_ratio(
+            teeth_number, teeth_spacing_over_seal_clearance)
+        pressure_ratio = max(p_2_over_p_1, critical_pressure_ratio)
+        # The Phi^2 interpolator itself is uncapped; apply the limit here before taking the square root.
+        phi_squared = self.interpolator_phi_squared(
+            pressure_ratio, teeth_spacing_over_seal_clearance, teeth_number)
+        return np.sqrt(phi_squared)
 
     def calculate_blade_row_aerodynamic_loss(self, blade_row, inlet_angle, outlet_angle, t_TE_over_pitch,
                                              relative_roughness, blade_length_over_mean_diameter,
@@ -617,8 +766,25 @@ class TraupelLossModel(LossModel):
         zeta_total_aerodynamic = integrated_zeta_p + zeta_rest
         return zeta_total_aerodynamic
 
-    def calculate_shrouded_rotor_clearance_loss(self, tip_diameter, seal_clearance, teeth_number):
-        ...
+    def calculate_shrouded_rotor_clearance_loss(self, tip_diameter, seal_clearance, teeth_number, teeth_spacing,
+                                                admission_fraction, p_2_over_p_1, mdot, p_1, rho_1,
+                                                design_isentropic_loading_coefficient,
+                                                operation_isentropic_loading_coefficient):
+        # First calculate seal flow area
+        A_seal = tip_diameter * np.pi * seal_clearance
+        # Calculate flow coefficient phi
+        phi = self.calculate_phi(p_2_over_p_1, teeth_spacing / seal_clearance, teeth_number)
+        # Calculate leak rate
+        mdot_leak_rotor = admission_fraction * A_seal * phi * np.sqrt(p_1 * rho_1)
+        # Calculate relative leak flow rate, mu coefficient
+        mu = mdot_leak_rotor / (admission_fraction * mdot - mdot_leak_rotor) # kg/s
+        # Calculate speed parameters
+        v_operation = 1 / np.sqrt(2 * operation_isentropic_loading_coefficient)
+        v_design = 1 / np.sqrt(2 * design_isentropic_loading_coefficient)
+        # Calculate clearance loss and return it together with the leak rate
+        zeta_clearance_rotor = mu * (1 - ((v_operation - v_design) / v_design)**2)
+        return zeta_clearance_rotor, mdot_leak_rotor
+
 
     def calculate_unshrouded_rotor_clearance_loss(self, normalized_inlet_velocity,
                                                   isentropic_loading_coefficient, clearance_over_blade_length,
@@ -636,14 +802,42 @@ class TraupelLossModel(LossModel):
             (2 * isentropic_loading_coefficient)
         return max(zeta_clearance_rotor, 0)
 
-    def calculate_partial_admission_loss(self):
-        ...
+    @staticmethod
+    def calculate_admission_loss(self, admission_fraction, isentropic_loading_coefficient,
+                                 flow_coefficient, blade_length_over_mean_diameter, blade_width_over_mean_diameter,
+                                 outlet_angle, partial_admission_rotor):
+        # Calculate C factor. If rotor is free:
+        if partial_admission_rotor == "free":
+            C_coefficient = 0.8 * (0.045 + 0.58 * blade_length_over_mean_diameter) * np.sin(outlet_angle)
+        # If rotor is partially enclosed:
+        elif partial_admission_rotor == "enclosed":
+            C_coefficient = 0.0095 + 0.55 * max(0.125 - blade_length_over_mean_diameter, 0)**2
+        # Calculate and return zeta_admission
+        zeta_admission = \
+            C_coefficient * (1 - admission_fraction) / \
+            (admission_fraction * flow_coefficient * isentropic_loading_coefficient) + \
+            0.21 * blade_width_over_mean_diameter / (partial_admission_rotor * np.sqrt(isentropic_loading_coefficient))
+        return zeta_admission
 
-    def calculate_disk_friction_loss(self):
-        ...
+    def calculate_disk_friction_loss(self, admission_fraction, hub_over_mean_diameter, hub_diameter_over_blade_length,
+                                     isentropic_loading_coefficient, flow_coefficient, Reynolds_number):
+        # Calculate C_M
+        C_M = self.calculate_C_M(Reynolds_number)
+        # Calculate and return zeta_friction
+        zeta_friction = 1.27 * C_M * hub_over_mean_diameter**4 * hub_diameter_over_blade_length / \
+                        (admission_fraction * flow_coefficient * isentropic_loading_coefficient)
+        return zeta_friction
 
-    def calculate_incidence_losses(self):
-        ...
+    def calculate_incidence_losses(self, incidence_angle, inlet_to_outlet_velocity_ratio, inlet_Mach_number):
+        # First calculate corrected incidence angle for Mach number. Clip inlet Mach number so that correction is always
+        # done over a valid range of Mach numbers (from 0.5 to 0.8)
+        inlet_Mach_number = max(0.5, min(0.8, inlet_Mach_number))
+        corrected_incidence_angle = 2 * (1 - inlet_Mach_number) * incidence_angle
+        # Get z coefficient
+        z_coefficient = self.calculate_z(corrected_incidence_angle * 180 / np.pi)
+        # Calculate zeta_incidence and return it
+        zeta_incidence = z_coefficient * inlet_to_outlet_velocity_ratio**2
+        return zeta_incidence
 
     def calculate_entropy_increase(self, analysis_results, turbine_geometry):
         ...

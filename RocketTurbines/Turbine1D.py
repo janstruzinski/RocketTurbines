@@ -59,6 +59,8 @@ class Turbine1D:
         self.no_blades_rotor = None # Number of blades in the rotor, -
         self.no_blades_stator = None # Number of nozzles/blades in the stator, -
         self.admission_fraction = None # Admission fraction of the turbine stage, -
+        self.partial_admission_rotor = None # Type of partial admission rotor, either "free" or "enclosed"
+
         # Analysis results at the design point
         self.analysis_results_at_design_point = {"gas": None, # IdealGas object
                                                  "mdot_total": None, # Total massflow through the turbine, kg/s
@@ -161,9 +163,9 @@ class Turbine1D:
     def size_turbine(self, gas, loading_coefficient, flow_coefficient, reaction_isentropic, pressure_ratio, RPM,
                      shaft_power, mdot, T_0, p_0, radial_clearance, no_blades_stator, no_blades_rotor,
                      chord_over_pitch_stator, t_TE_stator, t_TE_rotor,
-                     loss_model, admission_fraction=1, chord_over_pitch_rotor=2.5, s_ax_over_pitch_rotor=0.35,
-                     delta_s_estimate=[0, 0, 0], shrouded_rotor=False, h_shroud_over_blade_length=0.008,
-                     s_ax_shroud_over_h_shroud=2, t_shroud=None):
+                     loss_model, admission_fraction=1, partial_admission_rotor="free", chord_over_pitch_rotor=2.5,
+                     s_ax_over_pitch_rotor=0.35, delta_s_estimate=[0, 0, 0], shrouded_rotor=False,
+                     h_shroud_over_blade_length=0.008, s_ax_shroud_over_h_shroud=2, t_shroud=None):
         """A method to size the turbine based on given requirements. It changes properties of the object.
 
         :param IdealGas gas: IdealGas object representing working gas of the turbine.
@@ -187,6 +189,8 @@ class Turbine1D:
          equal to 2.5, which is in the range of 2.5-3.3 recommended for supersonic impulse rotor cascades by Traupel
          in "Thermal Turbomachines".
         :param float or integer admission_fraction: Admission fraction (-) of the turbine stage. By default, 1.
+        :param string partial_admission_rotor: Whether partial admission rotor (if used) is "enclosed" or "free".
+         By default, "free".
         :param float or integer t_TE_stator: Tangential thickness (m) of the trailing edge for the stator.
          In other words, length of the projection of the thickness on the tangential axis.
         :param float or integer t_TE_rotor: Tangential thickness (m) of the trailing edge for the rotor.
@@ -232,6 +236,7 @@ class Turbine1D:
         self.t_shroud = t_shroud
         self.h_shroud_over_blade_length = h_shroud_over_blade_length
         self.s_ax_shroud_over_h_shroud = s_ax_shroud_over_h_shroud
+        self.partial_admission_rotor = "free"
 
         # Put design variables in analysis_results_at_design_point already
         self.analysis_results_at_design_point.update({"gas": gas,
@@ -451,7 +456,8 @@ class Turbine1D:
                             "beta_2_metal_deg": beta_2 * 180 / np.pi,  # deg
                             "no_blades_rotor": self.no_blades_rotor,  # -
                             "no_blades_stator": self.no_blades_stator,  # -
-                            "admission_fraction": self.admission_fraction}  # -
+                            "admission_fraction": self.admission_fraction, # -
+                            "partial_admission_rotor": self.partial_admission_rotor}  # string
 
 
 
