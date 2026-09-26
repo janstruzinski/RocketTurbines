@@ -5,7 +5,8 @@ from .LossModel import LossModel
 
 
 class TraupelLossModel(LossModel):
-    def __init__(self, extrapolation_method="linear", warn_on_extrapolation=True):
+    def __init__(self, extrapolation_method="linear", warn_on_extrapolation=True, incidence_loss="medium",
+                 stator="regular", rotor="regular"):
         """A class to calculate turbine losses with Traupel meanline loss model presented in
          "Thermische Turbomaschinen", which is very suitable for steam, supersonic turbines. All graphs are digitalized
           as ready to use interpolators in class properties. Class methods allow to calculate specific loss
@@ -14,6 +15,11 @@ class TraupelLossModel(LossModel):
         :param str extrapolation_method: Method used outside the digitized data region, either "linear" or "closest".
             The latter returns the value at the closest point in the digitized region.
         :param bool warn_on_extrapolation: Whether to warn on each out-of-bounds interpolation call.
+        :param str incidence_loss: Incidence-loss level: "high" uses curve a, "low" uses curve b and "medium"
+            averages the two curves. By default, "medium".
+        :param str stator: Stator Mach-correction curve, either "regular" or "near_sonic_outlet". By default, "regular".
+        :param str rotor: Rotor Mach-correction curve, either "regular", "near_sonic_outlet", "impulse_low_M" or
+            "impulse_high_M". By default, "regular".
         """
 
         # Use linear interpolation throughout and check the selected extrapolation option.
@@ -21,9 +27,21 @@ class TraupelLossModel(LossModel):
         extrapolation_method = extrapolation_method.lower()
         if extrapolation_method not in ("linear", "closest"):
             raise ValueError("extrapolation_method must be either 'linear' or 'closest'.")
+        # Select the incidence-loss curve once for all later z calculations.
+        if not isinstance(incidence_loss, str) or incidence_loss.lower() not in ("high", "medium", "low"):
+            raise ValueError("incidence_loss must be 'high', 'medium' or 'low'.")
+        # The stator uses only the two accelerating-cascade curves; the rotor can also use either impulse curve.
+        if not isinstance(stator, str) or stator not in ("regular", "near_sonic_outlet"):
+            raise ValueError("stator must be 'regular' or 'near_sonic_outlet'.")
+        if not isinstance(rotor, str) or rotor not in ("regular", "near_sonic_outlet", "impulse_low_M",
+                                                      "impulse_high_M"):
+            raise ValueError("rotor must be 'regular', 'near_sonic_outlet', 'impulse_low_M' or 'impulse_high_M'.")
         self.interpolation_method = interpolation_method
         self.extrapolation_method = extrapolation_method
         self.warn_on_extrapolation = warn_on_extrapolation
+        self.incidence_loss = incidence_loss.lower()
+        self.stator = stator
+        self.rotor = rotor
 
         # AERODYNAMIC LOSS: PROFILE LOSS DATA
         # Data for chi_R
@@ -390,10 +408,159 @@ class TraupelLossModel(LossModel):
         # Pass one row of coordinates, which also works for SciPy's one-dimensional grids.
         return interpolator([evaluation_point])[0]
 
+    def calculate_chi_R(self, Re, relative_roughness):
+        """A method to calculate the Reynolds-number and roughness correction factor chi_R.
+
+        :param float or integer Re: Blade-row Reynolds number (-).
+        :param float relative_roughness: Equivalent sand roughness over blade chord, k_s/s (-).
+        :return: Reynolds-number and roughness correction factor chi_R (-).
+        :rtype: float
+        """
+
+        return self.interpolator_chi_R(Re, relative_roughness)
+
+    def calculate_chi_M(self, outlet_Mach_number, blade_row):
+        """A method to calculate the Mach-number correction factor chi_M for the configured blade row.
+
+        :param float outlet_Mach_number: Blade-row Mach number (-).
+        :param str blade_row: Blade row to evaluate, either "stator" or "rotor". Its curve is selected by the
+            stator or rotor setting given when the object was initialized.
+        :return: Mach-number correction factor chi_M (-).
+        :rtype: float
+        """
+
+        # Select the row configuration first, then its distinct Mach-correction curve.
+        if not isinstance(blade_row, str) or blade_row not in ("stator", "rotor"):
+            raise ValueError("blade_row must be 'stator' or 'rotor'.")
+        configuration = self.stator if blade_row == "stator" else self.rotor
+        interpolators = {"regular": self.interpolator_chi_M_curve_1,
+                         "near_sonic_outlet": self.interpolator_chi_M_curve_2,
+                         "impulse_low_M": self.interpolator_chi_M_curve_3,
+                         "impulse_high_M": self.interpolator_chi_M_curve_4}
+        return interpolators[configuration](outlet_Mach_number)
+
+    def calculate_zeta_p0(self, inlet_angle, outlet_angle):
+        """A method to calculate the uncorrected profile-loss coefficient zeta_p0.
+
+        :param float inlet_angle: Blade-row inlet angle measured from the vertical direction (deg).
+        :param float outlet_angle: Blade-row outlet angle measured from the vertical direction (deg).
+        :return: Uncorrected profile-loss coefficient zeta_p0 (-).
+        :rtype: float
+        """
+
+        return self.interpolator_zeta_p0(inlet_angle, outlet_angle)
+
+    def calculate_zeta_h(self, delta_a_ratio, trailing_edge_blockage, Re):
+        """A method to calculate the Reynolds-corrected loss due to underpressure behind the trailing edge.
+        The nomogram value is multiplied by a quarter-ellipse transition from Re = 8e4 to Re = 1.5e5.
+
+        :param float delta_a_ratio: Ratio delta_a / (chi_M * chi_R * zeta_p0) (-).
+        :param float trailing_edge_blockage: Trailing-edge blockage delta_a (-).
+        :param float or integer Re: Blade-row Reynolds number (-).
+        :return: Reynolds-corrected trailing-edge underpressure loss coefficient zeta_h (-).
+        :rtype: float
+        """
+
+        # Below Re = 8e4 the underpressure effect disappears, so the nomogram contribution is zero.
+        if Re <= 8e4:
+            return 0.0
+
+        zeta_h = self.interpolator_zeta_h(delta_a_ratio, trailing_edge_blockage)
+        if Re >= 1.5e5:
+            return zeta_h
+
+        # Approximate Traupel's elliptical transition with a quarter ellipse that levels off at full strength.
+        relative_Re = (Re - 8e4) / (1.5e5 - 8e4)
+        transition_factor = np.sqrt(1 - (1 - relative_Re)**2)
+        return zeta_h * transition_factor
+
+    def calculate_zeta_f(self, length_ratio, speed_parameter):
+        """A method to calculate the blade-row fanning-loss coefficient zeta_f.
+
+        :param float length_ratio: Blade length over mean turbine diameter (-).
+        :param float speed_parameter: Speed parameter of the blade row (-).
+        :return: Fanning-loss coefficient zeta_f (-).
+        :rtype: float
+        """
+
+        return self.interpolator_zeta_f(length_ratio, speed_parameter)
+
+    def calculate_F(self, turning_angle, inlet_over_outlet_velocity):
+        """A method to calculate factor F for endwall and secondary-flow losses.
+
+        :param float turning_angle: Blade-row turning angle (deg).
+        :param float inlet_over_outlet_velocity: Inlet-to-outlet velocity ratio (-).
+        :return: Endwall and secondary-flow factor F (-).
+        :rtype: float
+        """
+
+        return self.interpolator_F(turning_angle, inlet_over_outlet_velocity)
+
+    def calculate_c_f(self, Re, relative_roughness):
+        """A method to calculate the friction factor c_f.
+
+        :param float or integer Re: Reynolds number for the friction-factor graph (-).
+        :param float relative_roughness: Equivalent sand roughness over hydraulic diameter, k_s/d_h (-).
+        :return: Friction factor c_f (-).
+        :rtype: float
+        """
+
+        return self.interpolator_c_f(Re, relative_roughness)
+
+    def calculate_K_sigma(self, sine_angle, velocity_change_ratio, x):
+        """A method to calculate the clearance-loss factor K_sigma.
+
+        :param float sine_angle: Sine of the blade-row outlet angle (-).
+        :param float velocity_change_ratio: Circumferential-velocity change over normal velocity (-).
+        :param float x: Clearance ratio delta/s minus 0.002 (-).
+        :return: Clearance-loss factor K_sigma (-).
+        :rtype: float
+        """
+
+        return self.interpolator_K_sigma(sine_angle, velocity_change_ratio, x)
+
+    def calculate_C_M(self, Re):
+        """A method to calculate the disk-friction coefficient C_M.
+
+        :param float or integer Re: Reynolds number for the disk-friction graph (-).
+        :return: Disk-friction coefficient C_M (-).
+        :rtype: float
+        """
+
+        return self.interpolator_C_M(Re)
+
+    def calculate_z(self, incidence_angle):
+        """A method to calculate incidence-loss factor z using the curve selected at initialization.
+
+        :param float incidence_angle: Deviation of the inlet angle from the design angle (deg).
+        :return: Incidence-loss factor z (-).
+        :rtype: float
+        """
+
+        # Medium incidence loss is the mean of the two interpolated curves, not a separate digitized curve.
+        interpolators = {"low": self.interpolator_z_b,
+                         "medium": self.interpolator_z_average,
+                         "high": self.interpolator_z_a}
+        return interpolators[self.incidence_loss](incidence_angle)
+
     def calculate_entropy_increase(self, analysis_results, turbine_geometry):
         ...
 
-    def calculate_blade_row_aerodynamic_loss(self):
+    def calculate_blade_row_aerodynamic_loss(self, blade_row, inlet_angle, outlet_angle, t_TE_over_pitch,
+                                             relative_roughness, blade_length_over_mean_diameter,
+                                             chord_over_blade_length, chord_over_pitch, outlet_Mach_number, Reynolds_number,
+                                             speed_parameter, blade_velocity_ratio):
+        # Aerodynamic efficiency of the stage has the form of eta = 1 - (zeta_p + zeta_f + zeta_rest + zeta_z)
+        # First calculate zeta_p = chi_R * chi_M * zeta_p0 + zeta_h + zeta_C
+        # Calculate chi_R
+        chi_R = self.calculate_chi_R(Reynolds_number, relative_roughness)
+        # Calculate chi_M
+        chi_M = self.calculate_chi_M(outlet_Mach_number, blade_row)
+        # Calculate zeta_p0
+        zeta_p0 = self.calculate_zeta_p0(inlet_angle, outlet_angle)
+
+
+
         ...
 
     def calculate_clearance_loss(self):
@@ -405,5 +572,5 @@ class TraupelLossModel(LossModel):
     def calculate_disk_friction_loss(self):
         ...
 
-    def calc_incidence_losses(self):
+    def calculate_incidence_losses(self):
         ...
