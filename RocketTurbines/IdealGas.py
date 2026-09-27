@@ -1,6 +1,5 @@
 import CoolProp.CoolProp as cp
 from functools import lru_cache
-
 import numpy as np
 
 
@@ -31,6 +30,9 @@ class IdealGas:
         dummy = [mf / M for mf, M in zip(mass_fractions, molar_masses)]
         molar_fractions = [x / sum(dummy) for x in dummy]
         mixture = "&".join(f"{fluid}[{xi}]" for fluid, xi in zip(species, molar_fractions))
+        self.species = tuple(species)
+        self.molar_masses = tuple(molar_masses)
+        self.molar_fractions = tuple(molar_fractions)
 
         # Get specific gas constant of the mixture
         self.R = cp.PropsSI("GAS_CONSTANT", mixture) / cp.PropsSI("M", mixture)
@@ -64,3 +66,21 @@ class IdealGas:
         """
 
         return np.sqrt(self.gamma * self.R * T)
+
+    @lru_cache(maxsize=1024)
+    def calculate_dynamic_viscosity(self, T, p=1e5):
+        """A method to calculate dynamic viscosity of the gas mixture using Wilke's rule.
+
+        :param float T: Temperature (K) of the gas.
+        :param float p: Pressure (Pa) of the gas. By default, 1e5, since dynamic viscosity is independent of pressure.
+        :return: Gas mixture dynamic viscosity (Pa s).
+        """
+
+        species_viscosities = [cp.PropsSI("VISCOSITY", "P", p, "T|gas", T, f) for f in self.species]
+        mixture_viscosity = 0
+        for xi, mu_i, M_i in zip(self.molar_fractions, species_viscosities, self.molar_masses):
+            denominator = sum(xj * (1 + (mu_i / mu_j)**0.5 * (M_j / M_i)**0.25)**2 / (8 * (1 + M_i / M_j))**0.5
+                for xj, mu_j, M_j in zip(self.molar_fractions, species_viscosities, self.molar_masses))
+            mixture_viscosity += xi * mu_i / denominator
+
+        return mixture_viscosity
