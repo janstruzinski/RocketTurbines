@@ -13,13 +13,15 @@ class Turbine1D:
         # Properties in stationary and rotary reference frame have _s and _r prefixes respectively.
         # Real properties are assumed by default, while ideal/isentropic ones have _ideal prefix.
         # Station 0 is station before stator, station 1 is after stator and station 2 is after rotor.
-        # _b specifies that the results were calculated only for the blade row and its passage aerodynamic losses,
+        # _blade specifies that the results were calculated only for the blade row and its passage aerodynamic losses,
         # without an inclusion of additional losses like clearances, disk friction or partial admission. In other words,
-        # _b represent velocities or thermodynamic properties representative of flow in stationary test cascade.
+        # _blade represent velocities or thermodynamic properties representative of flow in stationary test cascade.
+        # By default, angles refer to flow angles. If they refer to geometric metal blade angle, they have a suffix
+        # _metal.
 
         # Assumptions:
         # 1. This class utilizes ideal gas model for calculations.
-        # 2. Velocity at station 0 is assumed to be negligable.
+        # 2. Velocity at station 0 is assumed to be negligible.
         # 3. Flow areas at station 1 and 2 are equal.
         # 4. Constant Euler diameter.
         # 5. Axial width of the rotor blade row assumed to be equal to chord of the blade.

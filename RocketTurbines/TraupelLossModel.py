@@ -698,15 +698,38 @@ class TraupelLossModel(LossModel):
         return np.sqrt(phi_squared)
 
     def calculate_blade_row_aerodynamic_loss(self, blade_row, inlet_angle, outlet_angle, t_TE_over_pitch,
-                                             relative_roughness, blade_length_over_mean_diameter,
-                                             chord_over_blade_length, chord_over_pitch, outlet_Mach_number,
-                                             Reynolds_number, speed_parameter, blade_velocity_ratio,
+                                             roughness_over_chord, roughness_over_hydraulic_diameter,
+                                             blade_length_over_mean_diameter, chord_over_blade_length, chord_over_pitch,
+                                             outlet_Mach_number, Reynolds_number, speed_parameter, blade_velocity_ratio,
                                              axial_clearance_over_blade_length, shrouded_row=False,
                                              shroud_axial_clearance_over_blade_length=None):
+        """A method to calculate the total aerodynamic loss coefficient of a stator or rotor blade row.
+
+        :param str blade_row: Blade row being evaluated, either "stator" or "rotor".
+        :param float inlet_angle: Blade-row inlet angle measured from the positive vertical direction (rad).
+        :param float outlet_angle: Blade-row outlet angle measured from the negative vertical direction (rad).
+        :param float t_TE_over_pitch: Projection of the trailing-edge thickness on tangential axis over blade pitch (-).
+        :param float roughness_over_chord: Equivalent sand roughness over blade chord (-).
+        :param float roughness_over_hydraulic_diameter: Equivalent sand roughness over hydraulic diameter (-).
+        :param float blade_length_over_mean_diameter: Blade length over mean turbine diameter (-).
+        :param float chord_over_blade_length: Blade chord over blade length (-).
+        :param float chord_over_pitch: Blade chord over blade pitch (-).
+        :param float outlet_Mach_number: Blade-row outlet Mach number (-).
+        :param float or integer Reynolds_number: Blade-row Reynolds number (-).
+        :param float speed_parameter: Blade-row speed parameter for the fanning-loss graph (-).
+        :param float blade_velocity_ratio: Blade-row inlet-to-outlet velocity ratio (-).
+        :param float axial_clearance_over_blade_length: Axial clearance over blade length (-).
+        :param bool shrouded_row: Whether the blade row has a shroud. By default, False.
+        :param float or None shroud_axial_clearance_over_blade_length: Axial shroud clearance over blade length,
+            required for a shrouded row. By default, None.
+        :return: Total blade-row aerodynamic loss coefficient (-).
+        :rtype: float
+        """
+
         # Aerodynamic loss coefficient of the blade row has the form of zeta = zeta_p + zeta_f + zeta_rest
         # First calculate profiles loss, zeta_p = chi_R * chi_M * zeta_p0 + zeta_h + zeta_C
         # Calculate chi_R
-        chi_R = self.calculate_chi_R(Reynolds_number, relative_roughness)
+        chi_R = self.calculate_chi_R(Reynolds_number, roughness_over_chord)
         # Calculate chi_M
         chi_M = self.calculate_chi_M(outlet_Mach_number, blade_row)
         # Calculate zeta_p0
@@ -741,7 +764,7 @@ class TraupelLossModel(LossModel):
             if blade_row == "rotor": zeta_a = 0
             # If the blade row is the stator, calculate zeta_a
             elif blade_row == "stator":
-                c_f = self.calculate_c_f(Reynolds_number, relative_roughness)
+                c_f = self.calculate_c_f(Reynolds_number, roughness_over_hydraulic_diameter)
                 zeta_a = (c_f / np.sin(inlet_angle)) * (1 + blade_length_over_mean_diameter) * \
                          axial_clearance_over_blade_length
         # Also calculate F factor which is needed for both branches
@@ -770,6 +793,23 @@ class TraupelLossModel(LossModel):
                                                 admission_fraction, p_2_over_p_1, mdot, p_1, rho_1,
                                                 design_isentropic_loading_coefficient,
                                                 operation_isentropic_loading_coefficient):
+        """A method to calculate shrouded-rotor clearance loss and the flow leaking through its half-labyrinth seal.
+
+        :param float tip_diameter: Rotor tip diameter (m).
+        :param float seal_clearance: Radial clearance of the seal (m).
+        :param int or float teeth_number: Number of seal teeth (-).
+        :param float teeth_spacing: Axial distance between seal teeth (m).
+        :param float admission_fraction: Admitted fraction of the rotor circumference (-).
+        :param float p_2_over_p_1: Seal outlet-to-inlet pressure ratio (-).
+        :param float mdot: Main mass flow rate (kg/s).
+        :param float p_1: Seal inlet pressure (Pa).
+        :param float rho_1: Seal inlet fluid density (kg/m^3).
+        :param float design_isentropic_loading_coefficient: Isentropic loading coefficient at design (-).
+        :param float operation_isentropic_loading_coefficient: Isentropic loading coefficient at operation (-).
+        :return: Shrouded-rotor clearance loss coefficient (-) and seal leakage mass flow rate (kg/s), respectively.
+        :rtype: tuple[float, float]
+        """
+
         # First calculate seal flow area
         A_seal = tip_diameter * np.pi * seal_clearance
         # Calculate flow coefficient phi
@@ -790,6 +830,21 @@ class TraupelLossModel(LossModel):
                                                   isentropic_loading_coefficient, clearance_over_blade_length,
                                                   chord_over_blade_length, tip_over_mean_diameter, isentropic_reaction,
                                                   outlet_angle, circumferential_velocity_change, axial_velocity):
+        """A method to calculate the clearance loss coefficient of an unshrouded rotor.
+
+        :param float normalized_inlet_velocity: Normalized inlet velocity used in the clearance-loss relation (-).
+        :param float isentropic_loading_coefficient: Isentropic loading coefficient of the rotor (-).
+        :param float clearance_over_blade_length: Radial clearance over blade length (-).
+        :param float chord_over_blade_length: Blade chord over blade length (-).
+        :param float tip_over_mean_diameter: Rotor tip diameter over mean turbine diameter (-).
+        :param float isentropic_reaction: Isentropic reaction of the turbine stage (-).
+        :param float outlet_angle: Rotor outlet angle measured from the vertical direction (rad).
+        :param float circumferential_velocity_change: Change in circumferential velocity across the rotor (m/s).
+        :param float axial_velocity: Axial velocity used to normalize the circumferential velocity change (m/s).
+        :return: Unshrouded rotor clearance loss coefficient (-).
+        :rtype: float
+        """
+
         # First calculate normalized clerance and K_sigma
         normalized_clearance = max(clearance_over_blade_length / chord_over_blade_length - 0.002, 0)
         velocity_change_ratio = circumferential_velocity_change / axial_velocity
@@ -803,9 +858,22 @@ class TraupelLossModel(LossModel):
         return max(zeta_clearance_rotor, 0)
 
     @staticmethod
-    def calculate_admission_loss(self, admission_fraction, isentropic_loading_coefficient,
+    def calculate_admission_loss(admission_fraction, isentropic_loading_coefficient,
                                  flow_coefficient, blade_length_over_mean_diameter, blade_width_over_mean_diameter,
                                  outlet_angle, partial_admission_rotor):
+        """A method to calculate the rotor partial-admission loss coefficient.
+
+        :param float admission_fraction: Partial admission fraction of the rotor circumference (-).
+        :param float isentropic_loading_coefficient: Isentropic loading coefficient of the rotor (-).
+        :param float flow_coefficient: Turbine flow coefficient (-).
+        :param float blade_length_over_mean_diameter: Rotor blade length over mean turbine diameter (-).
+        :param float blade_width_over_mean_diameter: Rotor blade width over mean turbine diameter (-).
+        :param float outlet_angle: Rotor outlet angle measured from the vertical direction (rad).
+        :param str partial_admission_rotor: Rotor configuration, either "free" or "enclosed".
+        :return: Partial-admission loss coefficient (-).
+        :rtype: float
+        """
+
         # Calculate C factor. If rotor is free:
         if partial_admission_rotor == "free":
             C_coefficient = 0.8 * (0.045 + 0.58 * blade_length_over_mean_diameter) * np.sin(outlet_angle)
@@ -821,6 +889,18 @@ class TraupelLossModel(LossModel):
 
     def calculate_disk_friction_loss(self, admission_fraction, hub_over_mean_diameter, hub_diameter_over_blade_length,
                                      isentropic_loading_coefficient, flow_coefficient, Reynolds_number):
+        """A method to calculate the rotor disk-friction loss coefficient.
+
+        :param float admission_fraction: Admitted fraction of the rotor circumference (-).
+        :param float hub_over_mean_diameter: Rotor hub diameter over mean turbine diameter (-).
+        :param float hub_diameter_over_blade_length: Rotor hub diameter over blade length (-).
+        :param float isentropic_loading_coefficient: Isentropic loading coefficient of the rotor (-).
+        :param float flow_coefficient: Turbine flow coefficient (-).
+        :param float or integer Reynolds_number: Reynolds number used for the disk-friction coefficient (-).
+        :return: Rotor disk-friction loss coefficient (-).
+        :rtype: float
+        """
+
         # Calculate C_M
         C_M = self.calculate_C_M(Reynolds_number)
         # Calculate and return zeta_friction
@@ -829,6 +909,15 @@ class TraupelLossModel(LossModel):
         return zeta_friction
 
     def calculate_incidence_losses(self, incidence_angle, inlet_to_outlet_velocity_ratio, inlet_Mach_number):
+        """A method to calculate blade-row incidence loss with a Mach-number correction to the incidence angle.
+
+        :param float incidence_angle: Deviation of the inlet flow angle from the design angle (rad).
+        :param float inlet_to_outlet_velocity_ratio: Inlet-to-outlet blade-row velocity ratio (-).
+        :param float inlet_Mach_number: Blade-row inlet Mach number; correction uses values from 0.5 to 0.8 (-).
+        :return: Incidence loss coefficient (-).
+        :rtype: float
+        """
+
         # First calculate corrected incidence angle for Mach number. Clip inlet Mach number so that correction is always
         # done over a valid range of Mach numbers (from 0.5 to 0.8)
         inlet_Mach_number = max(0.5, min(0.8, inlet_Mach_number))
