@@ -47,6 +47,8 @@ class Turbine1D:
         self.h_shroud_over_blade_length = None # Overlap of the blade with the casing over rotor blade length, -
         self.s_ax_shroud_over_h_shroud = None # Axial distance between shroud and the casing over blade overlap with
         # it, -
+        self.seal_teeth_number = None # Number of teeth in shroud's half-labirynth seal, -.
+        self.seal_teeth_spacing = None # Spacing between teeth in shroud's half-labirynth seal, m.
         self.c_stator = None # Stator chord, m. Assumed to be equal to stator blade width / length of projection over
         # meridional axis.
         self.p_stator = None # Stator pitch at Euler radius, m
@@ -62,6 +64,7 @@ class Turbine1D:
         self.no_blades_stator = None # Number of nozzles/blades in the stator, -
         self.admission_fraction = None # Admission fraction of the turbine stage, -
         self.partial_admission_rotor = None # Type of partial admission rotor, either "free" or "enclosed"
+        self.sand_grain_roughness = None # Sound grain equivalent roughness, m
 
         # Analysis results at the design point
         self.analysis_results_at_design_point = {"gas": None, # IdealGas object
@@ -74,6 +77,8 @@ class Turbine1D:
                                                  "h_0": None,   # Total/static enthalpy at station 0, J/kg
                                                  "psi": None, # Real loading coefficient, -
                                                  "psi_ideal": None, # Ideal loading coefficient, -
+                                                 "psi_ideal_design": None,  # Ideal loading coefficient at the design
+                                                 # point, -
                                                  "theta_1": None, # Flow coefficient at station 1, -
                                                  "theta_2": None, # Flow coefficient at station 2, -
                                                  "R_h_ideal": None, # Ideal enthalpic reaction of the stage, -
@@ -131,6 +136,10 @@ class Turbine1D:
                                                  "M_r2": None, # Mach number in rotary reference frame at station 2, -
                                                  "M_r2_ideal": None, # Mach number in rotary reference frame assuming
                                                  # ideal expansion at station 2, -
+                                                 "Re_s1": None, # Reynolds number at station 1 in stationary reference
+                                                 # frame, -
+                                                 "Re_r2": None, # Reynolds number at station 2 in relative reference
+                                                 # frame, -
                                                  "alpha_1": None, # Absolute flow angle at station 1, rad
                                                  "alpha_2": None, # Absolute flow angle at station 2, rad
                                                  "beta_1": None, # Relative flow angle at station 1, rad
@@ -164,10 +173,11 @@ class Turbine1D:
 
     def size_turbine(self, gas, loading_coefficient, flow_coefficient, reaction_isentropic, pressure_ratio, RPM,
                      shaft_power, mdot, T_0, p_0, radial_clearance, no_blades_stator, no_blades_rotor,
-                     chord_over_pitch_stator, t_TE_stator, t_TE_rotor,
+                     chord_over_pitch_stator, t_TE_stator, t_TE_rotor, Ra_roughness,
                      loss_model, admission_fraction=1, partial_admission_rotor="free", chord_over_pitch_rotor=2.5,
                      s_ax_over_pitch_rotor=0.35, delta_s_estimate=[0, 0, 0], shrouded_rotor=False,
-                     h_shroud_over_blade_length=0.008, s_ax_shroud_over_h_shroud=2, t_shroud=None):
+                     h_shroud_over_blade_length=0.008, s_ax_shroud_over_h_shroud=2, t_shroud=None,
+                     seal_teeth_number=None):
         """A method to size the turbine based on given requirements. It changes properties of the object.
 
         :param IdealGas gas: IdealGas object representing working gas of the turbine.
@@ -197,6 +207,7 @@ class Turbine1D:
          In other words, length of the projection of the thickness on the tangential axis.
         :param float or integer t_TE_rotor: Tangential thickness (m) of the trailing edge for the rotor.
          In other words, length of the projection of the thickness on the tangential axis.
+        :param float or integer Ra_roughness: Roughness of the turbine flow surfaces in Ra.
         :param float or integer s_ax_over_pitch_rotor: Axial distance between stator and rotor over rotor pitch (-).
          By default, 0.35, which is in the range of 0.3-0.35 given by Traupel.
         :param boolean shrouded_rotor: Boolean whether the rotor is shrouded. By default, False.
@@ -205,6 +216,8 @@ class Turbine1D:
         :param float or integer s_ax_shroud_over_h_shroud: Axial distance between shroud and the casing over blade
          overlap with it. By default, 2, which is above the value of 1.5 recommended by Traupel.
         :param float or integer t_shroud: Shroud thickness, m. By default, None.
+        :param integer seal_teeth_number: Number of half-labirynth seal teeth. Must be greater than 2.
+         By default, None.
         :param loss_model: LossModel object to be used in the analysis.
         :param list delta_s_estimate: List of initial estimates of the entropy rises (J/kg/K) due to stator, rotor and
          additional rotor losses. Additional rotor losses represent clearance, partial admission or disk friction
@@ -238,7 +251,11 @@ class Turbine1D:
         self.t_shroud = t_shroud
         self.h_shroud_over_blade_length = h_shroud_over_blade_length
         self.s_ax_shroud_over_h_shroud = s_ax_shroud_over_h_shroud
-        self.partial_admission_rotor = "free"
+        self.partial_admission_rotor = partial_admission_rotor
+        self.seal_teeth_number = seal_teeth_number
+        if self.shrouded_rotor: self.seal_teeth_spacing = self.c_rotor / (seal_teeth_number - 1)
+        # Change Ra roughness to sand grain equivalent roughness
+        self.sand_grain_roughness = 5.863 * Ra_roughness # m
 
         # Put design variables in analysis_results_at_design_point already
         self.analysis_results_at_design_point.update({"gas": gas,
@@ -266,7 +283,7 @@ class Turbine1D:
         # and flow angles were ideal.
         entropy_scales = get_entropy_residual([0, 0, 0])
         # Solve for entropy increase
-        entropy_solution = root(get_entropy_residual, delta_s_estimate, method="hybr",
+        entropy_solution = root(get_entropy_residual, np.array(delta_s_estimate), method="hybr",
                                 options={"xtol":1e-6, "eps": 1e-12, "maxfev": 1000, "factor": 1,
                                          "diag": 1/entropy_scales})
         # Raise an error if not converged
@@ -443,6 +460,8 @@ class Turbine1D:
                             "s_r": self.s_r,  # m
                             "shrouded_rotor": self.shrouded_rotor,  # -
                             "s_ax_shroud": s_ax_shroud,  # m
+                            "seal_teeth_number": self.seal_teeth_number, # -
+                            "seal_teeth_spacing": self.seal_teeth_spacing, # -
                             "t_shroud": self.t_shroud,  # m
                             "h_shroud": h_shroud,  # m
                             "h_shroud_over_blade_length": self.h_shroud_over_blade_length,  # -
@@ -459,14 +478,12 @@ class Turbine1D:
                             "no_blades_rotor": self.no_blades_rotor,  # -
                             "no_blades_stator": self.no_blades_stator,  # -
                             "admission_fraction": self.admission_fraction, # -
-                            "partial_admission_rotor": self.partial_admission_rotor}  # string
-
-
-
+                            "partial_admission_rotor": self.partial_admission_rotor,  # string
+                            "sand_grain_roughness": self.sand_grain_roughness} # m
 
         # Call loss model, calculate entropy rise and loss coefficients.
         delta_s_stator_output, delta_s_rotor_output, delta_s_rotor_additional_output =\
-            loss_model.calculate_entropy_increase(analysis_results, turbine_geometry)
+            loss_model.calculate_entropy_increase(analysis_results, turbine_geometry, blade_row_results)
 
 
         # Calculate residual
@@ -624,6 +641,10 @@ class Turbine1D:
         # Calculate real pressure reaction, R_p
         R_p = (p_1 - p_2) / (p_0 - p_2)
 
+        # Calculate Reynolds numbers
+        Re_s1 = rho_1 * v_1 * self.c_stator / gas.calculate_dynamic_viscosity(T_1)
+        Re_r2 = rho_2 * v_2 * self.c_rotor / gas.calculate_dynamic_viscosity(T_2)
+
         # Package thermodynamic properties, velocities and loading coefficients into analysis_results dictionary.
         # Make it a copy of analysis_results_at_design_point, such that the values there stay constant during
         # iterations.
@@ -666,14 +687,18 @@ class Turbine1D:
                                  "M_r2_ideal": M_r2_ideal,
                                  "R_p": R_p,
                                  "psi_ideal": psi_ideal,
+                                 "psi_ideal_design": psi_ideal,
                                  "R_h": R_h,
                                  "theta_1": theta_1,
+                                 "Re_s1": Re_s1,
+                                 "Re_r2": Re_r2
                                  })
 
         # Return residual
         return analysis_results, residual
 
-    def __calculate_flow_angles(self, analysis_results):
+    @staticmethod
+    def __calculate_flow_angles(analysis_results):
         """A method to calculate absolute and relative flow angles at stations 1 and 2.
 
         :param dict analysis_results: Dictionary with turbine analysis results required to calculate the flow angles.
@@ -721,6 +746,7 @@ class Turbine1D:
         h_1_blade = analysis_results["h_1"]
         w_1_blade = analysis_results["w_1"]
         v_1_blade = analysis_results["v_1"]
+        M_s1_blade = analysis_results["M_s1"]
         theta_1_blade = analysis_results["theta_1"]
         h_0 = analysis_results["h_0"]
         p_0 = analysis_results["p_0"]
@@ -751,6 +777,11 @@ class Turbine1D:
         psi_blade = theta_1_blade * np.tan(alpha_1_metal) - theta_2_blade * np.tan(beta_2_metal) - 1
         R_h_blade = (h_1_blade - h_2_blade) / (h_0 - h_2_blade)
         p_0_over_p_2_blade = p_0 / p_2_blade
+        M_r2_blade = w_2_blade / gas.calculate_sound_velocity(T_2_blade)
+
+        # Calculate Reynolds numbers
+        Re_s1_blade = rho_1_blade * v_1_blade * self.c_stator / gas.calculate_dynamic_viscosity(T_1_blade)
+        Re_r2_blade = rho_2_blade * v_2_blade * self.c_rotor / gas.calculate_dynamic_viscosity(T_2_blade)
 
         # Now pack the results and return them together with residual
         blade_row_results = {"v_1_blade": v_1_blade,
@@ -758,15 +789,19 @@ class Turbine1D:
                              "p_1_blade": p_1_blade,
                              "T_1_blade": T_1_blade,
                              "rho_1_blade": rho_1_blade,
+                             "M_s1_blade": M_s1_blade,
                              "v_2_blade": v_2_blade,
                              "w_2_blade": w_2_blade,
                              "p_2_blade": p_2_blade,
                              "T_2_blade": T_2_blade,
                              "rho_2_blade": rho_2_blade,
+                             "M_r2_blade": M_r2_blade,
                              "alpha_2_blade": alpha_2_blade,
                              "psi_blade": psi_blade,
                              "R_h_blade": R_h_blade,
-                             "p_0_over_p_2_blade": p_0_over_p_2_blade}
+                             "p_0_over_p_2_blade": p_0_over_p_2_blade,
+                             "Re_s1_blade": Re_s1_blade,
+                             "Re_r2_blade": Re_r2_blade}
         return blade_row_results, residual
 
 
