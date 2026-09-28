@@ -778,6 +778,7 @@ class Turbine1D:
         R_h_blade = (h_1_blade - h_2_blade) / (h_0 - h_2_blade)
         p_0_over_p_2_blade = p_0 / p_2_blade
         M_r2_blade = w_2_blade / gas.calculate_sound_velocity(T_2_blade)
+        M_r1_blade = w_1_blade / gas.calculate_sound_velocity(T_1_blade)
 
         # Calculate Reynolds numbers
         Re_s1_blade = rho_1_blade * v_1_blade * self.c_stator / gas.calculate_dynamic_viscosity(T_1_blade)
@@ -795,6 +796,7 @@ class Turbine1D:
                              "p_2_blade": p_2_blade,
                              "T_2_blade": T_2_blade,
                              "rho_2_blade": rho_2_blade,
+                             "M_r1_blade": M_r1_blade,
                              "M_r2_blade": M_r2_blade,
                              "alpha_2_blade": alpha_2_blade,
                              "psi_blade": psi_blade,
