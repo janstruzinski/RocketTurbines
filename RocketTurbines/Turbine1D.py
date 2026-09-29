@@ -70,7 +70,7 @@ class Turbine1D:
         # Analysis results at the design point
         self.analysis_results_at_design_point = {"gas": None, # IdealGas object
                                                  "mdot_total": None, # Total massflow through the turbine, kg/s
-                                                 "RPM": None, # Rotations Per Minute, -
+                                                 "RPM": None, # Rotations per minute, rpm
                                                  "omega": None, # Angular velocity, rad/s
                                                  "T_0": None,   # Total/static temperature at station 0, K
                                                  "p_0": None,   # Total/static pressure at station 0, Pa
@@ -105,7 +105,7 @@ class Turbine1D:
                                                  "v_1_ideal": None, # Absolute velocity assuming ideal expansion at
                                                  # station 1, m/s
                                                  "w_1": None, # Relative velocity at station 1, m/s
-                                                 "M_s1": None, # Mach number in stationary reference frame at station 1, -
+                                                 "M_s1": None, # Station 1 Mach number in stationary frame, -
                                                  "M_s1_ideal": None, # Mach number in stationary reference frame
                                                  # assuming ideal expansion at station 1, -
                                                  "M_r1": None, # Mach number in rotary reference frame at station 1, -
@@ -131,7 +131,7 @@ class Turbine1D:
                                                  "w_2": None, # Relative velocity at station 2, m/s
                                                  "w_2_ideal": None, # Relative velocity assuming ideal expansion at
                                                  # station 2, m/s
-                                                 "M_s2": None, # Mach number in stationary reference frame at station 2, -
+                                                 "M_s2": None, # Station 2 Mach number in stationary frame, -
                                                  "M_s2_ideal": None, # Mach number in stationary reference frame
                                                  # assuming ideal expansion at station 2, -
                                                  "M_r2": None, # Mach number in rotary reference frame at station 2, -
@@ -256,51 +256,51 @@ class Turbine1D:
             raise TypeError("loss_model must be a TraupelLossModel instance.")
 
         # Calculate the blade speed from given requirements
-        delta_h = shaft_power / mdot
-        u = np.sqrt(delta_h / loading_coefficient)
+        delta_h = shaft_power / mdot  # J/kg
+        u = np.sqrt(delta_h / loading_coefficient)  # m/s
 
         # Calculate angular speed and Euler diameter of the turbine
-        omega = RPM * 2 * np.pi / 60
-        self.D_Euler = 2 * u / omega
-        self.R_Euler = self.D_Euler / 2
+        omega = RPM * 2 * np.pi / 60  # rad/s
+        self.D_Euler = 2 * u / omega  # m
+        self.R_Euler = self.D_Euler / 2  # m
 
         # Calculate available geometry already
-        self.c_stator = self.D_Euler * np.pi / no_blades_stator
-        self.c_rotor = self.D_Euler * np.pi / no_blades_rotor
-        self.p_stator = self.c_stator / chord_over_pitch_stator
-        self.p_rotor = self.c_rotor / chord_over_pitch_rotor
-        self.s_ax = self.p_rotor * s_ax_over_pitch_rotor
+        self.c_stator = self.D_Euler * np.pi / no_blades_stator  # m
+        self.c_rotor = self.D_Euler * np.pi / no_blades_rotor  # m
+        self.p_stator = self.c_stator / chord_over_pitch_stator  # m
+        self.p_rotor = self.c_rotor / chord_over_pitch_rotor  # m
+        self.s_ax = self.p_rotor * s_ax_over_pitch_rotor  # m
 
         # Assign remaining geometry that is already known
-        self.t_TE_rotor = t_TE_rotor
-        self.t_TE_stator = t_TE_stator
-        self.admission_fraction = admission_fraction
-        self.s_r = radial_clearance
-        self.no_blades_rotor = no_blades_rotor
-        self.no_blades_stator = no_blades_stator
+        self.t_TE_rotor = t_TE_rotor  # m
+        self.t_TE_stator = t_TE_stator  # m
+        self.admission_fraction = admission_fraction  # -
+        self.s_r = radial_clearance  # m
+        self.no_blades_rotor = no_blades_rotor  # -
+        self.no_blades_stator = no_blades_stator  # -
         self.shrouded_rotor = shrouded_rotor
-        self.t_shroud = t_shroud
-        self.h_shroud_over_blade_length = h_shroud_over_blade_length
-        self.s_ax_shroud_over_h_shroud = s_ax_shroud_over_h_shroud
+        self.t_shroud = t_shroud  # m
+        self.h_shroud_over_blade_length = h_shroud_over_blade_length  # -
+        self.s_ax_shroud_over_h_shroud = s_ax_shroud_over_h_shroud  # -
         self.partial_admission_rotor = partial_admission_rotor
-        self.seal_teeth_number = seal_teeth_number
-        if self.shrouded_rotor: self.seal_teeth_spacing = self.c_rotor / (seal_teeth_number - 1)
+        self.seal_teeth_number = seal_teeth_number  # -
+        if self.shrouded_rotor: self.seal_teeth_spacing = self.c_rotor / (seal_teeth_number - 1)  # m
         # Change Ra roughness to sand grain equivalent roughness
         self.sand_grain_roughness = 5.863 * Ra_roughness # m
 
         # Put design variables in analysis_results_at_design_point already
         self.analysis_results_at_design_point.update({"gas": gas,
-                                                      "psi": loading_coefficient,
-                                                      "theta_2": flow_coefficient,
-                                                      "R_h_ideal": reaction_isentropic,
-                                                      "p_0_over_p_2": pressure_ratio,
-                                                      "RPM": RPM,
-                                                      "omega": omega,
-                                                      "u": u,
-                                                      "P_shaft": shaft_power,
-                                                      "mdot_total": mdot,
-                                                      "T_0": T_0,
-                                                      "p_0": p_0,
+                                                      "psi": loading_coefficient,  # -
+                                                      "theta_2": flow_coefficient,  # -
+                                                      "R_h_ideal": reaction_isentropic,  # -
+                                                      "p_0_over_p_2": pressure_ratio,  # -
+                                                      "RPM": RPM,  # rpm
+                                                      "omega": omega,  # rad/s
+                                                      "u": u,  # m/s
+                                                      "P_shaft": shaft_power,  # W
+                                                      "mdot_total": mdot,  # kg/s
+                                                      "T_0": T_0,  # K
+                                                      "p_0": p_0,  # Pa
                                                       "loss_model": loss_model})
 
 
@@ -321,7 +321,7 @@ class Turbine1D:
         if not entropy_solution.success:
             raise RuntimeError("Numerical solve for the stator and rotor entropy rises did not converge.")
         # Get entropy increases and the rest of the results
-        delta_s_stator, delta_s_rotor, delta_s_rotor_additional = entropy_solution.x
+        delta_s_stator, delta_s_rotor, delta_s_rotor_additional = entropy_solution.x  # J/(kg K)
         _, analysis_results, blade_row_results, loss_model_results = \
             self.calculate_entropy_rise(delta_s_stator, delta_s_rotor, delta_s_rotor_additional, loss_model)
 
@@ -332,17 +332,17 @@ class Turbine1D:
         self.loss_model_results_at_design_point = loss_model_results
 
         # Get flow angles, which become metal angles
-        self.alpha_1_metal_deg = self.analysis_results_at_design_point["alpha_1"]
-        self.beta_1_metal_deg = self.analysis_results_at_design_point["beta_1"]
-        self.beta_2_metal_deg = self.analysis_results_at_design_point["alpha_2"]
+        self.alpha_1_metal_deg = self.analysis_results_at_design_point["alpha_1"]  # rad
+        self.beta_1_metal_deg = self.analysis_results_at_design_point["beta_1"]  # rad
+        self.beta_2_metal_deg = self.analysis_results_at_design_point["alpha_2"]  # rad
 
         # Calculate and assign remaining properties related to geometry
         self.D_hub, self.D_tip, self.D_mean, self.l_rotor, self.h_shroud, self.s_ax_shroud =\
-            self.__calculate_geometry(self.analysis_results_at_design_point)
-        self.l_stator = self.l_rotor
-        self.R_mean = self.D_mean / 2
-        self.R_hub = self.D_hub / 2
-        self.R_tip = self.D_tip / 2
+            self.__calculate_geometry(self.analysis_results_at_design_point)  # m
+        self.l_stator = self.l_rotor  # m
+        self.R_mean = self.D_mean / 2  # m
+        self.R_hub = self.D_hub / 2  # m
+        self.R_tip = self.D_tip / 2  # m
 
     def calculate_entropy_rise(self, delta_s_stator, delta_s_rotor, delta_s_rotor_additional,
                                loss_model: TraupelLossModel):
@@ -368,10 +368,10 @@ class Turbine1D:
         # In rocket turbines, there are no clearance losses in stators, while partial admission losses belong to the
         # rotor. Therefore, entropy generation in the stator due to aerodynamic losses constitute total entropy
         # generation through the rotor.
-        delta_s_stator_total = delta_s_stator
+        delta_s_stator_total = delta_s_stator  # J/(kg K)
         # In the rotor, aside from aerodynamic losses, there are additional losses like clearance, partial admission
         # or disk friction losses. Total entropy generation is thus the sum of all of these.
-        delta_s_rotor_total = delta_s_rotor + delta_s_rotor_additional
+        delta_s_rotor_total = delta_s_rotor + delta_s_rotor_additional  # J/(kg K)
 
 
         # Thermodynamic properties at each station must be calculated. Thermodynamic properties depend on rotational
@@ -379,19 +379,19 @@ class Turbine1D:
         # numerical solve.
         # First, retrieve some variables from analysis_results_at_design_point
         gas = self.analysis_results_at_design_point["gas"]
-        p_0_over_p_2 = self.analysis_results_at_design_point["p_0_over_p_2"]
-        psi = self.analysis_results_at_design_point["psi"]
-        theta_2 = self.analysis_results_at_design_point["theta_2"]
-        R_h_ideal = self.analysis_results_at_design_point["R_h_ideal"]
+        p_0_over_p_2 = self.analysis_results_at_design_point["p_0_over_p_2"]  # -
+        psi = self.analysis_results_at_design_point["psi"]  # -
+        theta_2 = self.analysis_results_at_design_point["theta_2"]  # -
+        R_h_ideal = self.analysis_results_at_design_point["R_h_ideal"]  # -
         # Now, calculate maximum possible M_u
-        delta_s_total = delta_s_stator_total + delta_s_rotor_total
+        delta_s_total = delta_s_stator_total + delta_s_rotor_total  # J/(kg K)
         h_0_over_h_2 = p_0_over_p_2**((gas.gamma - 1) / gas.gamma) * \
-                       np.exp(-delta_s_total * (gas.gamma - 1) / (gas.gamma * gas.R))
-        M_u_max = np.sqrt((h_0_over_h_2 - 1) / (psi * (gas.gamma - 1)))
+                       np.exp(-delta_s_total * (gas.gamma - 1) / (gas.gamma * gas.R))  # -
+        M_u_max = np.sqrt((h_0_over_h_2 - 1) / (psi * (gas.gamma - 1)))  # -
         # Calculate also initial estimate (approximately analytical solution for loss free calculations and
         # constant flow coefficient)
-        v_2_over_u_2_estimate = np.sqrt(theta_2**2 + (1 - R_h_ideal - psi / 2)**2)
-        M_u_estimate = M_u_max * np.sqrt(2 * psi / (h_0_over_h_2 * v_2_over_u_2_estimate + 2 * psi))
+        v_2_over_u_2_estimate = np.sqrt(theta_2**2 + (1 - R_h_ideal - psi / 2)**2)  # -
+        M_u_estimate = M_u_max * np.sqrt(2 * psi / (h_0_over_h_2 * v_2_over_u_2_estimate + 2 * psi))  # -
         # First, bracketing scheme will be attempted. If bracket does not return opposite signs,
         # Newton's method is used.
         # Create a bracket
@@ -418,25 +418,26 @@ class Turbine1D:
         if not M_u_solution.converged:
             raise RuntimeError("Numerical solve for M_u did not converge.")
         # Obtain solution and the remaining results
-        M_u = M_u_solution.root
+        M_u = M_u_solution.root  # -
         analysis_results, residual = self.__calculate_thermodynamic_properties(
-            M_u, delta_s_stator_total, delta_s_rotor_total, delta_s_rotor_additional)
+            M_u, delta_s_stator_total, delta_s_rotor_total, delta_s_rotor_additional)  # residual: -
 
 
         # Flow angles can be now calculated. These are equal to metal angles. These are affected by the total entropy
         # generation in the rotor, as it affects theta_1 through rho_2.
-        alpha_1, beta_1, alpha_2, beta_2 = self.__calculate_flow_angles(analysis_results)
+        alpha_1, beta_1, alpha_2, beta_2 = self.__calculate_flow_angles(analysis_results)  # rad
         # Append analysis results with these flow angles
-        analysis_results.update({"alpha_1": alpha_1,
-                                 "alpha_2": alpha_2,
-                                 "beta_1": beta_1,
-                                 "beta_2": beta_2,
-                                 "alpha_1_deg": alpha_1 * 180 / np.pi,
-                                 "alpha_2_deg": alpha_2 * 180 / np.pi,
-                                 "beta_1_deg": beta_1 * 180 / np.pi,
-                                 "beta_2_deg": beta_2 * 180 / np.pi,
-                                 "incidence": 0,
-                                 "incidence_deg": 0})
+        analysis_results.update({"alpha_1": alpha_1,  # rad
+                                 "alpha_2": alpha_2,  # rad
+                                 "beta_1": beta_1,  # rad
+                                 "beta_2": beta_2,  # rad
+                                 "alpha_1_deg": alpha_1 * 180 / np.pi,  # deg
+                                 "alpha_2_deg": alpha_2 * 180 / np.pi,  # deg
+                                 "beta_1_deg": beta_1 * 180 / np.pi,  # deg
+                                 "beta_2_deg": beta_2 * 180 / np.pi,  # deg
+                                 "incidence": 0,  # rad
+                                 "incidence_deg": 0,  # deg
+                                 })
 
 
         # Recalculate velocities for the rotor and its calculated angles, but without additional losses like friction,
@@ -446,21 +447,21 @@ class Turbine1D:
         # This is theta_2 for the blade angles above, if delta_s_rotor_additional was zero. However, it is also an
         # outcome of these calculations. Thus, the model is implicit and a numerical solve is again needed.
         # Bracketing scheme will be used, so first theta_2_max is estimated. This is theta_2 as T_2 approaches zero.
-        h_1 = analysis_results["h_1"]
-        w_1 = analysis_results["w_1"]
-        u = analysis_results["u"]
+        h_1 = analysis_results["h_1"]  # J/kg
+        w_1 = analysis_results["w_1"]  # m/s
+        u = analysis_results["u"]  # m/s
         gas = analysis_results["gas"]
-        theta_2_max = np.sqrt(2 * h_1 + w_1**2) / (u * np.sqrt(1 + np.tan(beta_2)**2))
+        theta_2_max = np.sqrt(2 * h_1 + w_1**2) / (u * np.sqrt(1 + np.tan(beta_2)**2))  # -
         # The bracket used can be supersonic or subsonic. theta_2_crit divides these two ranges. Whichever bracket is
         # used depends on the value of original theta_2.
-        theta_2_crit = theta_2_max * np.sqrt((gas.gamma - 1) / (gas.gamma + 1))
+        theta_2_crit = theta_2_max * np.sqrt((gas.gamma - 1) / (gas.gamma + 1))  # -
         subsonic_branch = [1e-3 * theta_2_crit, theta_2_crit]
         supersonic_branch = [theta_2_crit, (1 - 1e-3) * theta_2_max]
         branch = subsonic_branch if theta_2 < theta_2_crit else supersonic_branch
         # Define residual function to solve
         def get_theta_2_blade_residual(theta_2_blade):
             _, residual = self.__calculate_blade_row_velocities(
-                alpha_1, beta_2, theta_2_blade, analysis_results)
+                alpha_1, beta_2, theta_2_blade, analysis_results)  # residual: -
             return residual
         residual_at_branch = [get_theta_2_blade_residual(theta) for theta in branch]
         # Use toms748 if bracket gives opposite results
@@ -479,12 +480,12 @@ class Turbine1D:
         if not theta_2_blade_solution.converged:
             raise RuntimeError("Numerical solve for theta_2_blade did not converge.")
         # Obtain remaining results
-        theta_2_blade = theta_2_blade_solution.root
+        theta_2_blade = theta_2_blade_solution.root  # -
         blade_row_results, _ = self.__calculate_blade_row_velocities(alpha_1, beta_2, theta_2_blade, analysis_results)
 
         # Some additional geometry must be calculated for the loss model. Pack to dictionary to pass to the loss model.
-        D_hub, D_tip, D_mean, l_rotor, h_shroud, s_ax_shroud = self.__calculate_geometry(analysis_results)
-        l_stator = l_rotor
+        D_hub, D_tip, D_mean, l_rotor, h_shroud, s_ax_shroud = self.__calculate_geometry(analysis_results)  # m
+        l_stator = l_rotor  # m
         turbine_geometry = {"D_hub": D_hub,  # m
                             "D_tip": D_tip,  # m
                             "D_mean": D_mean,  # m
@@ -500,7 +501,7 @@ class Turbine1D:
                             "shrouded_rotor": self.shrouded_rotor,  # -
                             "s_ax_shroud": s_ax_shroud,  # m
                             "seal_teeth_number": self.seal_teeth_number, # -
-                            "seal_teeth_spacing": self.seal_teeth_spacing, # -
+                            "seal_teeth_spacing": self.seal_teeth_spacing, # m
                             "t_shroud": self.t_shroud,  # m
                             "h_shroud": h_shroud,  # m
                             "h_shroud_over_blade_length": self.h_shroud_over_blade_length,  # -
@@ -518,11 +519,13 @@ class Turbine1D:
                             "no_blades_stator": self.no_blades_stator,  # -
                             "admission_fraction": self.admission_fraction, # -
                             "partial_admission_rotor": self.partial_admission_rotor,  # string
-                            "sand_grain_roughness": self.sand_grain_roughness} # m
+                            "sand_grain_roughness": self.sand_grain_roughness,  # m
+                            }
 
         # Call loss model, calculate entropy rise and loss coefficients.
         delta_s_stator_output, delta_s_rotor_output, delta_s_rotor_additional_output, loss_model_results =\
-            loss_model.calculate_entropy_increase(analysis_results, turbine_geometry, blade_row_results)
+            loss_model.calculate_entropy_increase(
+                analysis_results, turbine_geometry, blade_row_results)  # entropy rises: J/(kg K)
 
 
         # Calculate residual
@@ -540,27 +543,27 @@ class Turbine1D:
         """
 
         # First obtain design blade velocity and theta_2.
-        u = analysis_results["u"]
-        theta_2 = analysis_results["theta_2"]
+        u = analysis_results["u"]  # m/s
+        theta_2 = analysis_results["theta_2"]  # -
 
         # Calculate axial velocity.
-        v_ax = theta_2 * u
+        v_ax = theta_2 * u  # m/s
 
         # From massflow, density and axial velocity, calculate annulus area.
-        mdot = analysis_results["mdot_total"]
-        rho_2 = analysis_results["rho_2"]
-        area = mdot / (v_ax * rho_2 * self.admission_fraction)
+        mdot = analysis_results["mdot_total"]  # kg/s
+        rho_2 = analysis_results["rho_2"]  # kg/m^3
+        area = mdot / (v_ax * rho_2 * self.admission_fraction)  # m^2
 
         # From annulus area, calculate blade length.
-        D_hub = np.sqrt(self.D_Euler**2 - (2 * area / np.pi))
-        D_tip = np.sqrt(self.D_Euler**2 + (2 * area / np.pi))
-        D_mean = (D_hub + D_tip) / 2
-        l_blade = (D_tip - D_hub) / 2
+        D_hub = np.sqrt(self.D_Euler**2 - (2 * area / np.pi))  # m
+        D_tip = np.sqrt(self.D_Euler**2 + (2 * area / np.pi))  # m
+        D_mean = (D_hub + D_tip) / 2  # m
+        l_blade = (D_tip - D_hub) / 2  # m
 
         # If shroud is used, calculate remaining variables. Otherwise, these are None.
         if self.shrouded_rotor:
-            h_shroud = self.h_shroud_over_blade_length * l_blade
-            s_ax_shroud = self.s_ax_shroud_over_h_shroud * h_shroud
+            h_shroud = self.h_shroud_over_blade_length * l_blade  # m
+            s_ax_shroud = self.s_ax_shroud_over_h_shroud * h_shroud  # m
         else:
             h_shroud = None
             s_ax_shroud = None
@@ -585,157 +588,158 @@ class Turbine1D:
         """
 
         # Retrieve already known variables from analysis_results_at_design_point
-        psi = self.analysis_results_at_design_point["psi"]
-        R_h_ideal = self.analysis_results_at_design_point["R_h_ideal"]
-        theta_2 = self.analysis_results_at_design_point["theta_2"]
-        p_0_over_p_2 = self.analysis_results_at_design_point["p_0_over_p_2"]
-        T_0 = self.analysis_results_at_design_point["T_0"]
-        p_0 = self.analysis_results_at_design_point["p_0"]
+        psi = self.analysis_results_at_design_point["psi"]  # -
+        R_h_ideal = self.analysis_results_at_design_point["R_h_ideal"]  # -
+        theta_2 = self.analysis_results_at_design_point["theta_2"]  # -
+        p_0_over_p_2 = self.analysis_results_at_design_point["p_0_over_p_2"]  # -
+        T_0 = self.analysis_results_at_design_point["T_0"]  # K
+        p_0 = self.analysis_results_at_design_point["p_0"]  # Pa
         gas = self.analysis_results_at_design_point["gas"]
-        u = self.analysis_results_at_design_point["u"]
+        u = self.analysis_results_at_design_point["u"]  # m/s
 
         # Calculate total entropy increase
-        delta_s = total_delta_s_rotor + total_delta_s_stator
+        delta_s = total_delta_s_rotor + total_delta_s_stator  # J/(kg K)
         # Calculate h_0
-        h_0 = gas.Cp * T_0
+        h_0 = gas.Cp * T_0  # J/kg
         # Calculate h_0_over_h_2
         h_0_over_h_2 = p_0_over_p_2**((gas.gamma - 1)/ gas.gamma) \
-                       * np.exp(-delta_s * (gas.gamma - 1) / (gas.gamma * gas.R))
+                       * np.exp(-delta_s * (gas.gamma - 1) / (gas.gamma * gas.R))  # -
         # Calculate h_t0_over_h_t2
-        h_t0_over_h_t2 = psi * (gas.gamma - 1) * M_u**2 + 1
+        h_t0_over_h_t2 = psi * (gas.gamma - 1) * M_u**2 + 1  # -
         # Calculate h_t2_over_h_2
-        h_t2_over_h_2 = h_0_over_h_2 / h_t0_over_h_t2
+        h_t2_over_h_2 = h_0_over_h_2 / h_t0_over_h_t2  # -
         # Calculate h_1_over_h_2_isentropic
-        h_1_over_h_2_isentropic = R_h_ideal * (h_t0_over_h_t2 - 1) * h_t2_over_h_2 + 1
+        h_1_over_h_2_isentropic = R_h_ideal * (h_t0_over_h_t2 - 1) * h_t2_over_h_2 + 1  # -
         # Calculate h_1_over_h_2
-        h_1_over_h_2 = h_1_over_h_2_isentropic * np.exp(-total_delta_s_rotor * (gas.gamma - 1) / (gas.R * gas.gamma))
+        h_1_over_h_2 = h_1_over_h_2_isentropic * np.exp(
+            -total_delta_s_rotor * (gas.gamma - 1) / (gas.R * gas.gamma))  # -
         # Calculate nonisentropic degree of reaction, R_h
-        R_h = ((h_1_over_h_2 - 1) / (h_t0_over_h_t2 - 1)) / h_1_over_h_2_isentropic
+        R_h = ((h_1_over_h_2 - 1) / (h_t0_over_h_t2 - 1)) / h_1_over_h_2_isentropic  # -
 
         # Calculate p_2, T_2, rho_2, h_2, h_t2
-        p_2 = p_0 / p_0_over_p_2
-        h_2 = h_0 / h_0_over_h_2
-        T_2 = h_2 / gas.Cp
-        rho_2 = gas.calculate_density(p_2, T_2)
-        h_t2 = h_0 / h_t0_over_h_t2
+        p_2 = p_0 / p_0_over_p_2  # Pa
+        h_2 = h_0 / h_0_over_h_2  # J/kg
+        T_2 = h_2 / gas.Cp  # K
+        rho_2 = gas.calculate_density(p_2, T_2)  # kg/m^3
+        h_t2 = h_0 / h_t0_over_h_t2  # J/kg
 
         # Calculate p_1, T_1, rho_1, h_1, h_t1
-        h_1 = h_2 * h_1_over_h_2
-        T_1 = h_1 / gas.Cp
-        p_1 = p_2 * np.exp(total_delta_s_rotor / gas.R) * h_1_over_h_2**(gas.gamma / (gas.gamma - 1))
-        rho_1 = gas.calculate_density(p_1, T_1)
+        h_1 = h_2 * h_1_over_h_2  # J/kg
+        T_1 = h_1 / gas.Cp  # K
+        p_1 = p_2 * np.exp(total_delta_s_rotor / gas.R) * h_1_over_h_2**(gas.gamma / (gas.gamma - 1))  # Pa
+        rho_1 = gas.calculate_density(p_1, T_1)  # kg/m^3
         # Energy is conserved between station 0 and station 1, so:
-        h_t1 = h_0
+        h_t1 = h_0  # J/kg
 
         # Calculate theta_1
-        theta_1 = theta_2 * rho_2 / rho_1
+        theta_1 = theta_2 * rho_2 / rho_1  # -
 
         # Calculate velocity_ratio_squared
-        v_2_over_u = np.sqrt(theta_2**2 + (1 - R_h - psi / 2 + (theta_2**2 - theta_1**2) / (2 * psi))**2)
+        v_2_over_u = np.sqrt(theta_2**2 + (1 - R_h - psi / 2 + (theta_2**2 - theta_1**2) / (2 * psi))**2)  # -
 
         # Calculate residual that must be zero
-        dummy_1 = M_u**2 * h_t2_over_h_2 * v_2_over_u**2
-        dummy_2 = (2 / (gas.gamma - 1)) * (h_t2_over_h_2 - 1)
-        residual = dummy_1 - dummy_2
+        dummy_1 = M_u**2 * h_t2_over_h_2 * v_2_over_u**2  # -
+        dummy_2 = (2 / (gas.gamma - 1)) * (h_t2_over_h_2 - 1)  # -
+        residual = dummy_1 - dummy_2  # -
 
         # Calculate remaining values of interest.
         # First calculate ideal psi
-        h_t2_over_h_t0 = 1 / h_t0_over_h_t2
+        h_t2_over_h_t0 = 1 / h_t0_over_h_t2  # -
         psi_ideal = psi * (1 - h_t2_over_h_t0 * np.exp(-delta_s * (gas.gamma - 1) / (gas.gamma * gas.R))) \
-                    / (1 - h_t2_over_h_t0)
+                    / (1 - h_t2_over_h_t0)  # -
 
         # Now velocity and Mach number at station 1. First calculate velocity of sound there:
-        a_1 = gas.calculate_sound_velocity(T_1)
-        h_1_ideal = h_0 * (p_1 / p_0) ** ((gas.gamma - 1) / gas.gamma)
-        T_1_ideal = h_1_ideal / gas.Cp
-        a_1_ideal = gas.calculate_sound_velocity(T_1_ideal)
+        a_1 = gas.calculate_sound_velocity(T_1)  # m/s
+        h_1_ideal = h_0 * (p_1 / p_0) ** ((gas.gamma - 1) / gas.gamma)  # J/kg
+        T_1_ideal = h_1_ideal / gas.Cp  # K
+        a_1_ideal = gas.calculate_sound_velocity(T_1_ideal)  # m/s
         # Real and ideal velocity and Mach number in stationary reference frame:
-        v_1 = np.sqrt(2 * (h_0 - h_1))
-        delta_h_loss_stator = h_1 - h_1_ideal
-        v_1_ideal = np.sqrt(v_1**2 + 2 * delta_h_loss_stator)
-        M_s1 = v_1 / a_1
-        M_s1_ideal = v_1_ideal / a_1_ideal
+        v_1 = np.sqrt(2 * (h_0 - h_1))  # m/s
+        delta_h_loss_stator = h_1 - h_1_ideal  # J/kg
+        v_1_ideal = np.sqrt(v_1**2 + 2 * delta_h_loss_stator)  # m/s
+        M_s1 = v_1 / a_1  # -
+        M_s1_ideal = v_1_ideal / a_1_ideal  # -
         # Now real values in rotary reference frame:
-        dummy_a1 = 1 - R_h + psi / 2 + (theta_2**2 - theta_1**2) / (2 * psi)
-        dummy_b1 = dummy_a1 - 1
-        w_1 = u * np.sqrt(theta_1**2 + dummy_b1**2)
-        M_r1 = w_1 / a_1
+        dummy_a1 = 1 - R_h + psi / 2 + (theta_2**2 - theta_1**2) / (2 * psi)  # -
+        dummy_b1 = dummy_a1 - 1  # -
+        w_1 = u * np.sqrt(theta_1**2 + dummy_b1**2)  # m/s
+        M_r1 = w_1 / a_1  # -
 
         # Now velocity and Mach number at station 2. Ideal values at station 2
         # still assume real values at station 1. First calculate velocity of sound at station 2.
-        a_2 = gas.calculate_sound_velocity(T_2)
-        h_2_ideal = h_1 * (p_2 / p_1) ** ((gas.gamma - 1) / gas.gamma)
-        T_2_ideal = h_2_ideal / gas.Cp
-        a_2_ideal = gas.calculate_sound_velocity(T_2_ideal)
+        a_2 = gas.calculate_sound_velocity(T_2)  # m/s
+        h_2_ideal = h_1 * (p_2 / p_1) ** ((gas.gamma - 1) / gas.gamma)  # J/kg
+        T_2_ideal = h_2_ideal / gas.Cp  # K
+        a_2_ideal = gas.calculate_sound_velocity(T_2_ideal)  # m/s
         # Real values in stationary reference frame:
-        v_2 = v_2_over_u * u
-        M_s2 = v_2 / a_2
+        v_2 = v_2_over_u * u  # m/s
+        M_s2 = v_2 / a_2  # -
         # Ideal values in stationary reference frame:
-        v_2_ideal = np.sqrt(2*(h_t1 - psi_ideal * u**2 - h_2_ideal))
-        M_s2_ideal = v_2_ideal / a_2_ideal
+        v_2_ideal = np.sqrt(2*(h_t1 - psi_ideal * u**2 - h_2_ideal))  # m/s
+        M_s2_ideal = v_2_ideal / a_2_ideal  # -
         # Now values in rotary reference frame:
-        dummy_a2 = dummy_a1 - psi
-        dummy_b2 = dummy_a2 - 1
-        w_2 = u * np.sqrt(theta_2**2 + dummy_b2**2)
-        delta_h_loss_rotor = h_2 - h_2_ideal
-        w_2_ideal = np.sqrt(w_2**2 + 2 * delta_h_loss_rotor)
-        M_r2 = w_2 / a_2
-        M_r2_ideal = w_2_ideal / a_2_ideal
+        dummy_a2 = dummy_a1 - psi  # -
+        dummy_b2 = dummy_a2 - 1  # -
+        w_2 = u * np.sqrt(theta_2**2 + dummy_b2**2)  # m/s
+        delta_h_loss_rotor = h_2 - h_2_ideal  # J/kg
+        w_2_ideal = np.sqrt(w_2**2 + 2 * delta_h_loss_rotor)  # m/s
+        M_r2 = w_2 / a_2  # -
+        M_r2_ideal = w_2_ideal / a_2_ideal  # -
 
         # Calculate real pressure reaction, R_p
-        R_p = (p_1 - p_2) / (p_0 - p_2)
+        R_p = (p_1 - p_2) / (p_0 - p_2)  # -
 
         # Calculate Reynolds numbers
-        Re_s1 = rho_1 * v_1 * self.c_stator / gas.calculate_dynamic_viscosity(T_1)
-        Re_r2 = rho_2 * w_2 * self.c_rotor / gas.calculate_dynamic_viscosity(T_2)
+        Re_s1 = rho_1 * v_1 * self.c_stator / gas.calculate_dynamic_viscosity(T_1)  # -
+        Re_r2 = rho_2 * w_2 * self.c_rotor / gas.calculate_dynamic_viscosity(T_2)  # -
 
         # Package thermodynamic properties, velocities and loading coefficients into analysis_results dictionary.
         # Make it a copy of analysis_results_at_design_point, such that the values there stay constant during
         # iterations.
         analysis_results = self.analysis_results_at_design_point.copy()
-        analysis_results.update({"h_0": h_0,
-                                 "p_1": p_1,
-                                 "T_1": T_1,
-                                 "rho_1": rho_1,
-                                 "T_1_ideal": T_1_ideal,
-                                 "h_1": h_1,
-                                 "h_t1": h_t1,
-                                 "h_1_ideal": h_1_ideal,
-                                 "delta_s_stator": total_delta_s_stator,
-                                 "a_1": a_1,
-                                 "a_1_ideal": a_1_ideal,
-                                 "v_1": v_1,
-                                 "v_1_ideal": v_1_ideal,
-                                 "w_1": w_1,
-                                 "M_s1": M_s1,
-                                 "M_s1_ideal": M_s1_ideal,
-                                 "M_r1": M_r1,
-                                 "p_2": p_2,
-                                 "T_2": T_2,
-                                 "rho_2": rho_2,
-                                 "T_2_ideal": T_2_ideal,
-                                 "h_2": h_2,
-                                 "h_t2": h_t2,
-                                 "h_2_ideal": h_2_ideal,
-                                 "delta_s_rotor": total_delta_s_rotor - delta_s_rotor_additional,
-                                 "delta_s_rotor_additional": delta_s_rotor_additional,
-                                 "a_2": a_2,
-                                 "a_2_ideal": a_2_ideal,
-                                 "v_2": v_2,
-                                 "v_2_ideal": v_2_ideal,
-                                 "w_2": w_2,
-                                 "w_2_ideal": w_2_ideal,
-                                 "M_s2": M_s2,
-                                 "M_s2_ideal": M_s2_ideal,
-                                 "M_r2": M_r2,
-                                 "M_r2_ideal": M_r2_ideal,
-                                 "R_p": R_p,
-                                 "psi_ideal": psi_ideal,
-                                 "psi_ideal_design": psi_ideal,
-                                 "R_h": R_h,
-                                 "theta_1": theta_1,
-                                 "Re_s1": Re_s1,
-                                 "Re_r2": Re_r2
+        analysis_results.update({"h_0": h_0,  # J/kg
+                                 "p_1": p_1,  # Pa
+                                 "T_1": T_1,  # K
+                                 "rho_1": rho_1,  # kg/m^3
+                                 "T_1_ideal": T_1_ideal,  # K
+                                 "h_1": h_1,  # J/kg
+                                 "h_t1": h_t1,  # J/kg
+                                 "h_1_ideal": h_1_ideal,  # J/kg
+                                 "delta_s_stator": total_delta_s_stator,  # J/(kg K)
+                                 "a_1": a_1,  # m/s
+                                 "a_1_ideal": a_1_ideal,  # m/s
+                                 "v_1": v_1,  # m/s
+                                 "v_1_ideal": v_1_ideal,  # m/s
+                                 "w_1": w_1,  # m/s
+                                 "M_s1": M_s1,  # -
+                                 "M_s1_ideal": M_s1_ideal,  # -
+                                 "M_r1": M_r1,  # -
+                                 "p_2": p_2,  # Pa
+                                 "T_2": T_2,  # K
+                                 "rho_2": rho_2,  # kg/m^3
+                                 "T_2_ideal": T_2_ideal,  # K
+                                 "h_2": h_2,  # J/kg
+                                 "h_t2": h_t2,  # J/kg
+                                 "h_2_ideal": h_2_ideal,  # J/kg
+                                 "delta_s_rotor": total_delta_s_rotor - delta_s_rotor_additional,  # J/(kg K)
+                                 "delta_s_rotor_additional": delta_s_rotor_additional,  # J/(kg K)
+                                 "a_2": a_2,  # m/s
+                                 "a_2_ideal": a_2_ideal,  # m/s
+                                 "v_2": v_2,  # m/s
+                                 "v_2_ideal": v_2_ideal,  # m/s
+                                 "w_2": w_2,  # m/s
+                                 "w_2_ideal": w_2_ideal,  # m/s
+                                 "M_s2": M_s2,  # -
+                                 "M_s2_ideal": M_s2_ideal,  # -
+                                 "M_r2": M_r2,  # -
+                                 "M_r2_ideal": M_r2_ideal,  # -
+                                 "R_p": R_p,  # -
+                                 "psi_ideal": psi_ideal,  # -
+                                 "psi_ideal_design": psi_ideal,  # -
+                                 "R_h": R_h,  # -
+                                 "theta_1": theta_1,  # -
+                                 "Re_s1": Re_s1,  # -
+                                 "Re_r2": Re_r2,  # -
                                  })
 
         # Return residual
@@ -753,17 +757,17 @@ class Turbine1D:
         """
 
         # Retrieve variables from analysis_results
-        theta_1 = analysis_results["theta_1"]
-        theta_2 = analysis_results["theta_2"]
-        R_h = analysis_results["R_h"]
-        psi = analysis_results["psi"]
+        theta_1 = analysis_results["theta_1"]  # -
+        theta_2 = analysis_results["theta_2"]  # -
+        R_h = analysis_results["R_h"]  # -
+        psi = analysis_results["psi"]  # -
         # Calculate support variable
-        dummy_theta = (theta_2**2 - theta_1**2) / (2 * psi)
+        dummy_theta = (theta_2**2 - theta_1**2) / (2 * psi)  # -
         # Calculate flow angles
-        alpha_1 = np.atan2(1 - R_h + psi / 2 + dummy_theta, theta_1)
-        beta_1 = np.atan2(-R_h + psi / 2 + dummy_theta, theta_1)
-        beta_2 = np.atan2(-R_h - psi / 2 + dummy_theta, theta_2)
-        alpha_2 = np.atan2(1 - R_h - psi / 2 + dummy_theta, theta_2)
+        alpha_1 = np.atan2(1 - R_h + psi / 2 + dummy_theta, theta_1)  # rad
+        beta_1 = np.atan2(-R_h + psi / 2 + dummy_theta, theta_1)  # rad
+        beta_2 = np.atan2(-R_h - psi / 2 + dummy_theta, theta_2)  # rad
+        alpha_2 = np.atan2(1 - R_h - psi / 2 + dummy_theta, theta_2)  # rad
         # Return all flow angles
         return alpha_1, beta_1, alpha_2, beta_2
 
@@ -785,70 +789,71 @@ class Turbine1D:
         # The inlet velocity to the rotor blade row at station 1 is unchanged, since additional rotor losses only affect
         # results at the station 2.
         gas = analysis_results["gas"]
-        p_1_blade = analysis_results["p_1"]
-        T_1_blade = analysis_results["T_1"]
-        rho_1_blade = analysis_results["rho_1"]
-        h_1_blade = analysis_results["h_1"]
-        w_1_blade = analysis_results["w_1"]
-        v_1_blade = analysis_results["v_1"]
-        M_s1_blade = analysis_results["M_s1"]
-        theta_1_blade = analysis_results["theta_1"]
-        h_0 = analysis_results["h_0"]
-        p_0 = analysis_results["p_0"]
+        p_1_blade = analysis_results["p_1"]  # Pa
+        T_1_blade = analysis_results["T_1"]  # K
+        rho_1_blade = analysis_results["rho_1"]  # kg/m^3
+        h_1_blade = analysis_results["h_1"]  # J/kg
+        w_1_blade = analysis_results["w_1"]  # m/s
+        v_1_blade = analysis_results["v_1"]  # m/s
+        M_s1_blade = analysis_results["M_s1"]  # -
+        theta_1_blade = analysis_results["theta_1"]  # -
+        h_0 = analysis_results["h_0"]  # J/kg
+        p_0 = analysis_results["p_0"]  # Pa
         # Unpack entropy increase across the rotor due to aerodynamic losses
-        delta_s_rotor = analysis_results["delta_s_rotor"]
+        delta_s_rotor = analysis_results["delta_s_rotor"]  # J/(kg K)
         # Blade velocity is also the same
-        u = analysis_results["u"]
+        u = analysis_results["u"]  # m/s
 
         # Based on assumed theta_2_blade, calculate velocities for the blade row alone at station 2.
-        w_2_blade = np.sqrt(u**2 * theta_2_blade**2 * (1 + np.tan(beta_2_metal)**2))
-        v_2_blade = np.sqrt(u**2 * (theta_2_blade**2 + (1 + theta_2_blade * np.tan(beta_2_metal))**2))
+        w_2_blade = np.sqrt(u**2 * theta_2_blade**2 * (1 + np.tan(beta_2_metal)**2))  # m/s
+        v_2_blade = np.sqrt(u**2 * (theta_2_blade**2 + (1 + theta_2_blade * np.tan(beta_2_metal))**2))  # m/s
 
         # From the conservation of rotalphy, get enthalpy and temperature at station 2
-        h_2_blade = h_1_blade + (w_1_blade**2 - w_2_blade**2) / 2
-        T_2_blade = h_2_blade / gas.Cp
+        h_2_blade = h_1_blade + (w_1_blade**2 - w_2_blade**2) / 2  # J/kg
+        T_2_blade = h_2_blade / gas.Cp  # K
         # Entropy increase across the rotor is known, so pressure at station 2 can be calculated. It will be higher
         # than pressure at station 2 for the whole stage.
-        p_2_blade = p_1_blade * np.exp((gas.Cp * np.log(T_2_blade / T_1_blade) - delta_s_rotor) / gas.R)
-        rho_2_blade = gas.calculate_density(p_2_blade, T_2_blade)
+        p_2_blade = p_1_blade * np.exp((gas.Cp * np.log(T_2_blade / T_1_blade) - delta_s_rotor) / gas.R)  # Pa
+        rho_2_blade = gas.calculate_density(p_2_blade, T_2_blade)  # kg/m^3
 
         # From continuity, theta_2_blade_output can be calculated. The difference between the assumed and calculated
         # values can be also calculated.
-        theta_2_blade_output = rho_1_blade * theta_1_blade / rho_2_blade
-        residual = theta_2_blade_output - theta_2_blade
+        theta_2_blade_output = rho_1_blade * theta_1_blade / rho_2_blade  # -
+        residual = theta_2_blade_output - theta_2_blade  # -
 
         # Some other quantities can be also calculated for the blade row alone.
-        alpha_2_blade = np.atan2(1 + theta_2_blade * np.tan(beta_2_metal), theta_2_blade)
-        psi_blade = theta_1_blade * np.tan(alpha_1_metal) - theta_2_blade * np.tan(beta_2_metal) - 1
-        R_h_blade = (h_1_blade - h_2_blade) / (h_0 - h_2_blade)
-        p_0_over_p_2_blade = p_0 / p_2_blade
-        M_r2_blade = w_2_blade / gas.calculate_sound_velocity(T_2_blade)
-        M_r1_blade = w_1_blade / gas.calculate_sound_velocity(T_1_blade)
+        alpha_2_blade = np.atan2(1 + theta_2_blade * np.tan(beta_2_metal), theta_2_blade)  # rad
+        psi_blade = theta_1_blade * np.tan(alpha_1_metal) - theta_2_blade * np.tan(beta_2_metal) - 1  # -
+        R_h_blade = (h_1_blade - h_2_blade) / (h_0 - h_2_blade)  # -
+        p_0_over_p_2_blade = p_0 / p_2_blade  # -
+        M_r2_blade = w_2_blade / gas.calculate_sound_velocity(T_2_blade)  # -
+        M_r1_blade = w_1_blade / gas.calculate_sound_velocity(T_1_blade)  # -
 
         # Calculate Reynolds numbers
-        Re_s1_blade = rho_1_blade * v_1_blade * self.c_stator / gas.calculate_dynamic_viscosity(T_1_blade)
-        Re_r2_blade = rho_2_blade * v_2_blade * self.c_rotor / gas.calculate_dynamic_viscosity(T_2_blade)
+        Re_s1_blade = rho_1_blade * v_1_blade * self.c_stator / gas.calculate_dynamic_viscosity(T_1_blade)  # -
+        Re_r2_blade = rho_2_blade * v_2_blade * self.c_rotor / gas.calculate_dynamic_viscosity(T_2_blade)  # -
 
         # Now pack the results and return them together with residual
-        blade_row_results = {"v_1_blade": v_1_blade,
-                             "w_1_blade": w_1_blade,
-                             "p_1_blade": p_1_blade,
-                             "T_1_blade": T_1_blade,
-                             "rho_1_blade": rho_1_blade,
-                             "M_s1_blade": M_s1_blade,
-                             "v_2_blade": v_2_blade,
-                             "w_2_blade": w_2_blade,
-                             "p_2_blade": p_2_blade,
-                             "T_2_blade": T_2_blade,
-                             "rho_2_blade": rho_2_blade,
-                             "M_r1_blade": M_r1_blade,
-                             "M_r2_blade": M_r2_blade,
-                             "alpha_2_blade": alpha_2_blade,
-                             "psi_blade": psi_blade,
-                             "R_h_blade": R_h_blade,
-                             "p_0_over_p_2_blade": p_0_over_p_2_blade,
-                             "Re_s1_blade": Re_s1_blade,
-                             "Re_r2_blade": Re_r2_blade}
+        blade_row_results = {"v_1_blade": v_1_blade,  # m/s
+                             "w_1_blade": w_1_blade,  # m/s
+                             "p_1_blade": p_1_blade,  # Pa
+                             "T_1_blade": T_1_blade,  # K
+                             "rho_1_blade": rho_1_blade,  # kg/m^3
+                             "M_s1_blade": M_s1_blade,  # -
+                             "v_2_blade": v_2_blade,  # m/s
+                             "w_2_blade": w_2_blade,  # m/s
+                             "p_2_blade": p_2_blade,  # Pa
+                             "T_2_blade": T_2_blade,  # K
+                             "rho_2_blade": rho_2_blade,  # kg/m^3
+                             "M_r1_blade": M_r1_blade,  # -
+                             "M_r2_blade": M_r2_blade,  # -
+                             "alpha_2_blade": alpha_2_blade,  # rad
+                             "psi_blade": psi_blade,  # -
+                             "R_h_blade": R_h_blade,  # -
+                             "p_0_over_p_2_blade": p_0_over_p_2_blade,  # -
+                             "Re_s1_blade": Re_s1_blade,  # -
+                             "Re_r2_blade": Re_r2_blade,  # -
+                             }
         return blade_row_results, residual
 
 

@@ -596,13 +596,13 @@ class TraupelLossModel:
         if Re <= 8e4:
             return 0.0
 
-        zeta_h = self.interpolator_zeta_h(delta_a_ratio, trailing_edge_blockage)
+        zeta_h = self.interpolator_zeta_h(delta_a_ratio, trailing_edge_blockage)  # -
         if Re >= 1.5e5:
             return zeta_h
 
         # Approximate Traupel's elliptical transition with a quarter ellipse that levels off at full strength.
-        relative_Re = (Re - 8e4) / (1.5e5 - 8e4)
-        transition_factor = np.sqrt(1 - (1 - relative_Re)**2)
+        relative_Re = (Re - 8e4) / (1.5e5 - 8e4)  # -
+        transition_factor = np.sqrt(1 - (1 - relative_Re)**2)  # -
         return zeta_h * transition_factor
 
     def calculate_zeta_f(self, length_ratio, speed_parameter):
@@ -649,7 +649,7 @@ class TraupelLossModel:
         """
 
         # Figure 8.4.16 uses the sine of Traupel's outlet angle as its first coordinate.
-        sine_angle = np.sin(outlet_angle)
+        sine_angle = np.sin(outlet_angle)  # -
         return self.interpolator_K_sigma(sine_angle, velocity_change_ratio, normalized_clearance)
 
     def calculate_C_M(self, Re):
@@ -689,11 +689,11 @@ class TraupelLossModel:
 
         # Read the g limit for this geometry and stop reducing the pressure ratio once the flow is at its maximum.
         critical_pressure_ratio = self.interpolator_critical_pressure_ratio(
-            teeth_number, teeth_spacing_over_seal_clearance)
-        pressure_ratio = max(p_2_over_p_1, critical_pressure_ratio)
+            teeth_number, teeth_spacing_over_seal_clearance)  # -
+        pressure_ratio = max(p_2_over_p_1, critical_pressure_ratio)  # -
         # The Phi^2 interpolator itself is uncapped; apply the limit here before taking the square root.
         phi_squared = self.interpolator_phi_squared(
-            pressure_ratio, teeth_spacing_over_seal_clearance, teeth_number)
+            pressure_ratio, teeth_spacing_over_seal_clearance, teeth_number)  # -
         return np.sqrt(phi_squared)
 
     def calculate_blade_row_aerodynamic_loss(self, blade_row, inlet_angle, outlet_angle, t_TE_over_pitch,
@@ -728,64 +728,64 @@ class TraupelLossModel:
         # Aerodynamic loss coefficient of the blade row has the form of zeta = zeta_p + zeta_f + zeta_rest
         # First calculate profiles loss, zeta_p = chi_R * chi_M * zeta_p0 + zeta_h + zeta_C
         # Calculate chi_R
-        chi_R = self.calculate_chi_R(Reynolds_number, roughness_over_chord)
+        chi_R = self.calculate_chi_R(Reynolds_number, roughness_over_chord)  # -
         # Calculate chi_M
-        chi_M = self.calculate_chi_M(outlet_Mach_number, blade_row)
+        chi_M = self.calculate_chi_M(outlet_Mach_number, blade_row)  # -
         # Calculate zeta_p0
-        zeta_p0 = self.calculate_zeta_p0(inlet_angle * 180 / np.pi, outlet_angle * 180 / np.pi)
-        corrected_zeta_p0 = chi_R * chi_M * zeta_p0
+        zeta_p0 = self.calculate_zeta_p0(inlet_angle * 180 / np.pi, outlet_angle * 180 / np.pi)  # -
+        corrected_zeta_p0 = chi_R * chi_M * zeta_p0  # -
         # Calculate zeta_h
-        zeta_h = self.calculate_zeta_h(t_TE_over_pitch/corrected_zeta_p0, t_TE_over_pitch, Reynolds_number)
+        zeta_h = self.calculate_zeta_h(t_TE_over_pitch/corrected_zeta_p0, t_TE_over_pitch, Reynolds_number)  # -
         # Calcuale zeta C
-        zeta_C = (t_TE_over_pitch / (1 - t_TE_over_pitch))**2 * np.sin(outlet_angle)**2
+        zeta_C = (t_TE_over_pitch / (1 - t_TE_over_pitch))**2 * np.sin(outlet_angle)**2  # -
         # Sum individual coefficients
-        zeta_p = chi_R * chi_M * zeta_p0 + zeta_h + zeta_C
+        zeta_p = chi_R * chi_M * zeta_p0 + zeta_h + zeta_C  # -
 
         # Calculate fanning loss coefficients
-        zeta_f = self.calculate_zeta_f(blade_length_over_mean_diameter, speed_parameter)
+        zeta_f = self.calculate_zeta_f(blade_length_over_mean_diameter, speed_parameter)  # -
 
         # Calculate approximation of the zeta_p over the whole blade
-        integrated_zeta_p = zeta_p + zeta_f
+        integrated_zeta_p = zeta_p + zeta_f  # -
 
         # Calculate the residual loss due to endwall effects. First calculate critical length ratio.
         if blade_row == "stator":
-            coefficient = 7
+            coefficient = 7  # -
         else:
-            coefficient = 10 if self.rotor in ("impulse_low_M", "impulse_high_M") else 7
-        critical_blade_length_to_pitch_ratio = np.sqrt(integrated_zeta_p) * coefficient
-        blade_length_to_pitch_ratio = chord_over_pitch / chord_over_blade_length
+            coefficient = 10 if self.rotor in ("impulse_low_M", "impulse_high_M") else 7  # -
+        critical_blade_length_to_pitch_ratio = np.sqrt(integrated_zeta_p) * coefficient  # -
+        blade_length_to_pitch_ratio = chord_over_pitch / chord_over_blade_length  # -
         # The residual loss calculations depend on if the blade_length_to_pitch_ratio is above or below the critical
         # ratio. However, both branches require zeta_a.
         if shrouded_row:
-            zeta_a = (0.04 / np.sin(outlet_angle)) * shroud_axial_clearance_over_blade_length
+            zeta_a = (0.04 / np.sin(outlet_angle)) * shroud_axial_clearance_over_blade_length  # -
         else:
             # If the blade row is the rotor, zeta_a is zero, because there is no blade row afterwards
-            if blade_row == "rotor": zeta_a = 0
+            if blade_row == "rotor": zeta_a = 0  # -
             # If the blade row is the stator, calculate zeta_a
             elif blade_row == "stator":
-                c_f = self.calculate_c_f(Reynolds_number, roughness_over_hydraulic_diameter)
+                c_f = self.calculate_c_f(Reynolds_number, roughness_over_hydraulic_diameter)  # -
                 zeta_a = (c_f / np.sin(inlet_angle)) * (1 + blade_length_over_mean_diameter) * \
-                         axial_clearance_over_blade_length
+                         axial_clearance_over_blade_length  # -
         # Also calculate F factor which is needed for both branches
-        flow_angle_change = 180 - (inlet_angle + outlet_angle) * 180 / np.pi
-        F_coefficient = self.calculate_F(flow_angle_change, blade_velocity_ratio)
+        flow_angle_change = 180 - (inlet_angle + outlet_angle) * 180 / np.pi  # deg
+        F_coefficient = self.calculate_F(flow_angle_change, blade_velocity_ratio)  # -
         # Calculate the residual loss if length ratio is above the critical value
         if blade_length_to_pitch_ratio >= critical_blade_length_to_pitch_ratio:
-            zeta_rest = zeta_a + (zeta_p / zeta_p0) * F_coefficient / blade_length_to_pitch_ratio
+            zeta_rest = zeta_a + (zeta_p / zeta_p0) * F_coefficient / blade_length_to_pitch_ratio  # -
         # Calculate the residual loss if length ratio is below the critical value
         else:
             # Choose A coefficient. According to Traupel, it has avalue of 0.02 for strongly accelerating cascades,
             # or 0.035 for impulse rotors.
             if blade_row == "stator":
-                A_coefficient = 0.02
+                A_coefficient = 0.02  # -
             else:
-                A_coefficient = 0.035 if self.rotor in ("impulse_low_M", "impulse_high_M") else 0.02
+                A_coefficient = 0.035 if self.rotor in ("impulse_low_M", "impulse_high_M") else 0.02  # -
             zeta_rest = zeta_a + (zeta_p / zeta_p0) * F_coefficient / critical_blade_length_to_pitch_ratio \
                         + A_coefficient * chord_over_pitch * \
-                        (1 / blade_length_to_pitch_ratio - 1 / critical_blade_length_to_pitch_ratio)
+                        (1 / blade_length_to_pitch_ratio - 1 / critical_blade_length_to_pitch_ratio)  # -
 
         # Calculate and return total aerodynamic loss coefficient
-        zeta_total_aerodynamic = integrated_zeta_p + zeta_rest
+        zeta_total_aerodynamic = integrated_zeta_p + zeta_rest  # -
         return zeta_total_aerodynamic
 
     def calculate_shrouded_rotor_clearance_loss(self, tip_diameter, seal_clearance, teeth_number, teeth_spacing,
@@ -810,18 +810,18 @@ class TraupelLossModel:
         """
 
         # First calculate seal flow area
-        A_seal = tip_diameter * np.pi * seal_clearance
+        A_seal = tip_diameter * np.pi * seal_clearance  # m^2
         # Calculate flow coefficient phi
-        phi = self.calculate_phi(p_2_over_p_1, teeth_spacing / seal_clearance, teeth_number)
+        phi = self.calculate_phi(p_2_over_p_1, teeth_spacing / seal_clearance, teeth_number)  # -
         # Calculate leak rate
-        mdot_leak_rotor = admission_fraction * A_seal * phi * np.sqrt(p_1 * rho_1)
+        mdot_leak_rotor = admission_fraction * A_seal * phi * np.sqrt(p_1 * rho_1)  # kg/s
         # Calculate relative leak flow rate, mu coefficient
-        mu = mdot_leak_rotor / (admission_fraction * mdot - mdot_leak_rotor) # kg/s
+        mu = mdot_leak_rotor / (admission_fraction * mdot - mdot_leak_rotor)  # -
         # Calculate speed parameters
-        v_operation = 1 / np.sqrt(2 * operation_isentropic_loading_coefficient)
-        v_design = 1 / np.sqrt(2 * design_isentropic_loading_coefficient)
+        v_operation = 1 / np.sqrt(2 * operation_isentropic_loading_coefficient)  # -
+        v_design = 1 / np.sqrt(2 * design_isentropic_loading_coefficient)  # -
         # Calculate clearance loss and return it together with the leak rate
-        zeta_clearance_rotor = mu * (1 - ((v_operation - v_design) / v_design)**2)
+        zeta_clearance_rotor = mu * (1 - ((v_operation - v_design) / v_design)**2)  # -
         return zeta_clearance_rotor, mdot_leak_rotor
 
 
@@ -845,15 +845,15 @@ class TraupelLossModel:
         """
 
         # First calculate normalized clerance and K_sigma
-        normalized_clearance = max(clearance_over_blade_length / chord_over_blade_length - 0.002, 0)
-        velocity_change_ratio = circumferential_velocity_change / axial_velocity
-        K_sigma = self.calculate_K_sigma(outlet_angle, velocity_change_ratio, normalized_clearance)
+        normalized_clearance = max(clearance_over_blade_length / chord_over_blade_length - 0.002, 0)  # -
+        velocity_change_ratio = circumferential_velocity_change / axial_velocity  # -
+        K_sigma = self.calculate_K_sigma(outlet_angle, velocity_change_ratio, normalized_clearance)  # -
 
         # Now calculate zeta_clearance_rotor
         zeta_clearance_rotor = \
             K_sigma * (2 * isentropic_reaction * isentropic_loading_coefficient + normalized_inlet_velocity**2) * \
             max(clearance_over_blade_length - 0.002 * chord_over_blade_length, 0) * tip_over_mean_diameter / \
-            (2 * isentropic_loading_coefficient)
+            (2 * isentropic_loading_coefficient)  # -
         return max(zeta_clearance_rotor, 0)
 
     @staticmethod
@@ -875,15 +875,16 @@ class TraupelLossModel:
 
         # Calculate C factor. If rotor is free:
         if partial_admission_rotor == "free":
-            C_coefficient = 0.8 * (0.045 + 0.58 * blade_length_over_mean_diameter) * np.sin(outlet_angle)
+            C_coefficient = 0.8 * (0.045 + 0.58 * blade_length_over_mean_diameter) * np.sin(outlet_angle)  # -
         # If rotor is partially enclosed:
         elif partial_admission_rotor == "enclosed":
-            C_coefficient = 0.0095 + 0.55 * max(0.125 - blade_length_over_mean_diameter, 0)**2
+            C_coefficient = 0.0095 + 0.55 * max(0.125 - blade_length_over_mean_diameter, 0)**2  # -
         # Calculate and return zeta_admission
         zeta_admission = \
             C_coefficient * (1 - admission_fraction) / \
             (admission_fraction * flow_coefficient * isentropic_loading_coefficient) + \
-            0.21 * blade_width_over_mean_diameter / (partial_admission_rotor * np.sqrt(isentropic_loading_coefficient))
+            0.21 * blade_width_over_mean_diameter / \
+            (partial_admission_rotor * np.sqrt(isentropic_loading_coefficient))  # -
         return zeta_admission
 
     def calculate_disk_friction_loss(self, admission_fraction, hub_over_mean_diameter, hub_diameter_over_blade_length,
@@ -901,10 +902,10 @@ class TraupelLossModel:
         """
 
         # Calculate C_M
-        C_M = self.calculate_C_M(Reynolds_number)
+        C_M = self.calculate_C_M(Reynolds_number)  # -
         # Calculate and return zeta_friction
         zeta_friction = 1.27 * C_M * hub_over_mean_diameter**4 * hub_diameter_over_blade_length / \
-                        (admission_fraction * flow_coefficient * isentropic_loading_coefficient)
+                        (admission_fraction * flow_coefficient * isentropic_loading_coefficient)  # -
         return zeta_friction
 
     def calculate_incidence_losses(self, incidence_angle, inlet_to_outlet_velocity_ratio, inlet_Mach_number):
@@ -919,12 +920,12 @@ class TraupelLossModel:
 
         # First calculate corrected incidence angle for Mach number. Clip inlet Mach number so that correction is always
         # done over a valid range of Mach numbers (from 0.5 to 0.8)
-        inlet_Mach_number = max(0.5, min(0.8, inlet_Mach_number))
-        corrected_incidence_angle = 2 * (1 - inlet_Mach_number) * incidence_angle
+        inlet_Mach_number = max(0.5, min(0.8, inlet_Mach_number))  # -
+        corrected_incidence_angle = 2 * (1 - inlet_Mach_number) * incidence_angle  # rad
         # Get z coefficient
-        z_coefficient = self.calculate_z(corrected_incidence_angle * 180 / np.pi)
+        z_coefficient = self.calculate_z(corrected_incidence_angle * 180 / np.pi)  # -
         # Calculate zeta_incidence and return it
-        zeta_incidence = z_coefficient * inlet_to_outlet_velocity_ratio**2
+        zeta_incidence = z_coefficient * inlet_to_outlet_velocity_ratio**2  # -
         return zeta_incidence
 
     def calculate_entropy_increase(self, analysis_results, turbine_geometry, blade_row_results):
@@ -942,32 +943,32 @@ class TraupelLossModel:
 
         # Get inlet and outlet flow angles (measured from meridional axis) and change them to Traupel convention
         # (measured from circumferential axis)
-        alpha_1 = np.pi/2 - np.abs(analysis_results["alpha_1"])
-        beta_1 = np.pi/2 - np.abs(analysis_results["beta_1"])
-        beta_2 = np.pi/2 - np.abs(analysis_results["beta_2"])
+        alpha_1 = np.pi/2 - np.abs(analysis_results["alpha_1"])  # rad
+        beta_1 = np.pi/2 - np.abs(analysis_results["beta_1"])  # rad
+        beta_2 = np.pi/2 - np.abs(analysis_results["beta_2"])  # rad
 
         # Calculate aerodynamic loss coefficient for the stator. First retrieve some variables and calculate
         # normalized inputs. Quantities in analysis_results and blade_row_results at station 1 are the same,
         # so analysis results are used here.
-        t_TE_stator = turbine_geometry["t_TE_stator"]
-        p_stator = turbine_geometry["p_stator"]
-        t_TE_over_p_stator = t_TE_stator / p_stator
-        c_stator = turbine_geometry["c_stator"]
-        c_over_p_stator = c_stator / p_stator
-        k_s = turbine_geometry["sand_grain_roughness"]
-        k_s_over_c_stator = k_s / c_stator
-        l_stator = turbine_geometry["l_stator"]
-        c_over_l_stator = c_stator / l_stator
-        hydraulic_diameter_stator = 2 * l_stator
-        k_s_over_d_h_stator = k_s / hydraulic_diameter_stator
-        D_m = turbine_geometry["D_mean"]
-        l_stator_over_D_m = l_stator / D_m
-        s_ax = turbine_geometry["s_ax"]
-        s_ax_over_l_stator = s_ax / l_stator
-        M_s1 = analysis_results["M_s1"]
-        Re_s1 = analysis_results["Re_s1"]
-        psi_ideal = analysis_results["psi_ideal"]
-        speed_parameter = 1 / np.sqrt(2 * psi_ideal)
+        t_TE_stator = turbine_geometry["t_TE_stator"]  # m
+        p_stator = turbine_geometry["p_stator"]  # m
+        t_TE_over_p_stator = t_TE_stator / p_stator  # -
+        c_stator = turbine_geometry["c_stator"]  # m
+        c_over_p_stator = c_stator / p_stator  # -
+        k_s = turbine_geometry["sand_grain_roughness"]  # m
+        k_s_over_c_stator = k_s / c_stator  # -
+        l_stator = turbine_geometry["l_stator"]  # m
+        c_over_l_stator = c_stator / l_stator  # -
+        hydraulic_diameter_stator = 2 * l_stator  # m
+        k_s_over_d_h_stator = k_s / hydraulic_diameter_stator  # -
+        D_m = turbine_geometry["D_mean"]  # m
+        l_stator_over_D_m = l_stator / D_m  # -
+        s_ax = turbine_geometry["s_ax"]  # m
+        s_ax_over_l_stator = s_ax / l_stator  # -
+        M_s1 = analysis_results["M_s1"]  # -
+        Re_s1 = analysis_results["Re_s1"]  # -
+        psi_ideal = analysis_results["psi_ideal"]  # -
+        speed_parameter = 1 / np.sqrt(2 * psi_ideal)  # -
         zeta_aerodynamic_stator = \
             self.calculate_blade_row_aerodynamic_loss(blade_row="stator", inlet_angle=0, outlet_angle=alpha_1,
                                                       t_TE_over_pitch=t_TE_over_p_stator,
@@ -978,42 +979,42 @@ class TraupelLossModel:
                                                       chord_over_blade_length=c_over_l_stator,
                                                       outlet_Mach_number=M_s1, Reynolds_number=Re_s1,
                                                       speed_parameter=speed_parameter, blade_velocity_ratio=0,
-                                                      axial_clearance_over_blade_length=s_ax_over_l_stator)
+                                                      axial_clearance_over_blade_length=s_ax_over_l_stator)  # -
         # Calculate incidence loss. For the stator, it is assumed to be zero.
-        zeta_incidence_stator = 0
+        zeta_incidence_stator = 0  # -
         # Calculate dissipated enthalpy in the stator
-        eta_stator = 1 - (zeta_aerodynamic_stator + zeta_incidence_stator)
-        v_1 = analysis_results["v_1"]
-        delta_h_loss_stator = ((1 - eta_stator) / eta_stator) * v_1**2 / 2
+        eta_stator = 1 - (zeta_aerodynamic_stator + zeta_incidence_stator)  # -
+        v_1 = analysis_results["v_1"]  # m/s
+        delta_h_loss_stator = ((1 - eta_stator) / eta_stator) * v_1**2 / 2  # J/kg
         # Calculate entropy generation in the stator
         gas = analysis_results["gas"]
-        T_1 = analysis_results["T_1"]
-        delta_s_stator = -gas.Cp * np.log(1 - delta_h_loss_stator / (gas.Cp * T_1))
+        T_1 = analysis_results["T_1"]  # K
+        delta_s_stator = -gas.Cp * np.log(1 - delta_h_loss_stator / (gas.Cp * T_1))  # J/(kg K)
 
         # Now calculate aerodynamic loss coefficient for the rotor
-        t_TE_rotor = turbine_geometry["t_TE_rotor"]
-        p_rotor = turbine_geometry["p_rotor"]
-        t_TE_over_p_rotor = t_TE_rotor / p_rotor
-        c_rotor = turbine_geometry["c_rotor"]
-        c_over_p_rotor = c_rotor / p_rotor
-        k_s_over_c_rotor = k_s / c_rotor
-        l_rotor = turbine_geometry["l_rotor"]
-        c_over_l_rotor = c_rotor / l_rotor
-        hydraulic_diameter_rotor = 2 * l_rotor
-        k_s_over_d_h_rotor = k_s / hydraulic_diameter_rotor
-        l_rotor_over_D_m = l_rotor / D_m
-        s_ax_over_l_rotor = s_ax / l_rotor
-        M_r2_blade = blade_row_results["M_r2_blade"]
-        Re_r2_blade = blade_row_results["Re_r2_blade"]
+        t_TE_rotor = turbine_geometry["t_TE_rotor"]  # m
+        p_rotor = turbine_geometry["p_rotor"]  # m
+        t_TE_over_p_rotor = t_TE_rotor / p_rotor  # -
+        c_rotor = turbine_geometry["c_rotor"]  # m
+        c_over_p_rotor = c_rotor / p_rotor  # -
+        k_s_over_c_rotor = k_s / c_rotor  # -
+        l_rotor = turbine_geometry["l_rotor"]  # m
+        c_over_l_rotor = c_rotor / l_rotor  # -
+        hydraulic_diameter_rotor = 2 * l_rotor  # m
+        k_s_over_d_h_rotor = k_s / hydraulic_diameter_rotor  # -
+        l_rotor_over_D_m = l_rotor / D_m  # -
+        s_ax_over_l_rotor = s_ax / l_rotor  # -
+        M_r2_blade = blade_row_results["M_r2_blade"]  # -
+        Re_r2_blade = blade_row_results["Re_r2_blade"]  # -
         shrouded_rotor = turbine_geometry["shrouded_rotor"]
         if shrouded_rotor:
-            s_ax_shroud = turbine_geometry["s_ax_shroud"]
-            s_ax_shroud_over_l_rotor = s_ax_shroud / l_rotor
+            s_ax_shroud = turbine_geometry["s_ax_shroud"]  # m
+            s_ax_shroud_over_l_rotor = s_ax_shroud / l_rotor  # -
         else:
             s_ax_shroud_over_l_rotor = None
-        w_1_blade = blade_row_results["w_1_blade"]
-        w_2_blade = blade_row_results["w_2_blade"]
-        velocity_ratio_rotor = w_1_blade / w_2_blade
+        w_1_blade = blade_row_results["w_1_blade"]  # m/s
+        w_2_blade = blade_row_results["w_2_blade"]  # m/s
+        velocity_ratio_rotor = w_1_blade / w_2_blade  # -
         zeta_aerodynamic_rotor = \
             self.calculate_blade_row_aerodynamic_loss(blade_row="rotor", inlet_angle=beta_1, outlet_angle=beta_2,
                                                       t_TE_over_pitch=t_TE_over_p_rotor,
@@ -1027,77 +1028,78 @@ class TraupelLossModel:
                                                       blade_velocity_ratio=velocity_ratio_rotor,
                                                       axial_clearance_over_blade_length=s_ax_over_l_rotor,
                                                       shrouded_row=shrouded_rotor,
-                                                      shroud_axial_clearance_over_blade_length=s_ax_shroud_over_l_rotor)
+                                                      shroud_axial_clearance_over_blade_length=
+                                                      s_ax_shroud_over_l_rotor)  # -
         # Calculate incidence loss for the rotor
-        incidence = analysis_results["incidence"]
-        M_r1_blade = blade_row_results["M_r1_blade"]
-        zeta_incidence_rotor = self.calculate_incidence_losses(incidence, velocity_ratio_rotor, M_r1_blade)
+        incidence = analysis_results["incidence"]  # rad
+        M_r1_blade = blade_row_results["M_r1_blade"]  # -
+        zeta_incidence_rotor = self.calculate_incidence_losses(incidence, velocity_ratio_rotor, M_r1_blade)  # -
         # Calculate dissipated enthalpy in the rotor for the blade row alone
-        eta_rotor = 1 - (zeta_aerodynamic_rotor + zeta_incidence_rotor)
-        delta_h_loss_rotor = ((1 - eta_rotor) / eta_rotor) * w_2_blade**2 / 2
+        eta_rotor = 1 - (zeta_aerodynamic_rotor + zeta_incidence_rotor)  # -
+        delta_h_loss_rotor = ((1 - eta_rotor) / eta_rotor) * w_2_blade**2 / 2  # J/kg
 
         # Calculate dissipated enthalpy in the rotor for the additional losses
         # Disk friction loss
-        admission_fraction = turbine_geometry["admission_fraction"]
-        D_hub = turbine_geometry["D_hub"]
-        D_hub_over_D_mean = D_hub / D_m
-        D_hub_over_l_blade = D_hub / l_rotor
-        theta_2 = analysis_results["theta_2"]
-        rho_1 = analysis_results["rho_1"]
-        Re_disk = analysis_results["omega"] * D_hub**2 * rho_1 / (2 * gas.calculate_dynamic_viscosity(T_1))
+        admission_fraction = turbine_geometry["admission_fraction"]  # -
+        D_hub = turbine_geometry["D_hub"]  # m
+        D_hub_over_D_mean = D_hub / D_m  # -
+        D_hub_over_l_blade = D_hub / l_rotor  # -
+        theta_2 = analysis_results["theta_2"]  # -
+        rho_1 = analysis_results["rho_1"]  # kg/m^3
+        Re_disk = analysis_results["omega"] * D_hub**2 * rho_1 / (2 * gas.calculate_dynamic_viscosity(T_1))  # -
         zeta_disk_friction = self.calculate_disk_friction_loss(admission_fraction, D_hub_over_D_mean, D_hub_over_l_blade,
-                                                           psi_ideal, theta_2, Re_disk)
+                                                           psi_ideal, theta_2, Re_disk)  # -
         # Clearance loss
         # First consider the case if the rotor is unshrouded:
-        s_r = turbine_geometry["s_r"]
-        D_tip = turbine_geometry["D_tip"]
+        s_r = turbine_geometry["s_r"]  # m
+        D_tip = turbine_geometry["D_tip"]  # m
         if not shrouded_rotor:
-            u = analysis_results["u"]
-            w_1 = analysis_results["w_1"]
-            w_1_normalized = w_1_blade / u
-            s_r_over_l_rotor = s_r / l_rotor
-            D_tip_over_D_mean = D_tip / D_m
-            R_ideal = analysis_results["R_h_ideal"]
-            v_ax = theta_2 * u
+            u = analysis_results["u"]  # m/s
+            w_1 = analysis_results["w_1"]  # m/s
+            w_1_normalized = w_1_blade / u  # -
+            s_r_over_l_rotor = s_r / l_rotor  # -
+            D_tip_over_D_mean = D_tip / D_m  # -
+            R_ideal = analysis_results["R_h_ideal"]  # -
+            v_ax = theta_2 * u  # m/s
             delta_w_circumferential = abs(w_1_blade * np.sin(analysis_results["beta_1"]) - \
-                                      w_2_blade * np.sin(analysis_results["beta_2"]))
+                                      w_2_blade * np.sin(analysis_results["beta_2"]))  # m/s
             zeta_clearance_rotor = \
                 self.calculate_unshrouded_rotor_clearance_loss(w_1_normalized, psi_ideal, s_r_over_l_rotor,
                                                                c_over_l_rotor, D_tip_over_D_mean, R_ideal, beta_2,
-                                                               delta_w_circumferential, v_ax)
-            mdot_leak = 0
+                                                               delta_w_circumferential, v_ax)  # -
+            mdot_leak = 0  # kg/s
         # Now consider the case if the rotor is shrouded:
         else:
-            seal_teeth_number = turbine_geometry["seal_teeth_number"]
-            seal_teeth_spacing = turbine_geometry["seal_teeth_spacing"]
-            p_2 = analysis_results["p_2"]
-            p_1 = analysis_results["p_1"]
-            p_2_over_p_1 = p_2 / p_1
-            mdot = analysis_results["mdot_total"]
-            design_psi_ideal = analysis_results["psi_ideal_design"]
+            seal_teeth_number = turbine_geometry["seal_teeth_number"]  # -
+            seal_teeth_spacing = turbine_geometry["seal_teeth_spacing"]  # m
+            p_2 = analysis_results["p_2"]  # Pa
+            p_1 = analysis_results["p_1"]  # Pa
+            p_2_over_p_1 = p_2 / p_1  # -
+            mdot = analysis_results["mdot_total"]  # kg/s
+            design_psi_ideal = analysis_results["psi_ideal_design"]  # -
             zeta_clearance_rotor, mdot_leak = \
                 self.calculate_shrouded_rotor_clearance_loss(D_tip, s_r, seal_teeth_number, seal_teeth_spacing,
                                                              admission_fraction, p_2_over_p_1, mdot, p_1, rho_1,
-                                                             design_psi_ideal, psi_ideal)
+                                                             design_psi_ideal, psi_ideal)  # (-, kg/s)
         # Partial admission loss
         partial_admission_rotor = turbine_geometry["partial_admission_rotor"]
-        c_rotor_over_D_m = c_rotor / D_m
+        c_rotor_over_D_m = c_rotor / D_m  # -
         zeta_admission = self.calculate_admission_loss(admission_fraction, psi_ideal, theta_2, l_rotor_over_D_m,
-                                               c_rotor_over_D_m, beta_2, partial_admission_rotor)
+                                               c_rotor_over_D_m, beta_2, partial_admission_rotor)  # -
         # Sum these losses and get total dissipated enthalpy
-        zeta_rotor_additional = zeta_disk_friction + zeta_admission + zeta_clearance_rotor
-        delta_h_ideal = analysis_results["psi_ideal"] * analysis_results["u"]**2
-        delta_h_loss_rotor_additional = zeta_rotor_additional * delta_h_ideal
+        zeta_rotor_additional = zeta_disk_friction + zeta_admission + zeta_clearance_rotor  # -
+        delta_h_ideal = analysis_results["psi_ideal"] * analysis_results["u"]**2  # J/kg
+        delta_h_loss_rotor_additional = zeta_rotor_additional * delta_h_ideal  # J/kg
 
         # Calculate entropy generation in the rotor for the blade row alone
-        delta_h_loss_rotor_total = delta_h_loss_rotor + delta_h_loss_rotor_additional
-        T_2 = analysis_results["T_2"]
-        T_2_ideal = T_2 - delta_h_loss_rotor_total / gas.Cp
+        delta_h_loss_rotor_total = delta_h_loss_rotor + delta_h_loss_rotor_additional  # J/kg
+        T_2 = analysis_results["T_2"]  # K
+        T_2_ideal = T_2 - delta_h_loss_rotor_total / gas.Cp  # K
         # T_2_a is a temperature that incorporated dissipated enthalpy due to aerodynamic losses in the blade row alone
-        T_2_a = T_2_ideal + delta_h_loss_rotor / gas.Cp
-        delta_s_rotor = gas.Cp * np.log(T_2_a / T_2_ideal)
+        T_2_a = T_2_ideal + delta_h_loss_rotor / gas.Cp  # K
+        delta_s_rotor = gas.Cp * np.log(T_2_a / T_2_ideal)  # J/(kg K)
         # Now calculate entropy generation in the rotor for the additional losses
-        delta_s_rotor_additional = gas.Cp * np.log(T_2 / T_2_a)
+        delta_s_rotor_additional = gas.Cp * np.log(T_2 / T_2_a)  # J/(kg K)
 
         # Pack Traupel loss analysis results into a dictionary.
         Traupel_loss_analysis_results = {

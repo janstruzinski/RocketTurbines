@@ -35,16 +35,16 @@ class IdealGas:
         self.molar_fractions = tuple(molar_fractions)
 
         # Get specific gas constant of the mixture
-        self.R = cp.PropsSI("GAS_CONSTANT", mixture) / cp.PropsSI("M", mixture)
+        self.R = cp.PropsSI("GAS_CONSTANT", mixture) / cp.PropsSI("M", mixture)  # J/(kg K)
 
         # Now get Cp and Cv of the mixture
         delta_h = cp.PropsSI("Hmass", "P", 1e5, "T|gas", T_max, mixture) -\
-                  cp.PropsSI("Hmass", "P", 1e5, "T|gas", T_min, mixture)
-        self.Cp = delta_h / (T_max - T_min)
-        self.Cv = self.Cp - self.R
+                  cp.PropsSI("Hmass", "P", 1e5, "T|gas", T_min, mixture)  # J/kg
+        self.Cp = delta_h / (T_max - T_min)  # J/(kg K)
+        self.Cv = self.Cp - self.R  # J/(kg K)
 
         # Calculate its specific heat ratio
-        self.gamma = self.Cp / self.Cv
+        self.gamma = self.Cp / self.Cv  # -
 
     @lru_cache(maxsize=1024)
     def calculate_density(self, p, T):
@@ -77,10 +77,10 @@ class IdealGas:
         """
 
         species_viscosities = [cp.PropsSI("VISCOSITY", "P", p, "T|gas", T, f) for f in self.species]
-        mixture_viscosity = 0
+        mixture_viscosity = 0  # Pa*s
         for xi, mu_i, M_i in zip(self.molar_fractions, species_viscosities, self.molar_masses):
             denominator = sum(xj * (1 + (mu_i / mu_j)**0.5 * (M_j / M_i)**0.25)**2 / (8 * (1 + M_i / M_j))**0.5
-                for xj, mu_j, M_j in zip(self.molar_fractions, species_viscosities, self.molar_masses))
-            mixture_viscosity += xi * mu_i / denominator
+                for xj, mu_j, M_j in zip(self.molar_fractions, species_viscosities, self.molar_masses))  # -
+            mixture_viscosity += xi * mu_i / denominator  # Pa*s
 
         return mixture_viscosity
