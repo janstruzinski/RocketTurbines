@@ -1,10 +1,9 @@
 import warnings
 import numpy as np
 from scipy.interpolate import PchipInterpolator, RegularGridInterpolator
-from .LossModel import LossModel
 
 
-class TraupelLossModel(LossModel):
+class TraupelLossModel:
     def __init__(self, extrapolation_method="linear", warn_on_extrapolation=True, incidence_loss="medium",
                  stator="regular", rotor="regular"):
         """A class to calculate turbine losses with Traupel meanline loss model presented in
@@ -931,6 +930,8 @@ class TraupelLossModel(LossModel):
     def calculate_entropy_increase(self, analysis_results, turbine_geometry, blade_row_results):
         """A method to calculate entropy generation from stator and rotor losses.
 
+        Exact definitions of the variables in the input dictionaries are in Turbine1D.__init__.
+
         :param dict analysis_results: Turbine flow, thermodynamic, and operating-point results.
         :param dict turbine_geometry: Stator, rotor, and seal geometry and roughness.
         :param dict blade_row_results: Blade-row inlet and outlet flow results.
@@ -959,7 +960,7 @@ class TraupelLossModel(LossModel):
         c_over_l_stator = c_stator / l_stator
         hydraulic_diameter_stator = 2 * l_stator
         k_s_over_d_h_stator = k_s / hydraulic_diameter_stator
-        D_m = turbine_geometry["D_m"]
+        D_m = turbine_geometry["D_mean"]
         l_stator_over_D_m = l_stator / D_m
         s_ax = turbine_geometry["s_ax"]
         s_ax_over_l_stator = s_ax / l_stator
@@ -1072,7 +1073,7 @@ class TraupelLossModel(LossModel):
             p_2 = analysis_results["p_2"]
             p_1 = analysis_results["p_1"]
             p_2_over_p_1 = p_2 / p_1
-            mdot = analysis_results["mdot"]
+            mdot = analysis_results["mdot_total"]
             design_psi_ideal = analysis_results["psi_ideal_design"]
             zeta_clearance_rotor, mdot_leak = \
                 self.calculate_shrouded_rotor_clearance_loss(D_tip, s_r, seal_teeth_number, seal_teeth_spacing,
@@ -1098,24 +1099,28 @@ class TraupelLossModel(LossModel):
         # Now calculate entropy generation in the rotor for the additional losses
         delta_s_rotor_additional = gas.Cp * np.log(T_2 / T_2_a)
 
-        # Pack results into  Traupel_loss_analysis_results dictionary
+        # Pack Traupel loss analysis results into a dictionary.
         Traupel_loss_analysis_results = {
-            "zeta_aerodynamic_stator": zeta_aerodynamic_stator,
-            "zeta_incidence_stator": zeta_incidence_stator,
-            "zeta_aerodynamic_rotor": zeta_aerodynamic_rotor,
-            "zeta_incidence_rotor": zeta_incidence_rotor,
-            "zeta_disk_friction": zeta_disk_friction,
-            "zeta_clearance_rotor": zeta_clearance_rotor,
-            "zeta_admission": zeta_admission,
-            "zeta_rotor_additional": zeta_rotor_additional,
-            "delta_h_loss_stator": delta_h_loss_stator,
-            "delta_h_loss_rotor": delta_h_loss_rotor,
-            "delta_h_loss_rotor_additional": delta_h_loss_rotor_additional,
-            "delta_h_loss_rotor_total": delta_h_loss_rotor_total,
-            "delta_s_stator": delta_s_stator,
-            "delta_s_rotor": delta_s_rotor,
-            "delta_s_rotor_additional": delta_s_rotor_additional,
-            "mdot_leak": mdot_leak
+            "zeta_aerodynamic_stator": zeta_aerodynamic_stator,  # Stator blade-row aerodynamic loss coefficient, -
+            "zeta_incidence_stator": zeta_incidence_stator,  # Stator incidence loss coefficient, -
+            "zeta_aerodynamic_rotor": zeta_aerodynamic_rotor,  # Rotor blade-row aerodynamic loss coefficient, -
+            "zeta_incidence_rotor": zeta_incidence_rotor,  # Rotor incidence loss coefficient, -
+            "zeta_disk_friction": zeta_disk_friction,  # Rotor disk-friction loss coefficient, -
+            "zeta_clearance_rotor": zeta_clearance_rotor,  # Rotor clearance loss coefficient, -
+            "zeta_admission": zeta_admission,  # Rotor partial-admission loss coefficient, -
+            "zeta_rotor_additional": zeta_rotor_additional,  # Sum of rotor disk-friction, clearance and admission
+            # coefficients, -
+            "delta_h_loss_stator": delta_h_loss_stator,  # Specific enthalpy dissipated in the stator, J/kg
+            "delta_h_loss_rotor": delta_h_loss_rotor,  # Specific enthalpy dissipated in the rotor blade row, J/kg
+            "delta_h_loss_rotor_additional": delta_h_loss_rotor_additional,  # Specific enthalpy dissipated by
+            # additional rotor losses, J/kg
+            "delta_h_loss_rotor_total": delta_h_loss_rotor_total,  # Total specific enthalpy dissipated in the
+            # rotor, J/kg
+            "delta_s_stator": delta_s_stator,  # Specific entropy rise across the stator, J/(kg K)
+            "delta_s_rotor": delta_s_rotor,  # Specific entropy rise across the rotor blade row, J/(kg K)
+            "delta_s_rotor_additional": delta_s_rotor_additional,  # Specific entropy rise from additional rotor
+            # losses, J/(kg K)
+            "mdot_leak": mdot_leak,  # Mass flow leaking through the rotor shroud seal (zero if unshrouded), kg/s
         }
 
         # Return everything

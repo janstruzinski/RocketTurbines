@@ -1,5 +1,6 @@
 import numpy as np
 from scipy.optimize import root_scalar, root
+from .TraupelLossModel import TraupelLossModel
 
 class Turbine1D:
     def __init__(self):
@@ -73,7 +74,7 @@ class Turbine1D:
                                                  "omega": None, # Angular velocity, rad/s
                                                  "T_0": None,   # Total/static temperature at station 0, K
                                                  "p_0": None,   # Total/static pressure at station 0, Pa
-                                                 "loss_model": None,    # LossModel object used for calculations, -
+                                                 "loss_model": None,  # TraupelLossModel object used for calculations, -
                                                  "h_0": None,   # Total/static enthalpy at station 0, J/kg
                                                  "psi": None, # Real loading coefficient, -
                                                  "psi_ideal": None, # Ideal loading coefficient, -
@@ -85,7 +86,7 @@ class Turbine1D:
                                                  "R_h": None,   # Real enthalpic reaction of the stage, -
                                                  "R_p": None,   # Real pressure reaction of the stage, -
                                                  "p_0_over_p_2": None,  # Pressure ratio of the stage, -
-                                                 "u": None, # Blade velocity at Euler radius, u/s
+                                                 "u": None, # Blade velocity at Euler radius, m/s
                                                  "P_shaft": None,   # Shaft power of the turbine, W
                                                  "p_1": None,   # Static pressure at station 1, Pa
                                                  "T_1": None,   # Static temperature at station 1, K
@@ -138,8 +139,8 @@ class Turbine1D:
                                                  # ideal expansion at station 2, -
                                                  "Re_s1": None, # Reynolds number at station 1 in stationary reference
                                                  # frame, -
-                                                 "Re_r2": None, # Reynolds number at station 2 in relative reference
-                                                 # frame, -
+                                                 "Re_r2": None, # Reynolds number based on relative velocity at
+                                                 # station 2 and rotor chord, -
                                                  "alpha_1": None, # Absolute flow angle at station 1, rad
                                                  "alpha_2": None, # Absolute flow angle at station 2, rad
                                                  "beta_1": None, # Relative flow angle at station 1, rad
@@ -160,21 +161,47 @@ class Turbine1D:
             "p_1_blade": None,  # Static pressure at station 1 for the blade row alone, Pa
             "T_1_blade": None,  # Static temperature at station 1 for the blade row alone, K
             "rho_1_blade": None,  # Static density at station 1 for the blade row alone, kg/m3
+            "M_s1_blade": None,  # Absolute Mach number at station 1 for the blade row alone, -
             "v_2_blade": None,  # Absolute velocity at station 2 for the blade row alone, m/s
             "w_2_blade": None,  # Relative velocity at station 2 for the blade row alone, m/s
             "p_2_blade": None,  # Static pressure at station 2 for the blade row alone, Pa
             "T_2_blade": None,  # Static temperature at station 2 for the blade row alone, K
             "rho_2_blade": None,  # Static density at station 2 for the blade row alone, kg/m3
+            "M_r1_blade": None,  # Relative Mach number at station 1 for the blade row alone, -
+            "M_r2_blade": None,  # Relative Mach number at station 2 for the blade row alone, -
             "alpha_2_blade": None,  # Absolute flow angle at station 2 for the blade row alone, rad
             "psi_blade": None,  # Loading coefficient for the blade row alone, -
             "R_h_blade": None,  # Enthalpic reaction for the blade row alone, -
             "p_0_over_p_2_blade": None,  # Pressure ratio for the blade row alone, -
+            "Re_s1_blade": None,  # Reynolds number based on v_1_blade and stator chord, -
+            "Re_r2_blade": None,  # Reynolds number based on v_2_blade and rotor chord, -
+        }
+
+        # Traupel loss analysis results at the design point.
+        self.loss_model_results_at_design_point = {
+            "zeta_aerodynamic_stator": None,  # Stator blade-row aerodynamic loss coefficient, -
+            "zeta_incidence_stator": None,  # Stator incidence loss coefficient, -
+            "zeta_aerodynamic_rotor": None,  # Rotor blade-row aerodynamic loss coefficient, -
+            "zeta_incidence_rotor": None,  # Rotor incidence loss coefficient, -
+            "zeta_disk_friction": None,  # Rotor disk-friction loss coefficient, -
+            "zeta_clearance_rotor": None,  # Rotor tip or shroud-clearance loss coefficient, -
+            "zeta_admission": None,  # Rotor partial-admission loss coefficient, -
+            "zeta_rotor_additional": None,  # Sum of rotor disk-friction, clearance and admission coefficients, -
+            "delta_h_loss_stator": None,  # Specific enthalpy dissipated in the stator, J/kg
+            "delta_h_loss_rotor": None,  # Specific enthalpy dissipated in the rotor blade row, J/kg
+            "delta_h_loss_rotor_additional": None,  # Specific enthalpy dissipated by additional rotor losses, J/kg
+            "delta_h_loss_rotor_total": None,  # Total specific enthalpy dissipated in the rotor, J/kg
+            "delta_s_stator": None,  # Specific entropy rise across the stator, J/(kg K)
+            "delta_s_rotor": None,  # Specific entropy rise across the rotor blade row, J/(kg K)
+            "delta_s_rotor_additional": None,  # Specific entropy rise from additional rotor losses, J/(kg K)
+            "mdot_leak": None,  # Mass flow leaking through the rotor shroud seal (zero if unshrouded), kg/s
         }
 
     def size_turbine(self, gas, loading_coefficient, flow_coefficient, reaction_isentropic, pressure_ratio, RPM,
                      shaft_power, mdot, T_0, p_0, radial_clearance, no_blades_stator, no_blades_rotor,
                      chord_over_pitch_stator, t_TE_stator, t_TE_rotor, Ra_roughness,
-                     loss_model, admission_fraction=1, partial_admission_rotor="free", chord_over_pitch_rotor=2.5,
+                     loss_model: TraupelLossModel, admission_fraction=1, partial_admission_rotor="free",
+                     chord_over_pitch_rotor=2.5,
                      s_ax_over_pitch_rotor=0.35, delta_s_estimate=[0, 0, 0], shrouded_rotor=False,
                      h_shroud_over_blade_length=0.008, s_ax_shroud_over_h_shroud=2, t_shroud=None,
                      seal_teeth_number=None):
@@ -218,11 +245,15 @@ class Turbine1D:
         :param float or integer t_shroud: Shroud thickness, m. By default, None.
         :param integer seal_teeth_number: Number of half-labirynth seal teeth. Must be greater than 2.
          By default, None.
-        :param loss_model: LossModel object to be used in the analysis.
+        :param TraupelLossModel loss_model: Traupel loss model to be used in the analysis.
         :param list delta_s_estimate: List of initial estimates of the entropy rises (J/kg/K) due to stator, rotor and
          additional rotor losses. Additional rotor losses represent clearance, partial admission or disk friction
           losses. By default, [0, 0, 0].
+        :raises TypeError: If loss_model is not a TraupelLossModel instance.
         """
+
+        if not isinstance(loss_model, TraupelLossModel):
+            raise TypeError("loss_model must be a TraupelLossModel instance.")
 
         # Calculate the blade speed from given requirements
         delta_h = shaft_power / mdot
@@ -270,7 +301,7 @@ class Turbine1D:
                                                       "mdot_total": mdot,
                                                       "T_0": T_0,
                                                       "p_0": p_0,
-                                                      "loss_model": loss_model.name})
+                                                      "loss_model": loss_model})
 
 
         # Calculate entropy rise across each blade row. Entropy rise depends on the loss model, which depends on the
@@ -291,13 +322,14 @@ class Turbine1D:
             raise RuntimeError("Numerical solve for the stator and rotor entropy rises did not converge.")
         # Get entropy increases and the rest of the results
         delta_s_stator, delta_s_rotor, delta_s_rotor_additional = entropy_solution.x
-        _, analysis_results, blade_row_results = \
+        _, analysis_results, blade_row_results, loss_model_results = \
             self.calculate_entropy_rise(delta_s_stator, delta_s_rotor, delta_s_rotor_additional, loss_model)
 
 
         # Update analysis_results_at_design_point and blade row results
         self.analysis_results_at_design_point = analysis_results
         self.blade_row_results_at_design_point = blade_row_results
+        self.loss_model_results_at_design_point = loss_model_results
 
         # Get flow angles, which become metal angles
         self.alpha_1_metal_deg = self.analysis_results_at_design_point["alpha_1"]
@@ -312,18 +344,26 @@ class Turbine1D:
         self.R_hub = self.D_hub / 2
         self.R_tip = self.D_tip / 2
 
-    def calculate_entropy_rise(self, delta_s_stator, delta_s_rotor, delta_s_rotor_additional, loss_model):
+    def calculate_entropy_rise(self, delta_s_stator, delta_s_rotor, delta_s_rotor_additional,
+                               loss_model: TraupelLossModel):
         """A method to calculate residuals between the assumed entropy rises and the entropy rises returned by the loss
         model, together with the turbine analysis results.
+
+        Definitions of the values read from analysis_results_at_design_point are in Turbine1D.__init__.
 
         :param float delta_s_stator: Specific entropy rise due to aerodynamic losses in the stator (J/kg/K).
         :param float delta_s_rotor: Specific entropy rise due to aerodynamic losses in the rotor (J/kg/K).
         :param float delta_s_rotor_additional: Specific entropy rise due to additional rotor losses such as clearance,
             partial admission or disk friction losses (J/(kg K)).
-        :param loss_model: LossModel object to be used to calculate the entropy rises.
-        :return: Entropy-rise residuals, turbine analysis results and blade row analysis results, respectively.
-        :rtype: tuple[list, dict, dict]
+        :param TraupelLossModel loss_model: Traupel loss model used to calculate the entropy rises.
+        :return: Entropy-rise residuals, turbine analysis results, blade-row results and Traupel loss results,
+            respectively. Dictionary key definitions are in Turbine1D.__init__.
+        :rtype: tuple[list, dict, dict, dict]
+        :raises TypeError: If loss_model is not a TraupelLossModel instance.
         """
+
+        if not isinstance(loss_model, TraupelLossModel):
+            raise TypeError("loss_model must be a TraupelLossModel instance.")
 
         # In rocket turbines, there are no clearance losses in stators, while partial admission losses belong to the
         # rotor. Therefore, entropy generation in the stator due to aerodynamic losses constitute total entropy
@@ -440,8 +480,7 @@ class Turbine1D:
             raise RuntimeError("Numerical solve for theta_2_blade did not converge.")
         # Obtain remaining results
         theta_2_blade = theta_2_blade_solution.root
-        blade_row_results = self.__calculate_blade_row_velocities(alpha_1, beta_2, theta_2_blade,
-                                                                  analysis_results)
+        blade_row_results, _ = self.__calculate_blade_row_velocities(alpha_1, beta_2, theta_2_blade, analysis_results)
 
         # Some additional geometry must be calculated for the loss model. Pack to dictionary to pass to the loss model.
         D_hub, D_tip, D_mean, l_rotor, h_shroud, s_ax_shroud = self.__calculate_geometry(analysis_results)
@@ -482,7 +521,7 @@ class Turbine1D:
                             "sand_grain_roughness": self.sand_grain_roughness} # m
 
         # Call loss model, calculate entropy rise and loss coefficients.
-        delta_s_stator_output, delta_s_rotor_output, delta_s_rotor_additional_output =\
+        delta_s_stator_output, delta_s_rotor_output, delta_s_rotor_additional_output, loss_model_results =\
             loss_model.calculate_entropy_increase(analysis_results, turbine_geometry, blade_row_results)
 
 
@@ -492,10 +531,13 @@ class Turbine1D:
 
 
         # Return all calculated results
-        return residual, analysis_results, blade_row_results
+        return residual, analysis_results, blade_row_results, loss_model_results
 
     def __calculate_geometry(self, analysis_results):
-        """A method to calculate some of the turbine geometry."""
+        """A method to calculate some of the turbine geometry.
+
+        :param dict analysis_results: Turbine analysis results. Variable definitions are in Turbine1D.__init__.
+        """
 
         # First obtain design blade velocity and theta_2.
         u = analysis_results["u"]
@@ -505,7 +547,7 @@ class Turbine1D:
         v_ax = theta_2 * u
 
         # From massflow, density and axial velocity, calculate annulus area.
-        mdot = analysis_results["mdot"]
+        mdot = analysis_results["mdot_total"]
         rho_2 = analysis_results["rho_2"]
         area = mdot / (v_ax * rho_2 * self.admission_fraction)
 
@@ -529,6 +571,8 @@ class Turbine1D:
     def __calculate_thermodynamic_properties(self, M_u, total_delta_s_stator, total_delta_s_rotor,
                                              delta_s_rotor_additional):
         """A method to calculate thermodynamic properties, velocities and Mach numbers at turbine stations 1 and 2.
+
+        Definitions of the values read from analysis_results_at_design_point are in Turbine1D.__init__.
 
         :param float M_u: Mach number based on blade velocity at the Euler radius.
         :param float total_delta_s_stator: Total specific entropy rise across the stator (J/kg/K).
@@ -643,7 +687,7 @@ class Turbine1D:
 
         # Calculate Reynolds numbers
         Re_s1 = rho_1 * v_1 * self.c_stator / gas.calculate_dynamic_viscosity(T_1)
-        Re_r2 = rho_2 * v_2 * self.c_rotor / gas.calculate_dynamic_viscosity(T_2)
+        Re_r2 = rho_2 * w_2 * self.c_rotor / gas.calculate_dynamic_viscosity(T_2)
 
         # Package thermodynamic properties, velocities and loading coefficients into analysis_results dictionary.
         # Make it a copy of analysis_results_at_design_point, such that the values there stay constant during
@@ -702,6 +746,7 @@ class Turbine1D:
         """A method to calculate absolute and relative flow angles at stations 1 and 2.
 
         :param dict analysis_results: Dictionary with turbine analysis results required to calculate the flow angles.
+            Variable definitions are in Turbine1D.__init__.
         :return: Absolute flow angle at station 1 (rad), relative flow angle at station 1 (rad),
          absolute flow angle at station 2 (rad) and relative flow angle at station 2 (rad), respectively.
         :rtype: tuple[float, float, float, float]
@@ -731,7 +776,7 @@ class Turbine1D:
         :param float beta_2_metal: Outlet metal angle of the rotor blades (rad).
         :param float theta_2_blade: Assumed flow coefficient (-) at station 2 for the blade row alone.
         :param dict analysis_results: Dictionary with turbine analysis results required to calculate the blade row
-            velocities and thermodynamic properties.
+            velocities and thermodynamic properties. Variable definitions are in Turbine1D.__init__.
         :return: Tuple containing a dictionary with blade row results and the residual between calculated and assumed
             flow coefficient at station 2.
         :rtype: tuple[dict, float]
