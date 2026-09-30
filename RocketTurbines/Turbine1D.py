@@ -13,6 +13,7 @@ class Turbine1D:
         # Total properties have _t prefix. Static properties are assumed by default, they do not have any prefix.
         # Properties in stationary and rotary reference frame have _s and _r prefixes respectively.
         # Real properties are assumed by default, while ideal/isentropic ones have _ideal prefix.
+        # _ideal_r_real_s means ideal expansion at the rotor, but non-ideal expansion at the stator.
         # Station 0 is station before stator, station 1 is after stator and station 2 is after rotor.
         # _blade specifies that the results were calculated only for the blade row and its passage aerodynamic losses,
         # without an inclusion of additional losses like clearances, disk friction or partial admission. In other words,
@@ -77,9 +78,9 @@ class Turbine1D:
                                                  "loss_model": None,  # TraupelLossModel object used for calculations, -
                                                  "h_0": None,   # Total/static enthalpy at station 0, J/kg
                                                  "psi": None, # Real loading coefficient, -
-                                                 "psi_ideal": None, # Ideal loading coefficient, -
-                                                 "psi_ideal_design": None,  # Ideal loading coefficient at the design
-                                                 # point, -
+                                                 "psi_ideal": None, # Total-to-total ideal work coefficient, -
+                                                 "psi_ideal_design": None,  # Total-to-total ideal work coefficient
+                                                 # at the design point, -
                                                  "theta_1": None, # Flow coefficient at station 1, -
                                                  "theta_2": None, # Flow coefficient at station 2, -
                                                  "R_h_ideal": None, # Ideal enthalpic reaction of the stage, -
@@ -126,14 +127,10 @@ class Turbine1D:
                                                  "a_2_ideal_r_real_s": None, # Sound velocity assuming ideal
                                                  # expansion at station 2, m/s
                                                  "v_2": None, # Absolute velocity at station 2, m/s
-                                                 "v_2_ideal_r_real_s": None, # Absolute velocity assuming ideal
-                                                 # expansion at station 2, m/s
                                                  "w_2": None, # Relative velocity at station 2, m/s
                                                  "w_2_ideal_r_real_s": None, # Relative velocity assuming ideal
                                                  # expansion at station 2, m/s
                                                  "M_s2": None, # Station 2 Mach number in stationary frame, -
-                                                 "M_s2_ideal_r_real_s": None, # Mach number in stationary reference
-                                                 # frame assuming ideal expansion at station 2, -
                                                  "M_r2": None, # Mach number in rotary reference frame at station 2, -
                                                  "M_r2_ideal_r_real_s": None, # Mach number in rotary reference
                                                  # frame assuming ideal expansion at station 2, -
@@ -249,6 +246,9 @@ class Turbine1D:
          additional rotor losses. Additional rotor losses represent clearance, partial admission or disk friction
           losses. By default, [0, 0, 0].
         :raises TypeError: If loss_model is not a TraupelLossModel instance.
+        :raises ValueError: If the specified shaft work and outlet axial kinetic energy leave no positive outlet
+            static enthalpy.
+        :raises RuntimeError: If the entropy-rise, pressure-ratio or blade-row flow-coefficient solve does not converge.
         """
 
         if not isinstance(loss_model, TraupelLossModel):
@@ -265,8 +265,8 @@ class Turbine1D:
 
         # Calculate thermodynamic properties which are already known
         h_t0 = gas.Cp * T_0 # J/kg
-        h_t2 = h_t0 - delta_h
-        T_t2 = h_t2 / gas.Cp
+        h_t2 = h_t0 - delta_h # J/kg
+        T_t2 = h_t2 / gas.Cp # K
 
         # Calculate available geometry already
         self.p_stator = self.D_Euler * np.pi / no_blades_stator  # m
@@ -302,7 +302,7 @@ class Turbine1D:
                                                       "u": u,  # m/s
                                                       "P_shaft": shaft_power,  # W
                                                       "mdot_total": mdot,  # kg/s
-                                                      "delta_h": delta_h, # kg/s
+                                                      "delta_h": delta_h, # J/kg
                                                       "T_0": T_0,  # K
                                                       "p_0": p_0,  # Pa
                                                       "h_t0": h_t0, # J/kg
@@ -367,6 +367,8 @@ class Turbine1D:
             respectively. Dictionary key definitions are in Turbine1D.__init__.
         :rtype: tuple[list, dict, dict, dict]
         :raises TypeError: If loss_model is not a TraupelLossModel instance.
+        :raises ValueError: If shaft work and outlet axial kinetic energy leave no positive outlet static enthalpy.
+        :raises RuntimeError: If the pressure-ratio or blade-row flow-coefficient solve does not converge.
         """
 
         if not isinstance(loss_model, TraupelLossModel):
@@ -577,7 +579,7 @@ class Turbine1D:
         :param float total_delta_s_rotor: Total specific entropy rise across the rotor (J/kg/K).
         :param float delta_s_rotor_additional: Specific entropy rise due to clearance, partial admission and disk
             friction losses in the rotor (J/kg/K).
-        :return: Dictionary with turbine analysis results and residual of the rotational Mach number equation,
+        :return: Dictionary with turbine analysis results and residual of the total enthalpy at station 2,
             respectively.
         :rtype: tuple[dict, float]
         """
@@ -601,7 +603,7 @@ class Turbine1D:
         p_2 = p_0 / p_0_over_p_2  # Pa
         T_2 = T_0 * p_0_over_p_2**(-gas.R / gas.Cp) * np.exp(delta_s / gas.Cp) # K
         rho_2 = gas.calculate_density(p_2, T_2)  # kg/m^3
-        h_2 = gas.Cp * T_2 # K
+        h_2 = gas.Cp * T_2 # J/kg
 
         # Calculate isentropic reference state at station 2 assuming that h_0 = h_t0
         h_2_ideal = h_2 * np.exp(-delta_s / gas.Cp)
@@ -611,7 +613,7 @@ class Turbine1D:
         # Now using ideal reaction definition, find ratio of isentropic enthalpies at station 1 and 2
         h_1_over_h_2_isentropic = 1 + R_h_ideal * delta_h_t_ideal / h_2_ideal
         # Now the ratio of real enthalpies can be found
-        h_1_over_h_2 = h_1_over_h_2_isentropic * np.exp(-total_delta_s_rotor / gas.Cp)
+        h_1_over_h_2 = h_1_over_h_2_isentropic * np.exp(-total_delta_s_rotor / gas.Cp) # -
 
         # Calculate p_1, T_1, rho_1, h_1, h_t1
         h_1 = h_2 * h_1_over_h_2  # J/kg
@@ -664,7 +666,7 @@ class Turbine1D:
         a_2_ideal_r_real_s = gas.calculate_sound_velocity(T_2_ideal_r_real_s)  # m/s
         # Real values in stationary reference frame:
         M_s2 = v_2 / a_2  # -
-        # Now ideal values in rotary reference frame:
+        # Now real and ideal values in rotary reference frame:
         dummy_a2 = dummy_a1 - psi  # -
         dummy_b2 = dummy_a2 - 1  # -
         w_2 = u * np.sqrt(theta_2**2 + dummy_b2**2)  # m/s
@@ -728,7 +730,7 @@ class Turbine1D:
                                  "Re_r2": Re_r2,  # -
                                  })
 
-        # Return residual
+        # Return residual and analysis results
         return analysis_results, residual
 
     @staticmethod
