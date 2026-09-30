@@ -112,31 +112,31 @@ class Turbine1D:
                                                  "p_2": None, # Static pressure at station 2, Pa
                                                  "T_2": None, # Static temperature at station 2, K
                                                  "rho_2": None, # Static density at station 2, kg/m3
-                                                 "T_2_ideal": None, # Static temperature assuming ideal expansion at
-                                                 # station 2, K
+                                                 "T_2_ideal_r_real_s": None, # Static temperature assuming
+                                                 # ideal expansion at station 2, K
                                                  "h_2": None, # Static enthalpy at station 2, J/kg
                                                  "h_t2": None, # Total enthalpy at station 2, J/kg
-                                                 "h_2_ideal": None, # Static enthalpy assuming ideal expansion at
-                                                 # station 2, J/kg
+                                                 "h_2_ideal_r_real_s": None, # Static enthalpy assuming ideal
+                                                 # expansion at station 2, J/kg
                                                  "delta_s_rotor": None, # Total entropy increase at rotor, J/kg/K
                                                  "delta_s_rotor_additional": None,  # Total entropy increase at rotor
                                                  # due to additional losses like clearances, disk friction or partial
                                                  # admission, J/kg/K
                                                  "a_2": None, # Sound velocity at station 2, m/s
-                                                 "a_2_ideal": None, # Sound velocity assuming ideal expansion at
-                                                 # station 2, m/s
+                                                 "a_2_ideal_r_real_s": None, # Sound velocity assuming ideal
+                                                 # expansion at station 2, m/s
                                                  "v_2": None, # Absolute velocity at station 2, m/s
-                                                 "v_2_ideal": None, # Absolute velocity assuming ideal expansion at
-                                                 # station 2, m/s
+                                                 "v_2_ideal_r_real_s": None, # Absolute velocity assuming ideal
+                                                 # expansion at station 2, m/s
                                                  "w_2": None, # Relative velocity at station 2, m/s
-                                                 "w_2_ideal": None, # Relative velocity assuming ideal expansion at
-                                                 # station 2, m/s
+                                                 "w_2_ideal_r_real_s": None, # Relative velocity assuming ideal
+                                                 # expansion at station 2, m/s
                                                  "M_s2": None, # Station 2 Mach number in stationary frame, -
-                                                 "M_s2_ideal": None, # Mach number in stationary reference frame
-                                                 # assuming ideal expansion at station 2, -
+                                                 "M_s2_ideal_r_real_s": None, # Mach number in stationary reference
+                                                 # frame assuming ideal expansion at station 2, -
                                                  "M_r2": None, # Mach number in rotary reference frame at station 2, -
-                                                 "M_r2_ideal": None, # Mach number in rotary reference frame assuming
-                                                 # ideal expansion at station 2, -
+                                                 "M_r2_ideal_r_real_s": None, # Mach number in rotary reference
+                                                 # frame assuming ideal expansion at station 2, -
                                                  "Re_s1": None, # Reynolds number at station 1 in stationary reference
                                                  # frame, -
                                                  "Re_r2": None, # Reynolds number based on relative velocity at
@@ -197,7 +197,7 @@ class Turbine1D:
             "mdot_leak": None,  # Mass flow leaking through the rotor shroud seal (zero if unshrouded), kg/s
         }
 
-    def size_turbine(self, gas, loading_coefficient, flow_coefficient, reaction_isentropic, pressure_ratio, RPM,
+    def size_turbine(self, gas, loading_coefficient, flow_coefficient, reaction_isentropic, RPM,
                      shaft_power, mdot, T_0, p_0, radial_clearance, no_blades_stator, no_blades_rotor,
                      chord_over_pitch_stator, t_TE_stator, t_TE_rotor, Ra_roughness,
                      loss_model: TraupelLossModel, admission_fraction=1, partial_admission_rotor="free",
@@ -212,7 +212,6 @@ class Turbine1D:
         :param float or integer flow_coefficient: Flow coefficient of the turbine at station 2.
         :param float reaction_isentropic: Enthalpic, isentropic reaction of the turbine. It should be noted enthalpic
             reaction is not the same as pressure reaction, although two quantities are similar.
-        :param float or integer pressure_ratio: Pressure ratio across the turbine; ratio of p_t0 to p_s2.
         :param float or integer RPM: Rotations per minute of the turbine.
         :param float or integer shaft_power: Shaft power (W) that the turbine must deliver.
         :param float or integer mdot: Massflow (kg/s) through the turbine.
@@ -264,11 +263,16 @@ class Turbine1D:
         self.D_Euler = 2 * u / omega  # m
         self.R_Euler = self.D_Euler / 2  # m
 
+        # Calculate thermodynamic properties which are already known
+        h_t0 = gas.Cp * T_0 # J/kg
+        h_t2 = h_t0 - delta_h
+        T_t2 = h_t2 / gas.Cp
+
         # Calculate available geometry already
-        self.c_stator = self.D_Euler * np.pi / no_blades_stator  # m
-        self.c_rotor = self.D_Euler * np.pi / no_blades_rotor  # m
-        self.p_stator = self.c_stator / chord_over_pitch_stator  # m
-        self.p_rotor = self.c_rotor / chord_over_pitch_rotor  # m
+        self.p_stator = self.D_Euler * np.pi / no_blades_stator  # m
+        self.p_rotor = self.D_Euler * np.pi / no_blades_rotor  # m
+        self.c_stator = self.c_stator / chord_over_pitch_stator  # m
+        self.c_rotor = self.c_rotor / chord_over_pitch_rotor  # m
         self.s_ax = self.p_rotor * s_ax_over_pitch_rotor  # m
 
         # Assign remaining geometry that is already known
@@ -288,19 +292,22 @@ class Turbine1D:
         # Change Ra roughness to sand grain equivalent roughness
         self.sand_grain_roughness = 5.863 * Ra_roughness # m
 
-        # Put design variables in analysis_results_at_design_point already
+        # Put known variables in analysis_results_at_design_point already
         self.analysis_results_at_design_point.update({"gas": gas,
                                                       "psi": loading_coefficient,  # -
                                                       "theta_2": flow_coefficient,  # -
                                                       "R_h_ideal": reaction_isentropic,  # -
-                                                      "p_0_over_p_2": pressure_ratio,  # -
                                                       "RPM": RPM,  # rpm
                                                       "omega": omega,  # rad/s
                                                       "u": u,  # m/s
                                                       "P_shaft": shaft_power,  # W
                                                       "mdot_total": mdot,  # kg/s
+                                                      "delta_h": delta_h, # kg/s
                                                       "T_0": T_0,  # K
                                                       "p_0": p_0,  # Pa
+                                                      "h_t0": h_t0, # J/kg
+                                                      "h_t2": h_t2, # J/kg
+                                                      "T_t2": T_t2, # K
                                                       "loss_model": loss_model})
 
 
@@ -374,53 +381,41 @@ class Turbine1D:
         delta_s_rotor_total = delta_s_rotor + delta_s_rotor_additional  # J/(kg K)
 
 
-        # Thermodynamic properties at each station must be calculated. Thermodynamic properties depend on rotational
-        # Mach number M_u, which itself depends on thermodynamic properties. The model is thus implicit and requires
-        # numerical solve.
-        # First, retrieve some variables from analysis_results_at_design_point
+        # Thermodynamic properties at each station must be calculated. Thermodynamic properties depend on pressure ratio
+        # p_0_over_p_2. It needs to be numerically found, such that energy balance is satisfied and total enthalpy at
+        # station 2 agrees with the already calculated one.
+        # First, retrieve some variables from analysis_results_at_design_point that will be used to obtain solution
+        # estimate
         gas = self.analysis_results_at_design_point["gas"]
-        p_0_over_p_2 = self.analysis_results_at_design_point["p_0_over_p_2"]  # -
-        psi = self.analysis_results_at_design_point["psi"]  # -
+        h_t0 = self.analysis_results_at_design_point["h_t0"]  # J/kg
+        h_t2 = self.analysis_results_at_design_point["h_t2"]  # J/kg
+        u = self.analysis_results_at_design_point["u"]  # m/s
         theta_2 = self.analysis_results_at_design_point["theta_2"]  # -
-        R_h_ideal = self.analysis_results_at_design_point["R_h_ideal"]  # -
-        # Now, calculate maximum possible M_u
-        delta_s_total = delta_s_stator_total + delta_s_rotor_total  # J/(kg K)
-        h_0_over_h_2 = p_0_over_p_2**((gas.gamma - 1) / gas.gamma) * \
-                       np.exp(-delta_s_total * (gas.gamma - 1) / (gas.gamma * gas.R))  # -
-        M_u_max = np.sqrt((h_0_over_h_2 - 1) / (psi * (gas.gamma - 1)))  # -
-        # Calculate also initial estimate (approximately analytical solution for loss free calculations and
-        # constant flow coefficient)
-        v_2_over_u_2_estimate = np.sqrt(theta_2**2 + (1 - R_h_ideal - psi / 2)**2)  # -
-        M_u_estimate = M_u_max * np.sqrt(2 * psi / (h_0_over_h_2 * v_2_over_u_2_estimate + 2 * psi))  # -
-        # First, bracketing scheme will be attempted. If bracket does not return opposite signs,
-        # Newton's method is used.
-        # Create a bracket
-        bracket = [1e-3 * M_u_max, (1 - 1e-3) * M_u_max]
+        # The known axial velocity sets the largest possible exit static enthalpy (zero exit swirl).
+        h_2_max = h_t2 - (theta_2 * u)**2 / 2  # J/kg
+        if h_2_max <= 0:
+            raise ValueError("Shaft work and exit axial kinetic energy leave no positive exit static enthalpy.")
+        # This static enthalpy can be used to calculate loss-free lower bound on p_0/p_2:
+        p_0_over_p_2_ideal = (h_t0 / h_2_max)**(gas.Cp / gas.R)  # -
+        # Now minimum pressure ratio that takes into account losses can be calculated
+        delta_s_total = delta_s_stator_total + delta_s_rotor_total
+        p_0_over_p_2_min = p_0_over_p_2_ideal * np.exp(delta_s_total / gas.R)
+
+        # That minimum value is a solution estimate that can be used with the Newton scheme
         # Define a function that obtains residual
-        def get_M_u_residual(M_u):
-            return self.__calculate_thermodynamic_properties(M_u, delta_s_stator_total, delta_s_rotor_total,
-                                                             delta_s_rotor_additional)[1]
-        # Calculate residuals for the bracket
-        residual_at_bracket = [get_M_u_residual(M_u) for M_u in bracket]
-        # If it returns opposite signs, use toms748 bracketing scheme
-        if residual_at_bracket[0] * residual_at_bracket[1] < 0:
-            M_u_solution = root_scalar(get_M_u_residual, bracket=bracket, method="toms748", options={"k": 2},
-                                       maxiter=1000, xtol=1e-10, rtol=1e-8)
-            # If the solution does not converge, attempt Newton scheme
-            if not M_u_solution.converged:
-                M_u_solution = root_scalar(get_M_u_residual, x0=M_u_estimate, method="newton",
-                                           maxiter=1000, xtol=1e-10, rtol=1e-8)
-        # If the bracket does not return opposite results, also use Newton scheme
-        else:
-            M_u_solution = root_scalar(get_M_u_residual, x0=M_u_estimate, method="newton",
-                                       maxiter=1000, xtol=1e-10, rtol=1e-8)
+        def get_PR_residual(p_0_over_p_2_estimate):
+            return self.__calculate_thermodynamic_properties(p_0_over_p_2_estimate, delta_s_stator_total,
+                                                             delta_s_rotor_total, delta_s_rotor_additional)[1]
+        # Solve it
+        PR_solution = root_scalar(get_PR_residual, x0=p_0_over_p_2_min, method="newton", maxiter=1000, xtol=1e-10,
+                                  rtol=1e-8)
         # Raise error if the solution is not converged
-        if not M_u_solution.converged:
-            raise RuntimeError("Numerical solve for M_u did not converge.")
+        if not PR_solution.converged:
+            raise RuntimeError("Numerical solve for p_0/p_2 did not converge.")
         # Obtain solution and the remaining results
-        M_u = M_u_solution.root  # -
+        p_0_over_p_2 = PR_solution.root  # -
         analysis_results, residual = self.__calculate_thermodynamic_properties(
-            M_u, delta_s_stator_total, delta_s_rotor_total, delta_s_rotor_additional)  # residual: -
+            p_0_over_p_2, delta_s_stator_total, delta_s_rotor_total, delta_s_rotor_additional)  # residual: -
 
 
         # Flow angles can be now calculated. These are equal to metal angles. These are affected by the total entropy
@@ -571,13 +566,13 @@ class Turbine1D:
         # Return the results
         return D_hub, D_tip, D_mean, l_blade, h_shroud, s_ax_shroud
 
-    def __calculate_thermodynamic_properties(self, M_u, total_delta_s_stator, total_delta_s_rotor,
+    def __calculate_thermodynamic_properties(self, p_0_over_p_2, total_delta_s_stator, total_delta_s_rotor,
                                              delta_s_rotor_additional):
         """A method to calculate thermodynamic properties, velocities and Mach numbers at turbine stations 1 and 2.
 
         Definitions of the values read from analysis_results_at_design_point are in Turbine1D.__init__.
 
-        :param float M_u: Mach number based on blade velocity at the Euler radius.
+        :param float p_0_over_p_2: Total/static pressure at station 0 over static pressure at station 2.
         :param float total_delta_s_stator: Total specific entropy rise across the stator (J/kg/K).
         :param float total_delta_s_rotor: Total specific entropy rise across the rotor (J/kg/K).
         :param float delta_s_rotor_additional: Specific entropy rise due to clearance, partial admission and disk
@@ -591,37 +586,32 @@ class Turbine1D:
         psi = self.analysis_results_at_design_point["psi"]  # -
         R_h_ideal = self.analysis_results_at_design_point["R_h_ideal"]  # -
         theta_2 = self.analysis_results_at_design_point["theta_2"]  # -
-        p_0_over_p_2 = self.analysis_results_at_design_point["p_0_over_p_2"]  # -
+        h_t2 = self.analysis_results_at_design_point["h_t2"]  # J/kg
         T_0 = self.analysis_results_at_design_point["T_0"]  # K
         p_0 = self.analysis_results_at_design_point["p_0"]  # Pa
-        gas = self.analysis_results_at_design_point["gas"]
+        gas = self.analysis_results_at_design_point["gas"] # IdealGas object
         u = self.analysis_results_at_design_point["u"]  # m/s
+        delta_h = self.analysis_results_at_design_point["delta_h"]  # J/kg
 
         # Calculate total entropy increase
         delta_s = total_delta_s_rotor + total_delta_s_stator  # J/(kg K)
         # Calculate h_0
         h_0 = gas.Cp * T_0  # J/kg
-        # Calculate h_0_over_h_2
-        h_0_over_h_2 = p_0_over_p_2**((gas.gamma - 1)/ gas.gamma) \
-                       * np.exp(-delta_s * (gas.gamma - 1) / (gas.gamma * gas.R))  # -
-        # Calculate h_t0_over_h_t2
-        h_t0_over_h_t2 = psi * (gas.gamma - 1) * M_u**2 + 1  # -
-        # Calculate h_t2_over_h_2
-        h_t2_over_h_2 = h_0_over_h_2 / h_t0_over_h_t2  # -
-        # Calculate h_1_over_h_2_isentropic
-        h_1_over_h_2_isentropic = R_h_ideal * (h_t0_over_h_t2 - 1) * h_t2_over_h_2 + 1  # -
-        # Calculate h_1_over_h_2
-        h_1_over_h_2 = h_1_over_h_2_isentropic * np.exp(
-            -total_delta_s_rotor * (gas.gamma - 1) / (gas.R * gas.gamma))  # -
-        # Calculate nonisentropic degree of reaction, R_h
-        R_h = ((h_1_over_h_2 - 1) / (h_t0_over_h_t2 - 1)) / h_1_over_h_2_isentropic  # -
-
-        # Calculate p_2, T_2, rho_2, h_2, h_t2
+        # Calculate static pressure, temperature, density and enthalpy at station 2
         p_2 = p_0 / p_0_over_p_2  # Pa
-        h_2 = h_0 / h_0_over_h_2  # J/kg
-        T_2 = h_2 / gas.Cp  # K
+        T_2 = T_0 * p_0_over_p_2**(-gas.R / gas.Cp) * np.exp(delta_s / gas.Cp) # K
         rho_2 = gas.calculate_density(p_2, T_2)  # kg/m^3
-        h_t2 = h_0 / h_t0_over_h_t2  # J/kg
+        h_2 = gas.Cp * T_2 # K
+
+        # Calculate isentropic reference state at station 2 assuming that h_0 = h_t0
+        h_2_ideal = h_2 * np.exp(-delta_s / gas.Cp)
+        h_t2_ideal = h_t2 * np.exp(-delta_s / gas.Cp)
+        # Calculate difference between total ideal enthalpies
+        delta_h_t_ideal = h_0 - h_t2_ideal
+        # Now using ideal reaction definition, find ratio of isentropic enthalpies at station 1 and 2
+        h_1_over_h_2_isentropic = 1 + R_h_ideal * delta_h_t_ideal / h_2_ideal
+        # Now the ratio of real enthalpies can be found
+        h_1_over_h_2 = h_1_over_h_2_isentropic * np.exp(-total_delta_s_rotor / gas.Cp)
 
         # Calculate p_1, T_1, rho_1, h_1, h_t1
         h_1 = h_2 * h_1_over_h_2  # J/kg
@@ -633,18 +623,19 @@ class Turbine1D:
 
         # Calculate theta_1
         theta_1 = theta_2 * rho_2 / rho_1  # -
-
-        # Calculate velocity_ratio_squared
+        # Calculate real reaction from its definition
+        R_h = (h_1 - h_2) / delta_h # -
+        # Calculate absolute velocity at the outlet
         v_2_over_u = np.sqrt(theta_2**2 + (1 - R_h - psi / 2 + (theta_2**2 - theta_1**2) / (2 * psi))**2)  # -
-
-        # Calculate residual that must be zero
-        dummy_1 = M_u**2 * h_t2_over_h_2 * v_2_over_u**2  # -
-        dummy_2 = (2 / (gas.gamma - 1)) * (h_t2_over_h_2 - 1)  # -
-        residual = dummy_1 - dummy_2  # -
+        v_2 = v_2_over_u * u  # m/s
+        # Calculate total enthalpy at the outlet
+        h_t2_calculated = h_2 + v_2**2 / 2 # J/kg
+        # Finally, the total enthalpy residual can be calculated
+        residual = h_t2_calculated - h_t2 # J/kg
 
         # Calculate remaining values of interest.
         # First calculate ideal psi
-        h_t2_over_h_t0 = 1 / h_t0_over_h_t2  # -
+        h_t2_over_h_t0 = h_t2_calculated / h_0  # -
         psi_ideal = psi * (1 - h_t2_over_h_t0 * np.exp(-delta_s * (gas.gamma - 1) / (gas.gamma * gas.R))) \
                     / (1 - h_t2_over_h_t0)  # -
 
@@ -668,23 +659,19 @@ class Turbine1D:
         # Now velocity and Mach number at station 2. Ideal values at station 2
         # still assume real values at station 1. First calculate velocity of sound at station 2.
         a_2 = gas.calculate_sound_velocity(T_2)  # m/s
-        h_2_ideal = h_1 * (p_2 / p_1) ** ((gas.gamma - 1) / gas.gamma)  # J/kg
-        T_2_ideal = h_2_ideal / gas.Cp  # K
-        a_2_ideal = gas.calculate_sound_velocity(T_2_ideal)  # m/s
+        h_2_ideal_r_real_s = h_1 * (p_2 / p_1) ** ((gas.gamma - 1) / gas.gamma)  # J/kg
+        T_2_ideal_r_real_s = h_2_ideal_r_real_s / gas.Cp  # K
+        a_2_ideal_r_real_s = gas.calculate_sound_velocity(T_2_ideal_r_real_s)  # m/s
         # Real values in stationary reference frame:
-        v_2 = v_2_over_u * u  # m/s
         M_s2 = v_2 / a_2  # -
-        # Ideal values in stationary reference frame:
-        v_2_ideal = np.sqrt(2*(h_t1 - psi_ideal * u**2 - h_2_ideal))  # m/s
-        M_s2_ideal = v_2_ideal / a_2_ideal  # -
-        # Now values in rotary reference frame:
+        # Now ideal values in rotary reference frame:
         dummy_a2 = dummy_a1 - psi  # -
         dummy_b2 = dummy_a2 - 1  # -
         w_2 = u * np.sqrt(theta_2**2 + dummy_b2**2)  # m/s
-        delta_h_loss_rotor = h_2 - h_2_ideal  # J/kg
-        w_2_ideal = np.sqrt(w_2**2 + 2 * delta_h_loss_rotor)  # m/s
+        delta_h_loss_rotor = h_2 - h_2_ideal_r_real_s  # J/kg
+        w_2_ideal_r_real_s = np.sqrt(w_2**2 + 2 * delta_h_loss_rotor)  # m/s
         M_r2 = w_2 / a_2  # -
-        M_r2_ideal = w_2_ideal / a_2_ideal  # -
+        M_r2_ideal_r_real_s = w_2_ideal_r_real_s / a_2_ideal_r_real_s  # -
 
         # Calculate real pressure reaction, R_p
         R_p = (p_1 - p_2) / (p_0 - p_2)  # -
@@ -697,7 +684,8 @@ class Turbine1D:
         # Make it a copy of analysis_results_at_design_point, such that the values there stay constant during
         # iterations.
         analysis_results = self.analysis_results_at_design_point.copy()
-        analysis_results.update({"h_0": h_0,  # J/kg
+        analysis_results.update({"p_0_over_p_2": p_0_over_p_2, # -
+                                 "h_0": h_0,  # J/kg
                                  "p_1": p_1,  # Pa
                                  "T_1": T_1,  # K
                                  "rho_1": rho_1,  # kg/m^3
@@ -717,22 +705,20 @@ class Turbine1D:
                                  "p_2": p_2,  # Pa
                                  "T_2": T_2,  # K
                                  "rho_2": rho_2,  # kg/m^3
-                                 "T_2_ideal": T_2_ideal,  # K
+                                 "T_2_ideal_r_real_s": T_2_ideal_r_real_s,  # K
                                  "h_2": h_2,  # J/kg
                                  "h_t2": h_t2,  # J/kg
-                                 "h_2_ideal": h_2_ideal,  # J/kg
+                                 "h_2_ideal_r_real_s": h_2_ideal_r_real_s,  # J/kg
                                  "delta_s_rotor": total_delta_s_rotor - delta_s_rotor_additional,  # J/(kg K)
                                  "delta_s_rotor_additional": delta_s_rotor_additional,  # J/(kg K)
                                  "a_2": a_2,  # m/s
-                                 "a_2_ideal": a_2_ideal,  # m/s
+                                 "a_2_ideal_r_real_s": a_2_ideal_r_real_s,  # m/s
                                  "v_2": v_2,  # m/s
-                                 "v_2_ideal": v_2_ideal,  # m/s
                                  "w_2": w_2,  # m/s
-                                 "w_2_ideal": w_2_ideal,  # m/s
+                                 "w_2_ideal_r_real_s": w_2_ideal_r_real_s,  # m/s
                                  "M_s2": M_s2,  # -
-                                 "M_s2_ideal": M_s2_ideal,  # -
                                  "M_r2": M_r2,  # -
-                                 "M_r2_ideal": M_r2_ideal,  # -
+                                 "M_r2_ideal_r_real_s": M_r2_ideal_r_real_s,  # -
                                  "R_p": R_p,  # -
                                  "psi_ideal": psi_ideal,  # -
                                  "psi_ideal_design": psi_ideal,  # -
