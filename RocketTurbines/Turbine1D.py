@@ -4,10 +4,91 @@ from .TraupelLossModel import TraupelLossModel
 
 class Turbine1D:
     def __init__(self):
-        """A class representing 1D, nonisentropic turbine. Geometry can be either sized based on given requirements or
-         assigned directly. The analysis of the turbine can be performed off-design too. This class was created with
-          supersonic turbines in mind, but can be also used for subsonic ones. It takes into account nonisentropic
-           processes when calculating fluid states and flow properties."""
+        """A class representing 1D, nonisentropic turbine. This class was created with supersonic turbines in """ \
+        """mind, but can be also used for subsonic ones. It takes into account nonisentropic processes when """ \
+        """calculating fluid states and flow velocities and angles. The object can automatically size the turbine """ \
+        """based on given stage coefficients, massflow and shaft power through Turbine1D.size_turbine method.
+
+        This method uses numerical solver, which calls Turbine1D.calculate_entropy_rise and finds consistent """ \
+        """entropy increase through each blade row, such that assumed and calculated entropies are with agreement """ \
+        """with each other. This is the outer numerical loop. During each evaluation of """ \
+        """Turbine1D.calculate_entropy_rise there are two internal numerical loops.
+
+        The first one calculates consistent thermodynamic state at each station, by varying pressure ratio """ \
+        """through the turbine such that energy balance is achieved. After this, the blade angles are calculated. """ \
+        """Once these are known, second internal numerical loop finds flow states for blade rows alone, without """ \
+        """any consideration for partial admission, clearance and disk friction losses and only taking into """ \
+        """account aerodynamic losses in blade row passages. This numerical loop varies flow coefficient for the """ \
+        """blade row alone, until it agrees with the calculated one. Flow state for blade row alone is required by """ \
+        """Traupel loss model.
+
+        Afterwards, the rest of the geometry is calculated and the loss model is called to calculate entropy """ \
+        """increase, which feeds back to outer numerical loop.
+
+        For more documentation, sizing logic diagram, assumptions and nomenclature, see comments in """ \
+        """Turbine1D.__init__.
+        """
+
+        # Sizing logic diagram:
+        #  Turbine1D.size_turbine
+        #    |
+        #    +--> OUTER LOOP ---------------------------------------------------------------+
+        #    |      Vary: stator, rotor aerodynamic and additional rotor entropy rises      |
+        #    |      Residuals: calculated minus assumed entropy rise for each loss group   |
+        #    |      |                                                                       |
+        #    |      v                                                                       |
+        #    |    Turbine1D.calculate_entropy_rise                                          |
+        #    |      |                                                                       |
+        #    |      +--> INNER LOOP 1 -----------------------------------------+            |
+        #    |      |      Vary: stage pressure ratio                          |            |
+        #    |      |      Residual: calculated minus prescribed outlet        |            |
+        #    |      |                total enthalpy                            |            |
+        #    |      |      |                                                   |            |
+        #    |      |      v                                                   |            |
+        #    |      |    Turbine1D.__calculate_thermodynamic_properties --------+            |
+        #    |      |                                                                       |
+        #    |      v  (after inner loop 1 converges)                                       |
+        #    |    Analysis results: station states and velocities                           |
+        #    |      |                                                                       |
+        #    |      v                                                                       |
+        #    |    Turbine1D.__calculate_flow_angles                                          |
+        #    |      |                                                                       |
+        #    |      v                                                                       |
+        #    |    Analysis results with flow angles, used as metal angles                    |
+        #    |      |                                                                       |
+        #    |      +--> INNER LOOP 2 -----------------------------------------+            |
+        #    |      |      Vary: blade-row outlet flow coefficient             |            |
+        #    |      |      Residual: calculated minus assumed blade-row        |            |
+        #    |      |                outlet flow coefficient                   |            |
+        #    |      |      |                                                   |            |
+        #    |      |      v                                                   |            |
+        #    |      |    Turbine1D.__calculate_blade_row_velocities ------------+            |
+        #    |      |                                                                       |
+        #    |      v  (after inner loop 2 converges)                                       |
+        #    |    Blade-row results: states and velocities                                   |
+        #    |      |                                                                       |
+        #    |      v                                                                       |
+        #    |    Turbine1D.__calculate_geometry                                             |
+        #    |      |                                                                       |
+        #    |      v                                                                       |
+        #    |    Turbine geometry, together with analysis and blade-row results             |
+        #    |      |                                                                       |
+        #    |      v                                                                       |
+        #    |    TraupelLossModel.calculate_entropy_increase                                 |
+        #    |      |                                                                       |
+        #    |      v                                                                       |
+        #    |    Calculated entropy rises and loss results                                  |
+        #    |      |                                                                       |
+        #    |      +--> Calculate entropy-rise residuals ----------------------------------+
+        #    |
+        #    v  (after outer loop converges)
+        #  Consistent entropy rises, analysis results, blade-row results and loss results
+        #    |
+        #    v
+        #  Turbine1D.__calculate_geometry
+        #    |
+        #    v
+        #  Sized turbine geometry and stored design-point results
 
         # Nomenclature:
         # Total properties have _t prefix. Static properties are assumed by default, they do not have any prefix.
@@ -203,6 +284,8 @@ class Turbine1D:
                      h_shroud_over_blade_length=0.008, s_ax_shroud_over_h_shroud=2, t_shroud=None,
                      seal_teeth_number=None):
         """A method to size the turbine based on given requirements. It changes properties of the object.
+        This method calls calculate_entropy_rise, which is an outer numerical solution loop, to calculate consistent
+        fluid and flow state at each station. This allows to calculate the geometry of the turbine.
 
         :param IdealGas gas: IdealGas object representing working gas of the turbine.
         :param float or integer loading_coefficient: Real, nonisentropic loading coefficient of the stage.
@@ -354,7 +437,10 @@ class Turbine1D:
     def calculate_entropy_rise(self, delta_s_stator, delta_s_rotor, delta_s_rotor_additional,
                                loss_model: TraupelLossModel):
         """A method to calculate residuals between the assumed entropy rises and the entropy rises returned by the loss
-        model, together with the turbine analysis results.
+        model, together with the turbine analysis results. This method has two internal numerical loops - one to
+         calculate consistent thermodynamic state at each station for assumed entropy increases through blade rows with
+         _calculate_thermodynamic_variables, and another one to calculate flow states for blade rows alone without
+         inclusion of additional losses like clearance, partial admission or disk friction.
 
         Definitions of the values read from analysis_results_at_design_point are in Turbine1D.__init__.
 
@@ -570,7 +656,8 @@ class Turbine1D:
 
     def __calculate_thermodynamic_properties(self, p_0_over_p_2, total_delta_s_stator, total_delta_s_rotor,
                                              delta_s_rotor_additional):
-        """A method to calculate thermodynamic properties, velocities and Mach numbers at turbine stations 1 and 2.
+        """A method to calculate thermodynamic properties, velocities and Mach numbers at turbine stations 1 and 2 for
+         the assumed pressure ratio. It also calculates energy residual at station 2 for that ratio.
 
         Definitions of the values read from analysis_results_at_design_point are in Turbine1D.__init__.
 
@@ -618,7 +705,7 @@ class Turbine1D:
         # Calculate p_1, T_1, rho_1, h_1, h_t1
         h_1 = h_2 * h_1_over_h_2  # J/kg
         T_1 = h_1 / gas.Cp  # K
-        p_1 = p_2 * np.exp(total_delta_s_rotor / gas.R) * h_1_over_h_2**(gas.gamma / (gas.gamma - 1))  # Pa
+        p_1 = p_2 * np.exp(total_delta_s_rotor / gas.R) * h_1_over_h_2**(gas.Cp / gas.R)  # Pa
         rho_1 = gas.calculate_density(p_1, T_1)  # kg/m^3
         # Energy is conserved between station 0 and station 1, so:
         h_t1 = h_0  # J/kg
@@ -638,12 +725,11 @@ class Turbine1D:
         # Calculate remaining values of interest.
         # First calculate ideal psi
         h_t2_over_h_t0 = h_t2_calculated / h_0  # -
-        psi_ideal = psi * (1 - h_t2_over_h_t0 * np.exp(-delta_s * (gas.gamma - 1) / (gas.gamma * gas.R))) \
-                    / (1 - h_t2_over_h_t0)  # -
+        psi_ideal = psi * (1 - h_t2_over_h_t0 * np.exp(-delta_s / gas.Cp)) / (1 - h_t2_over_h_t0)  # -
 
         # Now velocity and Mach number at station 1. First calculate velocity of sound there:
         a_1 = gas.calculate_sound_velocity(T_1)  # m/s
-        h_1_ideal = h_0 * (p_1 / p_0) ** ((gas.gamma - 1) / gas.gamma)  # J/kg
+        h_1_ideal = h_0 * (p_1 / p_0) ** (gas.R / gas.Cp)  # J/kg
         T_1_ideal = h_1_ideal / gas.Cp  # K
         a_1_ideal = gas.calculate_sound_velocity(T_1_ideal)  # m/s
         # Real and ideal velocity and Mach number in stationary reference frame:
@@ -661,7 +747,7 @@ class Turbine1D:
         # Now velocity and Mach number at station 2. Ideal values at station 2
         # still assume real values at station 1. First calculate velocity of sound at station 2.
         a_2 = gas.calculate_sound_velocity(T_2)  # m/s
-        h_2_ideal_r_real_s = h_1 * (p_2 / p_1) ** ((gas.gamma - 1) / gas.gamma)  # J/kg
+        h_2_ideal_r_real_s = h_1 * (p_2 / p_1) ** (gas.R / gas.Cp)  # J/kg
         T_2_ideal_r_real_s = h_2_ideal_r_real_s / gas.Cp  # K
         a_2_ideal_r_real_s = gas.calculate_sound_velocity(T_2_ideal_r_real_s)  # m/s
         # Real values in stationary reference frame:
@@ -762,7 +848,9 @@ class Turbine1D:
     def __calculate_blade_row_velocities(self, alpha_1_metal, beta_2_metal, theta_2_blade,
                                          analysis_results):
         """A method to calculate velocities and thermodynamic properties for the blade row alone, without additional
-        rotor losses such as clearance, partial admission or disk friction losses.
+        rotor losses such as clearance, partial admission or disk friction losses, for the assumed theta_2 of the blade
+        row alone. It also calculates velocity residual in the form of difference between assumed and calculated values
+        of theta_2.
 
         :param float alpha_1_metal: Outlet metal angle of the stator blades/nozzles (rad).
         :param float beta_2_metal: Outlet metal angle of the rotor blades (rad).
