@@ -1,10 +1,11 @@
 import CoolProp.CoolProp as cp
 from functools import lru_cache
 import numpy as np
+from thermoprop import CEA
 
 
 class IdealGas:
-    def __init__(self, T_max, T_min, species, mass_fractions):
+    def __init__(self, T_max, T_min, species, mass_fractions, cea_species=None):
         """A class representing ideal, calorically perfect gas mixture. Specific heat is an average value from
         CoolProp for given temperature range.
 
@@ -12,11 +13,39 @@ class IdealGas:
         :param float T_min: Lower value (K) of the temperature range.
         :param list species: List with CoolProp names of the species in the mixture.
         :param list mass_fractions: List with mass fractions of the species in the mixture.
+        :param list cea_species: Optional list with NASA CEA gas names in the same order as species. If omitted,
+         species must also be valid CEA names, for example "H2O" instead of "Water".
         """
 
         # Check if mass fractions sum to 1.
         if abs(sum(mass_fractions) - 1) > 1e-12:
             raise ValueError("Mass fractions must sum to 1.")
+
+        # CEA names are used only for viscosity; all thermodynamic properties still use CoolProp names.
+        # If CEA species are not given, use CoolProp species. Also check if CEA species list given has the same number
+        # and order as CoolProp species list.
+        cea_species = tuple(species if cea_species is None else cea_species)
+        if len(cea_species) != len(species):
+            raise ValueError("cea_species must have the same length and order as species.")
+        # Set minimum temperature limit for viscosity evaluation to 300K, as this is the lower bound
+        # to which many transport polynomials in NASA CEA were fitted.
+        viscosity_temperature_min = 300.0
+        # Check if CEA species exist.
+        for f in cea_species:
+            if not CEA.has_species(f) or not CEA.is_gas(f):
+                raise ValueError(f"{f!r} is not a NASA CEA gas species. Provide cea_species with the "
+                                 "corresponding CEA gas names in the same order as species.")
+            # Check if NASA CEA has transport data and viscosity fits for selected species.
+            if not CEA.has_transport(f):
+                raise ValueError(f"NASA CEA transport data are not available for {f!r}.")
+            viscosity_ranges = CEA.transport_temperature_ranges(f, "viscosity")
+            if not viscosity_ranges:
+                raise ValueError(f"NASA CEA viscosity fits are not available for {f!r}.")
+            # If so, for each species, select lower bound used for fitting as capping limit for viscosity evaluation.
+            # The capping limit cannot be lower than 300K.
+            viscosity_temperature_min = max(viscosity_temperature_min, min(low_T for low_T, _ in viscosity_ranges))
+        self.cea_species = cea_species
+        self._viscosity_temperature_min = viscosity_temperature_min
 
         # Check if species are gasous, so that the specific heat is calculated correctly later on.
         gas_phases = ("gas", "supercritical_gas")
@@ -69,14 +98,20 @@ class IdealGas:
 
     @lru_cache(maxsize=1024)
     def calculate_dynamic_viscosity(self, T, p=1e5):
-        """A method to calculate dynamic viscosity of the gas mixture using Wilke's rule.
+        """A method to calculate dynamic viscosity of the gas mixture using Wilke's rule and NASA transport equations
+        from CEA.
 
         :param float T: Temperature (K) of the gas.
         :param float p: Pressure (Pa) of the gas. By default, 1e5, since dynamic viscosity is independent of pressure.
         :return: Gas mixture dynamic viscosity (Pa s).
         """
 
-        species_viscosities = [cp.PropsSI("VISCOSITY", "P", p, "T|gas", T, f) for f in self.species]
+        # It is possible that during some internal calculations, when the flow solution is not yet converged, a
+        # very small temperature is reached. Keep the 300 K floor, but respect higher lower bounds of
+        # individual CEA viscosity fits, for example 373.2 K for H2O.
+        T = max(T, self._viscosity_temperature_min)
+
+        species_viscosities = [CEA.viscosity(f, T) for f in self.cea_species]
         mixture_viscosity = 0  # Pa*s
         for xi, mu_i, M_i in zip(self.molar_fractions, species_viscosities, self.molar_masses):
             denominator = sum(xj * (1 + (mu_i / mu_j)**0.5 * (M_j / M_i)**0.25)**2 / (8 * (1 + M_i / M_j))**0.5
