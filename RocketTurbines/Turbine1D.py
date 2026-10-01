@@ -200,8 +200,9 @@ class Turbine1D:
                                                  "h_t2": None, # Total enthalpy at station 2, J/kg
                                                  "h_2_ideal_r_real_s": None, # Static enthalpy assuming ideal
                                                  # expansion at station 2, J/kg
-                                                 "delta_s_rotor": None, # Total entropy increase at rotor, J/kg/K
-                                                 "delta_s_rotor_additional": None,  # Total entropy increase at rotor
+                                                 "delta_s_rotor": None, # Entropy increase at rotor due to aerodynamic
+                                                 # losses in the blade row, J/kg/K
+                                                 "delta_s_rotor_additional": None,  # Entropy increase at rotor
                                                  # due to additional losses like clearances, disk friction or partial
                                                  # admission, J/kg/K
                                                  "a_2": None, # Sound velocity at station 2, m/s
@@ -354,8 +355,8 @@ class Turbine1D:
         # Calculate available geometry already
         self.p_stator = self.D_Euler * np.pi / no_blades_stator  # m
         self.p_rotor = self.D_Euler * np.pi / no_blades_rotor  # m
-        self.c_stator = self.c_stator / chord_over_pitch_stator  # m
-        self.c_rotor = self.c_rotor / chord_over_pitch_rotor  # m
+        self.c_stator = self.p_stator * chord_over_pitch_stator  # m
+        self.c_rotor = self.p_rotor * chord_over_pitch_rotor  # m
         self.s_ax = self.p_rotor * s_ax_over_pitch_rotor  # m
 
         # Assign remaining geometry that is already known
@@ -401,12 +402,14 @@ class Turbine1D:
             return self.calculate_entropy_rise(delta_s[0], delta_s[1], delta_s[2], loss_model)[0]
         # Get an estimate of entropy rise scales for normalization of the residual. This estimate are the entropy
         # scales for assumed values equal to zero. This represents the result of loss model as if all input velocities
-        # and flow angles were ideal.
+        # and flow angles were ideal. This is only performed if any of the values in delta_s_estimate is zero.
         entropy_scales = get_entropy_residual([0, 0, 0])
+        # If any of the entropy scales are zero, do not use any scaling at all:
+        if any(entropy_scales) == 0: entropy_scales = [1, 1, 1]
         # Solve for entropy increase
         entropy_solution = root(get_entropy_residual, np.array(delta_s_estimate), method="hybr",
                                 options={"xtol":1e-6, "eps": 1e-12, "maxfev": 1000, "factor": 1,
-                                         "diag": 1/entropy_scales})
+                                         "diag": 1/np.array(entropy_scales)})
         # Raise an error if not converged
         if not entropy_solution.success:
             raise RuntimeError("Numerical solve for the stator and rotor entropy rises did not converge.")
@@ -422,9 +425,9 @@ class Turbine1D:
         self.loss_model_results_at_design_point = loss_model_results
 
         # Get flow angles, which become metal angles
-        self.alpha_1_metal_deg = self.analysis_results_at_design_point["alpha_1"]  # rad
-        self.beta_1_metal_deg = self.analysis_results_at_design_point["beta_1"]  # rad
-        self.beta_2_metal_deg = self.analysis_results_at_design_point["alpha_2"]  # rad
+        self.alpha_1_metal_deg = self.analysis_results_at_design_point["alpha_1"] * 180 / np.pi  # deg
+        self.beta_1_metal_deg = self.analysis_results_at_design_point["beta_1"] * 180 / np.pi # deg
+        self.beta_2_metal_deg = self.analysis_results_at_design_point["beta_2"] * 180 / np.pi # deg
 
         # Calculate and assign remaining properties related to geometry
         self.D_hub, self.D_tip, self.D_mean, self.l_rotor, self.h_shroud, self.s_ax_shroud =\
@@ -1003,7 +1006,7 @@ class Turbine1D:
 
         # Calculate Reynolds numbers
         Re_s1_blade = rho_1_blade * v_1_blade * self.c_stator / gas.calculate_dynamic_viscosity(T_1_blade)  # -
-        Re_r2_blade = rho_2_blade * v_2_blade * self.c_rotor / gas.calculate_dynamic_viscosity(T_2_blade)  # -
+        Re_r2_blade = rho_2_blade * w_2_blade * self.c_rotor / gas.calculate_dynamic_viscosity(T_2_blade)  # -
 
         # Now pack the results and return them together with residual
         blade_row_results = {"v_1_blade": v_1_blade,  # m/s
