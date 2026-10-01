@@ -534,18 +534,21 @@ class Turbine1D:
         def get_PR_residual(p_0_over_p_2_estimate):
             return self.__calculate_thermodynamic_properties(p_0_over_p_2_estimate, delta_s_stator_total,
                                                              delta_s_rotor_total, delta_s_rotor_additional)[1]
+        
         # Verify the candidate bracket after defining the residual. Finite, ordered endpoints and opposite residual
         # signs are required; a zero endpoint residual is already a root and is accepted by toms748.
         if numerical_scheme == "bracketing":
+            # Check if values of the bracket are ordered and finite
             if not np.all(np.isfinite(bracket)) or bracket[0] >= bracket[1]:
                 numerical_scheme = "newton"
+            # If so, evaluate residual at endpoints
             else:
                 try:
                     residual_at_bracket = [get_PR_residual(p_0_over_p_2) for p_0_over_p_2 in bracket]
+                # If endpoints fail, choose Newton scheme 
                 except ValueError:
-                    # A thermodynamic state outside the gas-property model's domain cannot be used as an endpoint.
                     numerical_scheme = "newton"
-                # Choose Newton scheme if residuals are not zero and dont have opposite signs
+                # Also choose Newton scheme if residuals are not zero and don't have opposite signs
                 else:
                     if not np.all(np.isfinite(residual_at_bracket)) or (
                             residual_at_bracket[0] != 0 and residual_at_bracket[1] != 0
@@ -609,25 +612,47 @@ class Turbine1D:
         # The bracket used can be supersonic or subsonic. theta_2_crit divides these two ranges. Whichever bracket is
         # used depends on the value of original theta_2.
         theta_2_crit = theta_2_max * np.sqrt((gas.gamma - 1) / (gas.gamma + 1))  # -
-        subsonic_branch = [1e-3 * theta_2_crit, theta_2_crit]
-        supersonic_branch = [theta_2_crit, (1 - 1e-3) * theta_2_max]
-        branch = subsonic_branch if theta_2 < theta_2_crit else supersonic_branch
+        subsonic_branch_bracket = [1e-3 * theta_2_crit, theta_2_crit]
+        supersonic_branch_bracket = [theta_2_crit, (1 - 1e-3) * theta_2_max]
+        bracket = subsonic_branch_bracket if theta_2 < theta_2_crit else supersonic_branch_bracket
+        
         # Define residual function to solve
         def get_theta_2_blade_residual(theta_2_blade):
             _, residual = self.__calculate_blade_row_velocities(
                 alpha_1, beta_2, theta_2_blade, analysis_results)  # residual: -
             return residual
-        residual_at_branch = [get_theta_2_blade_residual(theta) for theta in branch]
-        # Use toms748 if bracket gives opposite results
-        if residual_at_branch[0] * residual_at_branch[1] < 0:
-            theta_2_blade_solution = root_scalar(get_theta_2_blade_residual, bracket=branch, method="toms748",
-                                                 options={"k": 2}, maxiter=1000, xtol=1e-10, rtol=1e-8)
-            # If the solution does not converge, attempt Newton scheme with theta_2 as initial estimate
-            if not theta_2_blade_solution.converged:
-                theta_2_blade_solution = root_scalar(get_theta_2_blade_residual, x0=theta_2, method="newton".upper(),
-                                                     maxiter=1000, xtol=1e-10, rtol=1e-8)
-        # If bracket does not give opposite results, also use Newton scheme with theta_2 as initial estimate
+        
+        # Apply bracket checks: finite, ordered endpoints and finite residuals with opposite signs
+        numerical_scheme = "bracketing"
+        # Check if numbers in the bracket are finite and ordered. Otherwise, use Newton scheme. 
+        if not np.all(np.isfinite(bracket)) or bracket[0] >= bracket[1]:
+            numerical_scheme = "newton"
+        # If the first check is passed, evaluate residual at endpoints
         else:
+            try:
+                residual_at_bracket = [get_theta_2_blade_residual(theta) for theta in bracket]
+            # An inadmissible blade-row state cannot be used as a bracket endpoint.
+            except ValueError:
+                numerical_scheme = "newton"
+            # If residuals are evaluated successfuly, check if they have opposite signs. If not, use Newton scheme.
+            else:
+                if not np.all(np.isfinite(residual_at_bracket)) or (
+                        residual_at_bracket[0] != 0 and residual_at_bracket[1] != 0
+                        and np.signbit(residual_at_bracket[0]) == np.signbit(residual_at_bracket[1])):
+                    numerical_scheme = "newton"
+
+        # Solve within the verified bracket, retaining Newton as the fallback for an invalid state or nonconvergence.
+        if numerical_scheme == "bracketing":
+            try:
+                theta_2_blade_solution = root_scalar(get_theta_2_blade_residual, bracket=bracket, method="toms748",
+                                                     options={"k": 2}, maxiter=1000, xtol=1e-10, rtol=1e-8)
+            except ValueError:
+                numerical_scheme = "newton"
+            else:
+                if not theta_2_blade_solution.converged:
+                    numerical_scheme = "newton"
+        # Use the original theta_2 as the initial estimate when the bracket is unusable or the bracketing solve fails.
+        if numerical_scheme == "newton":
             theta_2_blade_solution = root_scalar(get_theta_2_blade_residual, x0=theta_2, method="newton",
                                                  maxiter=1000, xtol=1e-10, rtol=1e-8)
         # Raise an error if the solution is not converged
