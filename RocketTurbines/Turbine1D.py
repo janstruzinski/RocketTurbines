@@ -473,30 +473,101 @@ class Turbine1D:
         # p_0_over_p_2. It needs to be numerically found, such that energy balance is satisfied and total enthalpy at
         # station 2 agrees with the already calculated one.
         # First, retrieve some variables from analysis_results_at_design_point that will be used to obtain solution
-        # estimate
+        # estimate, as well as feasible bracket for numerical scheme. Bracket allows to use reliable toms748 scheme,
+        # but if it fails, Newton scheme can be used as a fallback.
         gas = self.analysis_results_at_design_point["gas"]
         h_t0 = self.analysis_results_at_design_point["h_t0"]  # J/kg
         h_t2 = self.analysis_results_at_design_point["h_t2"]  # J/kg
         u = self.analysis_results_at_design_point["u"]  # m/s
         theta_2 = self.analysis_results_at_design_point["theta_2"]  # -
+        psi = self.analysis_results_at_design_point["psi"]
+        R_h_ideal = self.analysis_results_at_design_point["R_h_ideal"]
+        delta_h = self.analysis_results_at_design_point["delta_h"]
         # The known axial velocity sets the largest possible exit static enthalpy (zero exit swirl).
         h_2_max = h_t2 - (theta_2 * u)**2 / 2  # J/kg
         if h_2_max <= 0:
             raise ValueError("Shaft work and exit axial kinetic energy leave no positive exit static enthalpy.")
         # This static enthalpy can be used to calculate loss-free lower bound on p_0/p_2:
         p_0_over_p_2_ideal = (h_t0 / h_2_max)**(gas.Cp / gas.R)  # -
-        # Now minimum pressure ratio that takes into account losses can be calculated
+        # Now minimum pressure ratio that takes into account losses can be calculated. This is minimum bracket point
         delta_s_total = delta_s_stator_total + delta_s_rotor_total
         p_0_over_p_2_min = p_0_over_p_2_ideal * np.exp(delta_s_total / gas.R)
 
-        # That minimum value is a solution estimate that can be used with the Newton scheme
+        # Calculate maximum pressure ratio for the bracket as well. These calculations are more complex.
+        # They assume nonnegative row entropy rises and ideal reaction, and positive shaft work/loading.
+        # The outer entropy solver can try values outside that domain, so retain Newton scheme as the fallback.
+        numerical_scheme = "newton"
+        if (delta_s_stator_total >= 0 and delta_s_rotor_total >= 0 and R_h_ideal >= 0
+                and psi > 0 and delta_h > 0):
+            # Rotor entropy changes the isentropic enthalpy ratio by factor below. Rearranging the reaction relation
+            # gives h_1 = rotor_entropy_factor * h_2 + h_1_at_h_2_zero, so h_1 is linear in exit static enthalpy h_2.
+            rotor_entropy_factor = np.exp(-delta_s_rotor_total / gas.Cp)
+            # Calculate the limiting rotor-inlet enthalpy as h_2 tends to zero, taking into account both rows' entropy
+            # rises. This is the intercept of the linear relation h_1 = rotor_entropy_factor * h_2 + h_1_at_h_2_zero.
+            h_1_at_h_2_zero = R_h_ideal * (h_t0 * np.exp(delta_s_stator_total / gas.Cp) - rotor_entropy_factor * h_t2)
+            # From R_h = (h_1 - h_2) / delta_h, obtain the limiting reaction at the low-enthalpy end
+            # (h_1_at_h_2_zero) of the possible solution interval.
+            R_h_at_h_2_zero = h_1_at_h_2_zero / delta_h
+            # Obtain reaction at the other end with the largest possible exit enthalpy, set by zero exit swirl.
+            R_h_at_h_2_max = ((rotor_entropy_factor - 1) * h_2_max + h_1_at_h_2_zero) / delta_h
+            # Since reaction is linear in h_2, its largest absolute value on [0, h_2_max] occurs at an endpoint.
+            R_h_abs_max = max(abs(R_h_at_h_2_zero), abs(R_h_at_h_2_max))
+            # Continuity gives theta_1 = theta_2 * rotor_entropy_factor * (rotor_entropy_factor * h_2 / h_1)**(Cp/R - 1)
+            # The entropy factor is <= 1 and h_1 >= rotor_entropy_factor * h_2, so theta_1**2 <= theta_2**2.
+            # Applying the absolute operator to each right term of v_2_tangential/u = 1 - R_h - psi/2
+            # + (theta_2**2 - theta_1**2)/(2*psi) and using maximum possible values for these terms therefore bounds
+            # the magnitude of exit swirl v_2_tangential from above
+            v_2_tangential_over_u_bound = abs(1 - psi / 2) + R_h_abs_max + theta_2**2 / (2 * psi)
+            # Subtracting largest possible value of the swirl from estimate of h_2 without any swirl,
+            # gives a conservative lower bound on h_2 at any energy-balanced solution.
+            h_2_min = h_2_max - (u * v_2_tangential_over_u_bound)**2 / 2
+            # Only a positive enthalpy floor yields a finite pressure-ratio ceiling, so only then bracketing scheme is
+            # chosen.
+            if h_2_min > 0:
+                # At fixed entropy, p_0/p_2 = exp(delta_s_total/R) * (h_t0/h_2)**(Cp/R), which decreases with h_2.
+                # Using its lower bound thus gives an upper bound of the pressure ratio bracket
+                p_0_over_p_2_max = p_0_over_p_2_min * (h_2_max / h_2_min)**(gas.Cp / gas.R)
+                bracket = [p_0_over_p_2_min, p_0_over_p_2_max]
+                numerical_scheme = "bracketing"
+
         # Define a function that obtains residual
         def get_PR_residual(p_0_over_p_2_estimate):
             return self.__calculate_thermodynamic_properties(p_0_over_p_2_estimate, delta_s_stator_total,
                                                              delta_s_rotor_total, delta_s_rotor_additional)[1]
-        # Solve it
-        PR_solution = root_scalar(get_PR_residual, x0=p_0_over_p_2_min, method="newton", maxiter=1000, xtol=1e-10,
-                                  rtol=1e-8)
+        # Verify the candidate bracket after defining the residual. Finite, ordered endpoints and opposite residual
+        # signs are required; a zero endpoint residual is already a root and is accepted by toms748.
+        if numerical_scheme == "bracketing":
+            if not np.all(np.isfinite(bracket)) or bracket[0] >= bracket[1]:
+                numerical_scheme = "newton"
+            else:
+                try:
+                    residual_at_bracket = [get_PR_residual(p_0_over_p_2) for p_0_over_p_2 in bracket]
+                except ValueError:
+                    # A thermodynamic state outside the gas-property model's domain cannot be used as an endpoint.
+                    numerical_scheme = "newton"
+                # Choose Newton scheme if residuals are not zero and dont have opposite signs
+                else:
+                    if not np.all(np.isfinite(residual_at_bracket)) or (
+                            residual_at_bracket[0] != 0 and residual_at_bracket[1] != 0
+                            and np.signbit(residual_at_bracket[0]) == np.signbit(residual_at_bracket[1])):
+                        numerical_scheme = "newton"
+
+        # Solve within the verified bracket.
+        if numerical_scheme == "bracketing":
+            try:
+                PR_solution = root_scalar(get_PR_residual, bracket=bracket, method="toms748", options={"k": 2},
+                                          maxiter=1000, xtol=1e-10, rtol=1e-8)
+            except ValueError:
+                # An inadmissible state encountered inside the bracket also requires the Newton fallback.
+                numerical_scheme = "newton"
+            # If the solution did not converge, use Newton scheme as well.
+            else:
+                if not PR_solution.converged:
+                    numerical_scheme = "newton"
+        # Use Newton when no valid bracket is available or when the bracketing solve fails to converge.
+        if numerical_scheme == "newton":
+            PR_solution = root_scalar(get_PR_residual, x0=p_0_over_p_2_min, method="newton", maxiter=1000, xtol=1e-10,
+                                      rtol=1e-8)
         # Raise error if the solution is not converged
         if not PR_solution.converged:
             raise RuntimeError("Numerical solve for p_0/p_2 did not converge.")
