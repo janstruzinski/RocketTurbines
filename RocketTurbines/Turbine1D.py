@@ -1,6 +1,7 @@
 import numpy as np
 from scipy.optimize import root_scalar, root
 from .TraupelLossModel import TraupelLossModel
+from .IdealGas import IdealGas
 
 class Turbine1D:
     def __init__(self):
@@ -245,6 +246,7 @@ class Turbine1D:
             "w_2_blade": None,  # Relative velocity at station 2 for the blade row alone, m/s
             "p_2_blade": None,  # Static pressure at station 2 for the blade row alone, Pa
             "T_2_blade": None,  # Static temperature at station 2 for the blade row alone, K
+            "h_t2_blade": None,  # Total specific enthalpy at station 2 for the blade row alone, J/kg
             "rho_2_blade": None,  # Static density at station 2 for the blade row alone, kg/m3
             "M_r1_blade": None,  # Relative Mach number at station 1 for the blade row alone, -
             "M_r2_blade": None,  # Relative Mach number at station 2 for the blade row alone, -
@@ -288,7 +290,7 @@ class Turbine1D:
         This method calls calculate_entropy_rise, which is an outer numerical solution loop, to calculate consistent
         fluid and flow state at each station. This allows to calculate the geometry of the turbine.
 
-        :param IdealGas gas: IdealGas object representing working gas of the turbine.
+        :param IdealGas gas: Working gas of the turbine. Must be an instance of the IdealGas class.
         :param float or integer loading_coefficient: Real, nonisentropic loading coefficient of the stage.
         :param float or integer flow_coefficient: Flow coefficient of the turbine at station 2.
         :param float reaction_isentropic: Enthalpic, isentropic reaction of the turbine. It should be noted enthalpic
@@ -329,14 +331,102 @@ class Turbine1D:
         :param list delta_s_estimate: List of initial estimates of the entropy rises (J/kg/K) due to stator, rotor and
          additional rotor losses. Additional rotor losses represent clearance, partial admission or disk friction
           losses. By default, [0, 0, 0].
-        :raises TypeError: If loss_model is not a TraupelLossModel instance.
+        :raises TypeError: If gas is not an IdealGas instance or loss_model is not a TraupelLossModel instance.
         :raises ValueError: If the specified shaft work and outlet axial kinetic energy leave no positive outlet
             static enthalpy.
         :raises RuntimeError: If the entropy-rise, pressure-ratio or blade-row flow-coefficient solve does not converge.
         """
 
+        # Verify that user inputs are correct.
         if not isinstance(loss_model, TraupelLossModel):
             raise TypeError("loss_model must be a TraupelLossModel instance.")
+        # Require the IdealGas class used by the turbine's thermodynamic calculations.
+        if not isinstance(gas, IdealGas):
+            raise TypeError("gas must be an IdealGas instance.")
+
+        # VNow verify all the scalars.
+        positive_inputs = {
+            "loading_coefficient": loading_coefficient, "flow_coefficient": flow_coefficient,
+            "RPM": RPM, "shaft_power": shaft_power, "mdot": mdot, "T_0": T_0, "p_0": p_0,
+            "no_blades_stator": no_blades_stator, "no_blades_rotor": no_blades_rotor,
+            "chord_over_pitch_stator": chord_over_pitch_stator,
+            "chord_over_pitch_rotor": chord_over_pitch_rotor, "admission_fraction": admission_fraction,
+        }
+        nonnegative_inputs = {
+            "radial_clearance": radial_clearance, "t_TE_stator": t_TE_stator,
+            "t_TE_rotor": t_TE_rotor, "Ra_roughness": Ra_roughness,
+            "s_ax_over_pitch_rotor": s_ax_over_pitch_rotor,
+            "h_shroud_over_blade_length": h_shroud_over_blade_length,
+            "s_ax_shroud_over_h_shroud": s_ax_shroud_over_h_shroud, "reaction_isentropic": reaction_isentropic
+        }
+        # Optional shroud dimensions and tooth count must be also valid whenever they are supplied.
+        if t_shroud is not None:
+            positive_inputs["t_shroud"] = t_shroud
+        if seal_teeth_number is not None:
+            positive_inputs["seal_teeth_number"] = seal_teeth_number
+        # Check variables in dictionaries above.
+        for name, value in {**positive_inputs, **nonnegative_inputs}.items():
+            if (isinstance(value, (bool, np.bool_))
+                    or not isinstance(value, (int, float, np.integer, np.floating))
+                    or not np.isfinite(value)):
+                raise ValueError(f"{name} must be a finite real scalar.")
+        for name, value in positive_inputs.items():
+            if value <= 0:
+                raise ValueError(f"{name} must be positive.")
+        # Zero clearances, trailing-edge thickness and roughness remain valid limiting inputs.
+        for name, value in nonnegative_inputs.items():
+            if value < 0:
+                raise ValueError(f"{name} must be nonnegative.")
+
+        # Isentropic reaction cannot be above one
+        if reaction_isentropic > 1:
+            raise ValueError(f"reaction_isentropic must be smaller than or equal to one.")
+
+        # Admission must represent a nonzero fraction of the circumference, with a supported rotor type.
+        if admission_fraction > 1:
+            raise ValueError("admission_fraction must satisfy 0 < admission_fraction <= 1.")
+        if not isinstance(partial_admission_rotor, str) or partial_admission_rotor not in ("free", "enclosed"):
+            raise ValueError('partial_admission_rotor must be "free" or "enclosed".')
+
+        # Blade and seal-tooth counts must be whole numbers; the seal requires more than two teeth.
+        for name, value in {"no_blades_stator": no_blades_stator,
+                            "no_blades_rotor": no_blades_rotor}.items():
+            if value != int(value):
+                raise ValueError(f"{name} must be a positive integer.")
+        if seal_teeth_number is not None and (seal_teeth_number != int(seal_teeth_number)
+                                              or seal_teeth_number <= 2):
+            raise ValueError("seal_teeth_number must be an integer greater than 2.")
+        # A shrouded rotor needs a defined seal and positive overlap; optional thickness may remain None.
+        if not isinstance(shrouded_rotor, (bool, np.bool_)):
+            raise TypeError("shrouded_rotor must be a boolean.")
+        if shrouded_rotor and seal_teeth_number is None:
+            raise ValueError("seal_teeth_number is required for a shrouded rotor.")
+        if shrouded_rotor and h_shroud_over_blade_length <= 0:
+            raise ValueError("h_shroud_over_blade_length must be positive for a shrouded rotor.")
+
+        # The entropy solver needs exactly three finite, nonnegative initial entropy estimates.
+        try:
+            valid_estimate_length = len(delta_s_estimate) == 3
+        except TypeError:
+            valid_estimate_length = False
+        if not valid_estimate_length:
+            raise ValueError("delta_s_estimate must contain exactly three entropy estimates.")
+        for value in delta_s_estimate:
+            if (isinstance(value, (bool, np.bool_))
+                    or not isinstance(value, (int, float, np.integer, np.floating))
+                    or not np.isfinite(value) or value < 0):
+                raise ValueError("delta_s_estimate must contain finite, nonnegative real scalars.")
+
+        # Shaft work and the prescribed exit axial velocity must leave positive exit static enthalpy.
+        available_exit_static_enthalpy = gas.Cp * T_0 - (shaft_power / mdot) * \
+            (1 + flow_coefficient**2 / (2 * loading_coefficient))
+        if not np.isfinite(available_exit_static_enthalpy) or available_exit_static_enthalpy <= 0:
+            raise ValueError("Shaft work and exit axial kinetic energy leave no positive exit static enthalpy.")
+        # Tangential trailing-edge thickness must be smaller than its corresponding blade pitch.
+        validation_D_Euler = 2 * np.sqrt((shaft_power / mdot) / loading_coefficient) / (RPM * 2 * np.pi / 60)
+        if (t_TE_stator >= validation_D_Euler * np.pi / no_blades_stator
+                or t_TE_rotor >= validation_D_Euler * np.pi / no_blades_rotor):
+            raise ValueError("Each trailing-edge thickness must be smaller than its blade pitch.")
 
         # Calculate the blade speed from given requirements
         delta_h = shaft_power / mdot  # J/kg
@@ -736,6 +826,13 @@ class Turbine1D:
         rho_2 = analysis_results["rho_2"]  # kg/m^3
         area = mdot / (v_ax * rho_2 * self.admission_fraction)  # m^2
 
+        # Reject invalid flow areas or diameters before evaluating the annulus square roots.
+        if not np.isfinite(area) or area <= 0 or not np.isfinite(self.D_Euler) or self.D_Euler <= 0:
+            raise ValueError("Annulus area and Euler diameter must be finite and positive.")
+        # A larger annulus would require a negative hub-diameter square at the specified Euler diameter.
+        if self.D_Euler**2 - (2 * area / np.pi) < 0:
+            raise ValueError("Required annulus area exceeds the maximum allowed by the Euler diameter.")
+
         # From annulus area, calculate blade length.
         D_hub = np.sqrt(self.D_Euler**2 - (2 * area / np.pi))  # m
         D_tip = np.sqrt(self.D_Euler**2 + (2 * area / np.pi))  # m
@@ -997,9 +1094,10 @@ class Turbine1D:
         residual = theta_2_blade_output - theta_2_blade  # -
 
         # Some other quantities can be also calculated for the blade row alone.
+        h_t2_blade = h_2_blade + v_2_blade**2 / 2
         alpha_2_blade = np.atan2(1 + theta_2_blade * np.tan(beta_2_metal), theta_2_blade)  # rad
         psi_blade = theta_1_blade * np.tan(alpha_1_metal) - theta_2_blade * np.tan(beta_2_metal) - 1  # -
-        R_h_blade = (h_1_blade - h_2_blade) / (h_0 - h_2_blade)  # -
+        R_h_blade = (h_1_blade - h_2_blade) / (h_0 - h_t2_blade)  # -
         p_0_over_p_2_blade = p_0 / p_2_blade  # -
         M_r2_blade = w_2_blade / gas.calculate_sound_velocity(T_2_blade)  # -
         M_r1_blade = w_1_blade / gas.calculate_sound_velocity(T_1_blade)  # -
@@ -1019,6 +1117,7 @@ class Turbine1D:
                              "w_2_blade": w_2_blade,  # m/s
                              "p_2_blade": p_2_blade,  # Pa
                              "T_2_blade": T_2_blade,  # K
+                             "h_t2_blade": h_t2_blade, # J/kg
                              "rho_2_blade": rho_2_blade,  # kg/m^3
                              "M_r1_blade": M_r1_blade,  # -
                              "M_r2_blade": M_r2_blade,  # -
