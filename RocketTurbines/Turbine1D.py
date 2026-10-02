@@ -1083,8 +1083,9 @@ class Turbine1D:
         # From the conservation of rotalphy, get enthalpy and temperature at station 2
         h_2_blade = h_1_blade + (w_1_blade**2 - w_2_blade**2) / 2  # J/kg
         T_2_blade = h_2_blade / gas.Cp  # K
-        # Entropy increase across the rotor is known, so pressure at station 2 can be calculated. It will be higher
-        # than pressure at station 2 for the whole stage.
+        # Entropy increase across the rotor is known, positive, and without additional losses, so pressure at station 2
+        # can be calculated. It will be higher than pressure at station 2 for the whole stage for the subsonic
+        # relative flow at the rotor exit. It will be lower for the supersonic relative flow at the rotor exit.
         p_2_blade = p_1_blade * np.exp((gas.Cp * np.log(T_2_blade / T_1_blade) - delta_s_rotor) / gas.R)  # Pa
         rho_2_blade = gas.calculate_density(p_2_blade, T_2_blade)  # kg/m^3
 
