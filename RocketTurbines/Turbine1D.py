@@ -111,6 +111,7 @@ class Turbine1D:
         # _blade represent velocities or thermodynamic properties representative of flow in stationary test cascade.
         # By default, angles refer to flow angles. If they refer to geometric metal blade angle, they have a suffix
         # _metal.
+        # _ts means total-to-static quantity, _ss means static-to-static quantity, _tt means total-to-total quantity.
 
         # Assumptions:
         # 1. This class utilizes ideal gas model for calculations.
@@ -168,14 +169,16 @@ class Turbine1D:
                                                  "p_0": None,   # Total/static pressure at station 0, Pa
                                                  "loss_model": None,  # TraupelLossModel object used for calculations, -
                                                  "h_0": None,   # Total/static enthalpy at station 0, J/kg
-                                                 "psi": None, # Real loading coefficient, -
-                                                 "psi_ideal": None, # Total-to-total ideal work coefficient, -
-                                                 "psi_ideal_design": None,  # Total-to-total ideal work coefficient
+                                                 "psi_tt": None, # Real loading coefficient, -
+                                                 "psi_tt_ideal": None, # Total-to-total ideal work coefficient, -
+                                                 "psi_tt_ideal_design": None,  # Total-to-total ideal work coefficient
                                                  # at the design point, -
                                                  "theta_1": None, # Flow coefficient at station 1, -
                                                  "theta_2": None, # Flow coefficient at station 2, -
-                                                 "R_h_ideal": None, # Ideal enthalpic reaction of the stage, -
-                                                 "R_h": None,   # Real enthalpic reaction of the stage, -
+                                                 "R_h_tt_ideal": None, # Ideal enthalpic reaction of the stage based on
+                                                 # total-to-total enthalpy drop of the stage, -
+                                                 "R_h_tt": None,   # Real enthalpic reaction of the stage based on
+                                                 # total-to-total enthalpy drop of the stage, -
                                                  "R_p": None,   # Real pressure reaction of the stage, -
                                                  "p_0_over_p_2": None,  # Pressure ratio of the stage, -
                                                  "u": None, # Blade velocity at Euler radius, m/s
@@ -260,8 +263,8 @@ class Turbine1D:
             "M_r1_blade": None,  # Relative Mach number at station 1 for the blade row alone, -
             "M_r2_blade": None,  # Relative Mach number at station 2 for the blade row alone, -
             "alpha_2_blade": None,  # Absolute flow angle at station 2 for the blade row alone, rad
-            "psi_blade": None,  # Loading coefficient for the blade row alone, -
-            "R_h_blade": None,  # Enthalpic reaction for the blade row alone, -
+            "psi_tt_blade": None,  # Loading coefficient for the blade row alone, -
+            "R_h_tt_blade": None,  # Enthalpic reaction for the blade row alone, -
             "p_0_over_p_2_blade": None,  # Pressure ratio for the blade row alone, -
             "Re_s1_blade": None,  # Reynolds number based on v_1_blade and stator chord, -
             "Re_r2_blade": None,  # Reynolds number based on v_2_blade and rotor chord, -
@@ -287,7 +290,7 @@ class Turbine1D:
             "mdot_leak": None,  # Mass flow leaking through the rotor shroud seal (zero if unshrouded), kg/s
         }
 
-    def size_turbine(self, gas: IdealGas, loading_coefficient, flow_coefficient, reaction_isentropic, RPM,
+    def size_turbine(self, gas: IdealGas, loading_coefficient_tt, flow_coefficient, reaction_isentropic_tt, RPM,
                      shaft_power, mdot, T_0, p_0, radial_clearance, no_blades_stator, no_blades_rotor,
                      chord_over_pitch_stator, t_TE_stator, t_TE_rotor, Ra_roughness,
                      loss_model: TraupelLossModel, admission_fraction=1, partial_admission_rotor="free",
@@ -300,10 +303,12 @@ class Turbine1D:
         fluid and flow state at each station. This allows to calculate the geometry of the turbine.
 
         :param IdealGas gas: Working gas of the turbine. Must be an instance of the IdealGas class.
-        :param float or integer loading_coefficient: Real, nonisentropic loading coefficient of the stage.
+        :param float or integer loading_coefficient_tt: Real, nonisentropic loading coefficient of the stage based on
+         total-to-total enthalpy drop.
         :param float or integer flow_coefficient: Flow coefficient of the turbine at station 2.
-        :param float reaction_isentropic: Enthalpic, isentropic reaction of the turbine. It should be noted enthalpic
-            reaction is not the same as pressure reaction, although two quantities are similar.
+        :param float reaction_isentropic_tt: Enthalpic, isentropic reaction of the turbine. This is static enthalpy drop
+         of the rotor over total-to-total enthalpy drop of the stage for isentropic turbine. It should be noted
+          enthalpic reaction is not the same as pressure reaction, although two quantities are similar.
         :param float or integer RPM: Rotations per minute of the turbine.
         :param float or integer shaft_power: Shaft power (W) that the turbine must deliver.
         :param float or integer mdot: Massflow (kg/s) through the turbine.
@@ -356,7 +361,7 @@ class Turbine1D:
 
         # VNow verify all the scalars.
         positive_inputs = {
-            "loading_coefficient": loading_coefficient, "flow_coefficient": flow_coefficient,
+            "loading_coefficient_tt": loading_coefficient_tt, "flow_coefficient": flow_coefficient,
             "RPM": RPM, "shaft_power": shaft_power, "mdot": mdot, "T_0": T_0, "p_0": p_0,
             "no_blades_stator": no_blades_stator, "no_blades_rotor": no_blades_rotor,
             "chord_over_pitch_stator": chord_over_pitch_stator,
@@ -367,7 +372,7 @@ class Turbine1D:
         }
         nonnegative_inputs = {
             "t_TE_stator": t_TE_stator, "t_TE_rotor": t_TE_rotor, "Ra_roughness": Ra_roughness,
-            "s_ax_shroud_over_h_shroud": s_ax_shroud_over_h_shroud, "reaction_isentropic": reaction_isentropic
+            "s_ax_shroud_over_h_shroud": s_ax_shroud_over_h_shroud, "reaction_isentropic_tt": reaction_isentropic_tt
         }
         # Optional shroud dimensions and tooth count must be also valid whenever they are supplied.
         if t_shroud is not None:
@@ -389,8 +394,8 @@ class Turbine1D:
                 raise ValueError(f"{name} must be nonnegative.")
 
         # Isentropic reaction cannot be above one
-        if reaction_isentropic > 1:
-            raise ValueError(f"reaction_isentropic must be smaller than or equal to one.")
+        if reaction_isentropic_tt > 1:
+            raise ValueError(f"reaction_isentropic_tt must be smaller than or equal to one.")
 
         # Admission must represent a nonzero fraction of the circumference, with a supported rotor type.
         if admission_fraction > 1:
@@ -429,18 +434,18 @@ class Turbine1D:
 
         # Shaft work and the prescribed exit axial velocity must leave positive exit static enthalpy.
         available_exit_static_enthalpy = gas.Cp * T_0 - (shaft_power / mdot) * \
-            (1 + flow_coefficient**2 / (2 * loading_coefficient))
+            (1 + flow_coefficient**2 / (2 * loading_coefficient_tt))
         if not np.isfinite(available_exit_static_enthalpy) or available_exit_static_enthalpy <= 0:
             raise ValueError("Shaft work and exit axial kinetic energy leave no positive exit static enthalpy.")
         # Tangential trailing-edge thickness must be smaller than its corresponding blade pitch.
-        validation_D_Euler = 2 * np.sqrt((shaft_power / mdot) / loading_coefficient) / (RPM * 2 * np.pi / 60)
+        validation_D_Euler = 2 * np.sqrt((shaft_power / mdot) / loading_coefficient_tt) / (RPM * 2 * np.pi / 60)
         if (t_TE_stator >= validation_D_Euler * np.pi / no_blades_stator
                 or t_TE_rotor >= validation_D_Euler * np.pi / no_blades_rotor):
             raise ValueError("Each trailing-edge thickness must be smaller than its blade pitch.")
 
         # Calculate the blade speed from given requirements
         delta_h = shaft_power / mdot  # J/kg
-        u = np.sqrt(delta_h / loading_coefficient)  # m/s
+        u = np.sqrt(delta_h / loading_coefficient_tt)  # m/s
 
         # Calculate angular speed and Euler diameter of the turbine
         omega = RPM * 2 * np.pi / 60  # rad/s
@@ -478,9 +483,9 @@ class Turbine1D:
 
         # Put known variables in analysis_results_at_design_point already
         self.analysis_results_at_design_point.update({"gas": gas,
-                                                      "psi": loading_coefficient,  # -
+                                                      "psi_tt": loading_coefficient_tt,  # -
                                                       "theta_2": flow_coefficient,  # -
-                                                      "R_h_ideal": reaction_isentropic,  # -
+                                                      "R_h_tt_ideal": reaction_isentropic_tt,  # -
                                                       "RPM": RPM,  # rpm
                                                       "omega": omega,  # rad/s
                                                       "u": u,  # m/s
@@ -584,8 +589,8 @@ class Turbine1D:
         h_t2 = self.analysis_results_at_design_point["h_t2"]  # J/kg
         u = self.analysis_results_at_design_point["u"]  # m/s
         theta_2 = self.analysis_results_at_design_point["theta_2"]  # -
-        psi = self.analysis_results_at_design_point["psi"]
-        R_h_ideal = self.analysis_results_at_design_point["R_h_ideal"]
+        psi_tt = self.analysis_results_at_design_point["psi_tt"]
+        R_h_tt_ideal = self.analysis_results_at_design_point["R_h_tt_ideal"]
         delta_h = self.analysis_results_at_design_point["delta_h"]
         # The known axial velocity sets the largest possible exit static enthalpy (zero exit swirl).
         h_2_max = h_t2 - (theta_2 * u)**2 / 2  # J/kg
@@ -598,27 +603,27 @@ class Turbine1D:
         # They assume nonnegative row entropy rises and ideal reaction, and positive shaft work/loading.
         # The outer entropy solver can try values outside that domain, so retain Newton scheme as the fallback.
         numerical_scheme = "newton"
-        if (delta_s_stator_total >= 0 and delta_s_rotor_total >= 0 and R_h_ideal >= 0
-                and psi > 0 and delta_h > 0):
+        if (delta_s_stator_total >= 0 and delta_s_rotor_total >= 0 and R_h_tt_ideal >= 0
+                and psi_tt > 0 and delta_h > 0):
             # Rotor entropy changes the isentropic enthalpy ratio by factor below. Rearranging the reaction relation
             # gives h_1 = rotor_entropy_factor * h_2 + h_1_at_h_2_zero, so h_1 is linear in exit static enthalpy h_2.
             rotor_entropy_factor = np.exp(-delta_s_rotor_total / gas.Cp)
             # Calculate the limiting rotor-inlet enthalpy as h_2 tends to zero, taking into account both rows' entropy
             # rises. This is the intercept of the linear relation h_1 = rotor_entropy_factor * h_2 + h_1_at_h_2_zero.
-            h_1_at_h_2_zero = R_h_ideal * (h_t0 * np.exp(delta_s_stator_total / gas.Cp) - rotor_entropy_factor * h_t2)
-            # From R_h = (h_1 - h_2) / delta_h, obtain the limiting reaction at the low-enthalpy end
+            h_1_at_h_2_zero = R_h_tt_ideal * (h_t0 * np.exp(delta_s_stator_total / gas.Cp) - rotor_entropy_factor * h_t2)
+            # From R_h_tt = (h_1 - h_2) / delta_h, obtain the limiting reaction at the low-enthalpy end
             # (h_1_at_h_2_zero) of the possible solution interval.
-            R_h_at_h_2_zero = h_1_at_h_2_zero / delta_h
+            R_h_tt_at_h_2_zero = h_1_at_h_2_zero / delta_h
             # Obtain reaction at the other end with the largest possible exit enthalpy, set by zero exit swirl.
-            R_h_at_h_2_max = ((rotor_entropy_factor - 1) * h_2_max + h_1_at_h_2_zero) / delta_h
+            R_h_tt_at_h_2_max = ((rotor_entropy_factor - 1) * h_2_max + h_1_at_h_2_zero) / delta_h
             # Since reaction is linear in h_2, its largest absolute value on [0, h_2_max] occurs at an endpoint.
-            R_h_abs_max = max(abs(R_h_at_h_2_zero), abs(R_h_at_h_2_max))
+            R_h_tt_abs_max = max(abs(R_h_tt_at_h_2_zero), abs(R_h_tt_at_h_2_max))
             # Continuity gives theta_1 = theta_2 * rotor_entropy_factor * (rotor_entropy_factor * h_2 / h_1)**(Cp/R - 1)
             # The entropy factor is <= 1 and h_1 >= rotor_entropy_factor * h_2, so theta_1**2 <= theta_2**2.
-            # Applying the absolute operator to each right term of v_2_tangential/u = 1 - R_h - psi/2
-            # + (theta_2**2 - theta_1**2)/(2*psi) and using maximum possible values for these terms therefore bounds
+            # Applying the absolute operator to each right term of v_2_tangential/u = 1 - R_h_tt - psi_tt/2
+            # + (theta_2**2 - theta_1**2)/(2*psi_tt) and using maximum possible values for these terms therefore bounds
             # the magnitude of exit swirl v_2_tangential from above
-            v_2_tangential_over_u_bound = abs(1 - psi / 2) + R_h_abs_max + theta_2**2 / (2 * psi)
+            v_2_tangential_over_u_bound = abs(1 - psi_tt / 2) + R_h_tt_abs_max + theta_2**2 / (2 * psi_tt)
             # Subtracting largest possible value of the swirl from estimate of h_2 without any swirl,
             # gives a conservative lower bound on h_2 at any energy-balanced solution.
             h_2_min = h_2_max - (u * v_2_tangential_over_u_bound)**2 / 2
@@ -896,8 +901,8 @@ class Turbine1D:
             raise ValueError("h_2/h_t0 must be finite and positive.")
 
         # Retrieve already known variables from analysis_results_at_design_point
-        psi = self.analysis_results_at_design_point["psi"]  # -
-        R_h_ideal = self.analysis_results_at_design_point["R_h_ideal"]  # -
+        psi_tt = self.analysis_results_at_design_point["psi_tt"]  # -
+        R_h_tt_ideal = self.analysis_results_at_design_point["R_h_tt_ideal"]  # -
         theta_2 = self.analysis_results_at_design_point["theta_2"]  # -
         h_t2 = self.analysis_results_at_design_point["h_t2"]  # J/kg
         h_t0 = self.analysis_results_at_design_point["h_t0"]  # J/kg
@@ -924,7 +929,7 @@ class Turbine1D:
         # Calculate difference between total ideal enthalpies
         delta_h_t_ideal = h_0 - h_t2_ideal
         # Now using ideal reaction definition, find ratio of isentropic enthalpies at station 1 and 2
-        h_1_over_h_2_isentropic = 1 + R_h_ideal * delta_h_t_ideal / h_2_ideal
+        h_1_over_h_2_isentropic = 1 + R_h_tt_ideal * delta_h_t_ideal / h_2_ideal
         # Now the ratio of real enthalpies can be found
         h_1_over_h_2 = h_1_over_h_2_isentropic * np.exp(-total_delta_s_rotor / gas.Cp) # -
 
@@ -939,9 +944,9 @@ class Turbine1D:
         # Calculate theta_1
         theta_1 = theta_2 * rho_2 / rho_1  # -
         # Calculate real reaction from its definition
-        R_h = (h_1 - h_2) / delta_h # -
+        R_h_tt = (h_1 - h_2) / delta_h # -
         # Calculate absolute velocity at the outlet
-        v_2_over_u = np.sqrt(theta_2**2 + (1 - R_h - psi / 2 + (theta_2**2 - theta_1**2) / (2 * psi))**2)  # -
+        v_2_over_u = np.sqrt(theta_2**2 + (1 - R_h_tt - psi_tt / 2 + (theta_2**2 - theta_1**2) / (2 * psi_tt))**2)  # -
         v_2 = v_2_over_u * u  # m/s
         # Calculate total enthalpy at the outlet
         h_t2_calculated = h_2 + v_2**2 / 2 # J/kg
@@ -949,9 +954,9 @@ class Turbine1D:
         residual = (h_t2_calculated - h_t2) / h_t0 # J/kg
 
         # Calculate remaining values of interest.
-        # First calculate ideal psi
+        # First calculate ideal psi_tt
         h_t2_over_h_t0 = h_t2_calculated / h_0  # -
-        psi_ideal = psi * (1 - h_t2_over_h_t0 * np.exp(-delta_s / gas.Cp)) / (1 - h_t2_over_h_t0)  # -
+        psi_tt_ideal = psi_tt * (1 - h_t2_over_h_t0 * np.exp(-delta_s / gas.Cp)) / (1 - h_t2_over_h_t0)  # -
         # Calculate real pressure reaction, R_p
         R_p = (p_1 - p_2) / (p_0 - p_2)  # -
 
@@ -976,9 +981,9 @@ class Turbine1D:
                                  "delta_s_rotor_additional": delta_s_rotor_additional,  # J/(kg K)
                                  "v_2": v_2,  # m/s
                                  "R_p": R_p,  # -
-                                 "psi_ideal": psi_ideal,  # -
-                                 "psi_ideal_design": psi_ideal,  # -
-                                 "R_h": R_h,  # -
+                                 "psi_tt_ideal": psi_tt_ideal,  # -
+                                 "psi_tt_ideal_design": psi_tt_ideal,  # -
+                                 "R_h_tt": R_h_tt,  # -
                                  "theta_1": theta_1,  # -
                                  })
 
@@ -996,7 +1001,7 @@ class Turbine1D:
             losses is performed separately by __calculate_blade_row_velocities.
 
         :param dict analysis_results: Dictionary returned by __calculate_thermodynamic_properties for the solved
-            h_2/h_t0. Required values include gas, thermodynamic states, v_2, u, psi, R_h and flow coefficients.
+            h_2/h_t0. Required values include gas, thermodynamic states, v_2, u, psi_tt, R_h_tt and flow coefficients.
             Variable definitions are in Turbine1D.__init__.
         :return: The supplied analysis_results dictionary with added outlet flow properties and isentropic reference
          states.
@@ -1017,8 +1022,8 @@ class Turbine1D:
         h_2 = analysis_results["h_2"]  # J/kg
         v_2 = analysis_results["v_2"]  # m/s
         u = analysis_results["u"]  # m/s
-        psi = analysis_results["psi"]  # -
-        R_h = analysis_results["R_h"]  # -
+        psi_tt = analysis_results["psi_tt"]  # -
+        R_h_tt = analysis_results["R_h_tt"]  # -
         theta_1 = analysis_results["theta_1"]  # -
         theta_2 = analysis_results["theta_2"]  # -
 
@@ -1034,7 +1039,7 @@ class Turbine1D:
         M_s1 = v_1 / a_1  # -
         M_s1_ideal = v_1_ideal / a_1_ideal  # -
         # Now real values in rotary reference frame:
-        dummy_a1 = 1 - R_h + psi / 2 + (theta_2**2 - theta_1**2) / (2 * psi)  # -
+        dummy_a1 = 1 - R_h_tt + psi_tt / 2 + (theta_2**2 - theta_1**2) / (2 * psi_tt)  # -
         dummy_b1 = dummy_a1 - 1  # -
         w_1 = u * np.sqrt(theta_1**2 + dummy_b1**2)  # m/s
         M_r1 = w_1 / a_1  # -
@@ -1048,7 +1053,7 @@ class Turbine1D:
         # Real values in stationary reference frame:
         M_s2 = v_2 / a_2  # -
         # Now real and ideal values in rotary reference frame:
-        dummy_a2 = dummy_a1 - psi  # -
+        dummy_a2 = dummy_a1 - psi_tt  # -
         dummy_b2 = dummy_a2 - 1  # -
         w_2 = u * np.sqrt(theta_2**2 + dummy_b2**2)  # m/s
         delta_h_loss_rotor = h_2 - h_2_ideal_r_real_s  # J/kg
@@ -1099,15 +1104,15 @@ class Turbine1D:
         # Retrieve variables from analysis_results
         theta_1 = analysis_results["theta_1"]  # -
         theta_2 = analysis_results["theta_2"]  # -
-        R_h = analysis_results["R_h"]  # -
-        psi = analysis_results["psi"]  # -
+        R_h_tt = analysis_results["R_h_tt"]  # -
+        psi_tt = analysis_results["psi_tt"]  # -
         # Calculate support variable
-        dummy_theta = (theta_2**2 - theta_1**2) / (2 * psi)  # -
+        dummy_theta = (theta_2**2 - theta_1**2) / (2 * psi_tt)  # -
         # Calculate flow angles
-        alpha_1 = np.atan2(1 - R_h + psi / 2 + dummy_theta, theta_1)  # rad
-        beta_1 = np.atan2(-R_h + psi / 2 + dummy_theta, theta_1)  # rad
-        beta_2 = np.atan2(-R_h - psi / 2 + dummy_theta, theta_2)  # rad
-        alpha_2 = np.atan2(1 - R_h - psi / 2 + dummy_theta, theta_2)  # rad
+        alpha_1 = np.atan2(1 - R_h_tt + psi_tt / 2 + dummy_theta, theta_1)  # rad
+        beta_1 = np.atan2(-R_h_tt + psi_tt / 2 + dummy_theta, theta_1)  # rad
+        beta_2 = np.atan2(-R_h_tt - psi_tt / 2 + dummy_theta, theta_2)  # rad
+        alpha_2 = np.atan2(1 - R_h_tt - psi_tt / 2 + dummy_theta, theta_2)  # rad
         # Return all flow angles
         return alpha_1, beta_1, alpha_2, beta_2
 
@@ -1167,8 +1172,8 @@ class Turbine1D:
         # Some other quantities can be also calculated for the blade row alone.
         h_t2_blade = h_2_blade + v_2_blade**2 / 2
         alpha_2_blade = np.atan2(1 + theta_2_blade * np.tan(beta_2_metal), theta_2_blade)  # rad
-        psi_blade = theta_1_blade * np.tan(alpha_1_metal) - theta_2_blade * np.tan(beta_2_metal) - 1  # -
-        R_h_blade = (h_1_blade - h_2_blade) / (h_0 - h_t2_blade)  # -
+        psi_tt_blade = theta_1_blade * np.tan(alpha_1_metal) - theta_2_blade * np.tan(beta_2_metal) - 1  # -
+        R_h_tt_blade = (h_1_blade - h_2_blade) / (h_0 - h_t2_blade)  # -
         p_0_over_p_2_blade = p_0 / p_2_blade  # -
         M_r2_blade = w_2_blade / gas.calculate_sound_velocity(T_2_blade)  # -
         M_r1_blade = w_1_blade / gas.calculate_sound_velocity(T_1_blade)  # -
@@ -1182,19 +1187,21 @@ class Turbine1D:
                              "w_1_blade": w_1_blade,  # m/s
                              "p_1_blade": p_1_blade,  # Pa
                              "T_1_blade": T_1_blade,  # K
+                             "h_1_blade": h_1_blade,  # J/kg
                              "rho_1_blade": rho_1_blade,  # kg/m^3
                              "M_s1_blade": M_s1_blade,  # -
                              "v_2_blade": v_2_blade,  # m/s
                              "w_2_blade": w_2_blade,  # m/s
                              "p_2_blade": p_2_blade,  # Pa
                              "T_2_blade": T_2_blade,  # K
+                             "h_2_blade": h_2_blade, # J/kg
                              "h_t2_blade": h_t2_blade, # J/kg
                              "rho_2_blade": rho_2_blade,  # kg/m^3
                              "M_r1_blade": M_r1_blade,  # -
                              "M_r2_blade": M_r2_blade,  # -
                              "alpha_2_blade": alpha_2_blade,  # rad
-                             "psi_blade": psi_blade,  # -
-                             "R_h_blade": R_h_blade,  # -
+                             "psi_tt_blade": psi_tt_blade,  # -
+                             "R_h_tt_blade": R_h_tt_blade,  # -
                              "p_0_over_p_2_blade": p_0_over_p_2_blade,  # -
                              "Re_s1_blade": Re_s1_blade,  # -
                              "Re_r2_blade": Re_r2_blade,  # -
