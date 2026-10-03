@@ -361,12 +361,12 @@ class Turbine1D:
             "no_blades_stator": no_blades_stator, "no_blades_rotor": no_blades_rotor,
             "chord_over_pitch_stator": chord_over_pitch_stator,
             "chord_over_pitch_rotor": chord_over_pitch_rotor, "admission_fraction": admission_fraction,
+            "radial_clearance": radial_clearance, "s_ax_over_pitch_rotor": s_ax_over_pitch_rotor,
+            "h_shroud_over_blade_length": h_shroud_over_blade_length,
+            "s_ax_shroud_over_h_shroud": s_ax_shroud_over_h_shroud
         }
         nonnegative_inputs = {
-            "radial_clearance": radial_clearance, "t_TE_stator": t_TE_stator,
-            "t_TE_rotor": t_TE_rotor, "Ra_roughness": Ra_roughness,
-            "s_ax_over_pitch_rotor": s_ax_over_pitch_rotor,
-            "h_shroud_over_blade_length": h_shroud_over_blade_length,
+            "t_TE_stator": t_TE_stator, "t_TE_rotor": t_TE_rotor, "Ra_roughness": Ra_roughness,
             "s_ax_shroud_over_h_shroud": s_ax_shroud_over_h_shroud, "reaction_isentropic": reaction_isentropic
         }
         # Optional shroud dimensions and tooth count must be also valid whenever they are supplied.

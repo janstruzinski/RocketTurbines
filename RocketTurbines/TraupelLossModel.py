@@ -763,8 +763,9 @@ class TraupelLossModel:
             if blade_row == "rotor": zeta_a = 0  # -
             # If the blade row is the stator, calculate zeta_a
             elif blade_row == "stator":
-                c_f = self.calculate_c_f(Reynolds_number, roughness_over_hydraulic_diameter)  # -
-                zeta_a = (c_f / np.sin(inlet_angle)) * (1 + blade_length_over_mean_diameter) * \
+                Reynolds_number_for_c_f = Reynolds_number * (2 / chord_over_blade_length)
+                c_f = self.calculate_c_f(Reynolds_number_for_c_f, roughness_over_hydraulic_diameter)  # -
+                zeta_a = (c_f / np.sin(outlet_angle)) * (1 + blade_length_over_mean_diameter) * \
                          axial_clearance_over_blade_length  # -
         # Also calculate F factor which is needed for both branches
         flow_angle_change = 180 - (inlet_angle + outlet_angle) * 180 / np.pi  # deg
@@ -816,7 +817,7 @@ class TraupelLossModel:
         # Calculate leak rate
         mdot_leak_rotor = admission_fraction * A_seal * phi * np.sqrt(p_1 * rho_1)  # kg/s
         # Calculate relative leak flow rate, mu coefficient
-        mu = mdot_leak_rotor / (admission_fraction * mdot - mdot_leak_rotor)  # -
+        mu = mdot_leak_rotor / (mdot - mdot_leak_rotor)  # -
         # Calculate speed parameters
         v_operation = 1 / np.sqrt(2 * operation_isentropic_loading_coefficient)  # -
         v_design = 1 / np.sqrt(2 * design_isentropic_loading_coefficient)  # -
@@ -879,12 +880,16 @@ class TraupelLossModel:
         # If rotor is partially enclosed:
         elif partial_admission_rotor == "enclosed":
             C_coefficient = 0.0095 + 0.55 * max(0.125 - blade_length_over_mean_diameter, 0)**2  # -
-        # Calculate and return zeta_admission
-        zeta_admission = \
-            C_coefficient * (1 - admission_fraction) / \
-            (admission_fraction * flow_coefficient * isentropic_loading_coefficient) + \
-            0.21 * blade_width_over_mean_diameter / \
-            (partial_admission_rotor * np.sqrt(isentropic_loading_coefficient))  # -
+        # Calculate and return zeta_admission. It is assumed there is only one partial admission sector, which is
+        # common in rocket engine turbines.
+        if admission_fraction < 1:
+            zeta_admission = \
+                C_coefficient * (1 - admission_fraction) / \
+                (admission_fraction * flow_coefficient * isentropic_loading_coefficient) + \
+                0.21 * blade_width_over_mean_diameter / \
+                (admission_fraction * np.sqrt(isentropic_loading_coefficient))  # -
+        elif admission_fraction == 1:
+            zeta_admission = 0
         return zeta_admission
 
     def calculate_disk_friction_loss(self, admission_fraction, hub_over_mean_diameter, hub_diameter_over_blade_length,
@@ -921,7 +926,7 @@ class TraupelLossModel:
         # First calculate corrected incidence angle for Mach number. Clip inlet Mach number so that correction is always
         # done over a valid range of Mach numbers (from 0.5 to 0.8)
         inlet_Mach_number = max(0.5, min(0.8, inlet_Mach_number))  # -
-        corrected_incidence_angle = 2 * (1 - inlet_Mach_number) * incidence_angle  # rad
+        corrected_incidence_angle = incidence_angle / (2 * (1 - inlet_Mach_number))  # rad
         # Get z coefficient
         z_coefficient = self.calculate_z(corrected_incidence_angle * 180 / np.pi)  # -
         # Calculate zeta_incidence and return it
@@ -970,7 +975,7 @@ class TraupelLossModel:
         psi_ideal = analysis_results["psi_ideal"]  # -
         speed_parameter = 1 / np.sqrt(2 * psi_ideal)  # -
         zeta_aerodynamic_stator = \
-            self.calculate_blade_row_aerodynamic_loss(blade_row="stator", inlet_angle=0, outlet_angle=alpha_1,
+            self.calculate_blade_row_aerodynamic_loss(blade_row="stator", inlet_angle=np.pi/2, outlet_angle=alpha_1,
                                                       t_TE_over_pitch=t_TE_over_p_stator,
                                                       roughness_over_chord=k_s_over_c_stator,
                                                       roughness_over_hydraulic_diameter=k_s_over_d_h_stator,
