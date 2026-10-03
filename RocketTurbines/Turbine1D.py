@@ -15,8 +15,8 @@ class Turbine1D:
         """with each other. This is the outer numerical loop. During each evaluation of """ \
         """Turbine1D.calculate_entropy_rise there are two internal numerical loops.
 
-        The first one calculates consistent thermodynamic state at each station, by varying pressure ratio """ \
-        """through the turbine such that energy balance is achieved. Once the pressure ratio is found, """ \
+        The first one calculates consistent thermodynamic state at each station, by varying h_2/h_t0 """ \
+        """such that energy balance is achieved. Once h_2/h_t0 is found, """ \
         """__calculate_blade_rows_outlet_velocities updates the analysis results with the remaining outlet """ \
         """velocities, isentropic row reference states, sound speeds, Mach numbers and Reynolds numbers. """ \
         """These calculations include all stage losses. After this, the blade angles are calculated. """ \
@@ -44,9 +44,9 @@ class Turbine1D:
         #    |    Turbine1D.calculate_entropy_rise                                          |
         #    |      |                                                                       |
         #    |      +--> INNER LOOP 1 -----------------------------------------+            |
-        #    |      |      Vary: stage pressure ratio                          |            |
+        #    |      |      Vary: h_2/h_t0                                      |            |
         #    |      |      Residual: calculated minus prescribed outlet        |            |
-        #    |      |                total enthalpy                            |            |
+        #    |      |                total enthalpy, divided by h_t0           |            |
         #    |      |      |                                                   |            |
         #    |      |      v                                                   |            |
         #    |      |    Turbine1D.__calculate_thermodynamic_properties --------+            |
@@ -343,7 +343,7 @@ class Turbine1D:
         :raises TypeError: If gas is not an IdealGas instance or loss_model is not a TraupelLossModel instance.
         :raises ValueError: If the specified shaft work and outlet axial kinetic energy leave no positive outlet
             static enthalpy.
-        :raises RuntimeError: If the entropy-rise, pressure-ratio or blade-row flow-coefficient solve does not converge.
+        :raises RuntimeError: If the entropy-rise, h_2/h_t0 or blade-row flow-coefficient solve does not converge.
         """
 
         # Verify that user inputs are correct.
@@ -555,8 +555,9 @@ class Turbine1D:
             respectively. Dictionary key definitions are in Turbine1D.__init__.
         :rtype: tuple[list, dict, dict, dict]
         :raises TypeError: If loss_model is not a TraupelLossModel instance.
-        :raises ValueError: If shaft work and outlet axial kinetic energy leave no positive outlet static enthalpy.
-        :raises RuntimeError: If the pressure-ratio or blade-row flow-coefficient solve does not converge.
+        :raises ValueError: If shaft work and outlet axial kinetic energy leave no positive outlet static enthalpy,
+            or an h_2/h_t0 trial is not finite and positive.
+        :raises RuntimeError: If the h_2/h_t0 or blade-row flow-coefficient solve does not converge.
         """
 
         if not isinstance(loss_model, TraupelLossModel):
@@ -571,12 +572,11 @@ class Turbine1D:
         delta_s_rotor_total = delta_s_rotor + delta_s_rotor_additional  # J/(kg K)
 
 
-        # Thermodynamic properties at each station must be calculated. Thermodynamic properties depend on pressure ratio
-        # p_0_over_p_2. It needs to be numerically found, such that energy balance is satisfied and total enthalpy at
-        # station 2 agrees with the already calculated one.
-        # First, retrieve some variables from analysis_results_at_design_point that will be used to obtain solution
-        # estimate, as well as feasible bracket for numerical scheme. Bracket allows to use reliable toms748 scheme,
-        # but if it fails, Newton scheme can be used as a fallback.
+        # Thermodynamic properties at each station must be calculated. Thermodynamic properties depend on h_2/h_t0.
+        # It needs to be numerically found, such that energy balance is satisfied and total enthalpy at station 2
+        # agrees with the already calculated one. First, retrieve some variables from analysis_results_at_design_point
+        # that will be used to obtain solution estimate, as well as feasible bracket for numerical scheme. Bracket
+        # allows to use reliable toms748 scheme, but if it fails, Newton scheme can be used as a fallback.
         gas = self.analysis_results_at_design_point["gas"]
         h_t0 = self.analysis_results_at_design_point["h_t0"]  # J/kg
         h_t2 = self.analysis_results_at_design_point["h_t2"]  # J/kg
@@ -589,13 +589,10 @@ class Turbine1D:
         h_2_max = h_t2 - (theta_2 * u)**2 / 2  # J/kg
         if h_2_max <= 0:
             raise ValueError("Shaft work and exit axial kinetic energy leave no positive exit static enthalpy.")
-        # This static enthalpy can be used to calculate loss-free lower bound on p_0/p_2:
-        p_0_over_p_2_ideal = (h_t0 / h_2_max)**(gas.Cp / gas.R)  # -
-        # Now minimum pressure ratio that takes into account losses can be calculated. This is minimum bracket point
-        delta_s_total = delta_s_stator_total + delta_s_rotor_total
-        p_0_over_p_2_min = p_0_over_p_2_ideal * np.exp(delta_s_total / gas.R)
+        # Divide by the inlet total enthalpy to obtain the upper bound on h_2/h_t0.
+        h_2_max_over_h_t0 = h_2_max / h_t0  # -
 
-        # Calculate maximum pressure ratio for the bracket as well. These calculations are more complex.
+        # Calculate the lower bound on h_2/h_t0 for the bracket as well. These calculations are more complex.
         # They assume nonnegative row entropy rises and ideal reaction, and positive shaft work/loading.
         # The outer entropy solver can try values outside that domain, so retain Newton scheme as the fallback.
         numerical_scheme = "newton"
@@ -623,19 +620,15 @@ class Turbine1D:
             # Subtracting largest possible value of the swirl from estimate of h_2 without any swirl,
             # gives a conservative lower bound on h_2 at any energy-balanced solution.
             h_2_min = h_2_max - (u * v_2_tangential_over_u_bound)**2 / 2
-            # Only a positive enthalpy floor yields a finite pressure-ratio ceiling, so only then bracketing scheme is
-            # chosen.
-            if h_2_min > 0:
-                # At fixed entropy, p_0/p_2 = exp(delta_s_total/R) * (h_t0/h_2)**(Cp/R), which decreases with h_2.
-                # Using its lower bound thus gives an upper bound of the pressure ratio bracket
-                p_0_over_p_2_max = p_0_over_p_2_min * (h_2_max / h_2_min)**(gas.Cp / gas.R)
-                bracket = [p_0_over_p_2_min, p_0_over_p_2_max]
-                numerical_scheme = "bracketing"
+            # Use a positive lower endpoint for the h_2/h_t0 bracket.
+            h_2_min_over_h_t0 = max(h_2_min / h_t0, np.finfo(float).eps * h_2_max_over_h_t0)  # -
+            bracket = [h_2_min_over_h_t0, h_2_max_over_h_t0]
+            numerical_scheme = "bracketing"
 
-        # Define a function that obtains residual
-        def get_PR_residual(p_0_over_p_2_estimate):
-            return self.__calculate_thermodynamic_properties(p_0_over_p_2_estimate, delta_s_stator_total,
-                                                             delta_s_rotor_total, delta_s_rotor_additional)[1]
+        # Define the total-enthalpy residual. It is already normalized by h_t0.
+        def get_enthalpy_residual(h_2_over_h_t0_initial):
+            return self.__calculate_thermodynamic_properties(h_2_over_h_t0_initial, delta_s_stator_total,
+                                                            delta_s_rotor_total, delta_s_rotor_additional)[1]
         
         # Verify the candidate bracket after defining the residual. Finite, ordered endpoints and opposite residual
         # signs are required; a zero endpoint residual is already a root and is accepted by toms748.
@@ -646,7 +639,7 @@ class Turbine1D:
             # If so, evaluate residual at endpoints
             else:
                 try:
-                    residual_at_bracket = [get_PR_residual(p_0_over_p_2) for p_0_over_p_2 in bracket]
+                    residual_at_bracket = [get_enthalpy_residual(h_2_over_h_t0) for h_2_over_h_t0 in bracket]
                 # If endpoints fail, choose Newton scheme 
                 except ValueError:
                     numerical_scheme = "newton"
@@ -660,28 +653,28 @@ class Turbine1D:
         # Solve within the verified bracket.
         if numerical_scheme == "bracketing":
             try:
-                PR_solution = root_scalar(get_PR_residual, bracket=bracket, method="toms748", options={"k": 2},
-                                          maxiter=1000, xtol=1e-10, rtol=1e-8)
+                h_2_over_h_t0_solution = root_scalar(get_enthalpy_residual, bracket=bracket, method="toms748",
+                                                     options={"k": 2}, maxiter=1000, xtol=1e-14, rtol=1e-12)
             except ValueError:
                 # An inadmissible state encountered inside the bracket also requires the Newton fallback.
                 numerical_scheme = "newton"
             # If the solution did not converge, use Newton scheme as well.
             else:
-                if not PR_solution.converged:
+                if not h_2_over_h_t0_solution.converged:
                     numerical_scheme = "newton"
         # Use Newton when no valid bracket is available or when the bracketing solve fails to converge.
         if numerical_scheme == "newton":
-            PR_solution = root_scalar(get_PR_residual, x0=p_0_over_p_2_min, method="newton", maxiter=1000, xtol=1e-10,
-                                      rtol=1e-8)
+            h_2_over_h_t0_solution = root_scalar(get_enthalpy_residual, x0=h_2_max_over_h_t0, method="newton",
+                                                 maxiter=1000, xtol=1e-12, rtol=1e-10)
         # Raise error if the solution is not converged
-        if not PR_solution.converged:
-            raise RuntimeError("Numerical solve for p_0/p_2 did not converge.")
+        if not h_2_over_h_t0_solution.converged:
+            raise RuntimeError("Numerical solve for h_2/h_t0 did not converge.")
         # Obtain solution and the remaining results
-        p_0_over_p_2 = PR_solution.root  # -
+        h_2_over_h_t0 = h_2_over_h_t0_solution.root  # -
         analysis_results, residual = self.__calculate_thermodynamic_properties(
-            p_0_over_p_2, delta_s_stator_total, delta_s_rotor_total, delta_s_rotor_additional)  # residual: J/kg
+            h_2_over_h_t0, delta_s_stator_total, delta_s_rotor_total, delta_s_rotor_additional)  # residual: J/kg
 
-        # Complete the outlet flow properties only after the pressure ratio satisfies the energy balance.
+        # Complete the outlet flow properties only after h_2/h_t0 satisfies the energy balance.
         analysis_results = self.__calculate_blade_rows_outlet_velocities(analysis_results)
 
         # Flow angles can be now calculated. These are equal to metal angles. These are affected by the total entropy
@@ -861,28 +854,34 @@ class Turbine1D:
         # Return the results
         return D_hub, D_tip, D_mean, l_blade, h_shroud, s_ax_shroud
 
-    def __calculate_thermodynamic_properties(self, p_0_over_p_2, total_delta_s_stator, total_delta_s_rotor,
+    def __calculate_thermodynamic_properties(self, h_2_over_h_t0_initial, total_delta_s_stator, total_delta_s_rotor,
                                              delta_s_rotor_additional):
         """Calculate thermodynamic states at turbine stations 1 and 2 and the outlet total-enthalpy residual for
-        the assumed pressure ratio.
+        the assumed h_2/h_t0.
 
         Definitions of the values read from analysis_results_at_design_point are in Turbine1D.__init__.
 
-        :param float p_0_over_p_2: Total/static pressure at station 0 over static pressure at station 2.
+        :param float h_2_over_h_t0_initial: Assumed static enthalpy at station 2 divided by inlet total enthalpy,
+         h_2/h_t0 (-). Must be positive.
         :param float total_delta_s_stator: Total specific entropy rise across the stator (J/kg/K).
         :param float total_delta_s_rotor: Total specific entropy rise across the rotor (J/kg/K).
         :param float delta_s_rotor_additional: Specific entropy rise due to clearance, partial admission and disk
             friction losses in the rotor (J/kg/K).
-        :return: Dictionary with turbine analysis results and residual of the total enthalpy at station 2,
+        :return: Dictionary with turbine analysis results and residual of the total enthalpy at station 2 (J/kg),
             respectively.
         :rtype: tuple[dict, float]
+        :raises ValueError: If h_2/h_t0 is not finite and positive.
         """
+
+        if not np.isfinite(h_2_over_h_t0_initial) or h_2_over_h_t0_initial <= 0:
+            raise ValueError("h_2/h_t0 must be finite and positive.")
 
         # Retrieve already known variables from analysis_results_at_design_point
         psi = self.analysis_results_at_design_point["psi"]  # -
         R_h_ideal = self.analysis_results_at_design_point["R_h_ideal"]  # -
         theta_2 = self.analysis_results_at_design_point["theta_2"]  # -
         h_t2 = self.analysis_results_at_design_point["h_t2"]  # J/kg
+        h_t0 = self.analysis_results_at_design_point["h_t0"]  # J/kg
         T_0 = self.analysis_results_at_design_point["T_0"]  # K
         p_0 = self.analysis_results_at_design_point["p_0"]  # Pa
         gas = self.analysis_results_at_design_point["gas"] # IdealGas object
@@ -893,11 +892,12 @@ class Turbine1D:
         delta_s = total_delta_s_rotor + total_delta_s_stator  # J/(kg K)
         # Calculate h_0
         h_0 = gas.Cp * T_0  # J/kg
-        # Calculate static pressure, temperature, density and enthalpy at station 2
-        p_2 = p_0 / p_0_over_p_2  # Pa
-        T_2 = T_0 * p_0_over_p_2**(-gas.R / gas.Cp) * np.exp(delta_s / gas.Cp) # K
+        # Calculate static enthalpy, temperature, pressure and density at station 2 from h_2/h_t0.
+        h_2 = h_2_over_h_t0_initial * h_t0  # J/kg
+        T_2 = h_2 / gas.Cp  # K
+        p_2 = p_0 * np.exp(-delta_s / gas.R) * h_2_over_h_t0_initial**(gas.Cp / gas.R)  # Pa
+        p_0_over_p_2 = p_0 / p_2  # -
         rho_2 = gas.calculate_density(p_2, T_2)  # kg/m^3
-        h_2 = gas.Cp * T_2 # J/kg
 
         # Calculate isentropic reference state at station 2 assuming that h_0 = h_t0
         h_2_ideal = h_2 * np.exp(-delta_s / gas.Cp)
@@ -926,8 +926,8 @@ class Turbine1D:
         v_2 = v_2_over_u * u  # m/s
         # Calculate total enthalpy at the outlet
         h_t2_calculated = h_2 + v_2**2 / 2 # J/kg
-        # Finally, the total enthalpy residual can be calculated
-        residual = h_t2_calculated - h_t2 # J/kg
+        # Finally, the total enthalpy residual can be calculated. It is normalized by h_t0.
+        residual = (h_t2_calculated - h_t2) / h_t0 # J/kg
 
         # Calculate remaining values of interest.
         # First calculate ideal psi
@@ -977,7 +977,7 @@ class Turbine1D:
             losses is performed separately by __calculate_blade_row_velocities.
 
         :param dict analysis_results: Dictionary returned by __calculate_thermodynamic_properties for the solved
-            pressure ratio. Required values include gas, thermodynamic states, v_2, u, psi, R_h and flow coefficients.
+            h_2/h_t0. Required values include gas, thermodynamic states, v_2, u, psi, R_h and flow coefficients.
             Variable definitions are in Turbine1D.__init__.
         :return: The supplied analysis_results dictionary with added outlet flow properties and isentropic reference
          states.
