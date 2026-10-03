@@ -15,8 +15,22 @@ class IdealGas:
         :param list mass_fractions: List with mass fractions of the species in the mixture.
         :param list cea_species: Optional list with NASA CEA gas names in the same order as species. If omitted,
          species must also be valid CEA names, for example "H2O" instead of "Water".
+        Species with zero mass fraction are removed from all aligned lists before property checks.
+        :raises ValueError: If temperatures are not finite and positive, T_max <= T_min, or composition lists
+         are empty, inconsistent, or contain invalid fractions.
         """
 
+        self._validate_positive(T_min, "T_min")
+        self._validate_positive(T_max, "T_max")
+        if T_max <= T_min:
+            raise ValueError("T_max must be greater than T_min.")
+
+        species = tuple(species)
+        mass_fractions = tuple(mass_fractions)
+        if not species or len(species) != len(mass_fractions):
+            raise ValueError("species and mass_fractions must be nonempty and have the same length.")
+        if any(not np.isfinite(mf) or mf < 0 for mf in mass_fractions):
+            raise ValueError("Mass fractions must be finite and nonnegative.")
         # Check if mass fractions sum to 1.
         if abs(sum(mass_fractions) - 1) > 1e-12:
             raise ValueError("Mass fractions must sum to 1.")
@@ -27,6 +41,13 @@ class IdealGas:
         cea_species = tuple(species if cea_species is None else cea_species)
         if len(cea_species) != len(species):
             raise ValueError("cea_species must have the same length and order as species.")
+
+        # Remove absent species before checking phase or transport-data availability.
+        active_indices = [i for i, mf in enumerate(mass_fractions) if mf > 0]
+        species = tuple(species[i] for i in active_indices)
+        mass_fractions = tuple(mass_fractions[i] for i in active_indices)
+        cea_species = tuple(cea_species[i] for i in active_indices)
+
         # Set minimum temperature limit for viscosity evaluation to 300K, as this is the lower bound
         # to which many transport polynomials in NASA CEA were fitted.
         viscosity_temperature_min = 300.0
@@ -75,6 +96,11 @@ class IdealGas:
         # Calculate its specific heat ratio
         self.gamma = self.Cp / self.Cv  # -
 
+    @staticmethod
+    def _validate_positive(value, name):
+        if not np.isfinite(value) or value <= 0:
+            raise ValueError(f"{name} must be finite and positive.")
+
     @lru_cache(maxsize=1024)
     def calculate_density(self, p, T):
         """A method to calculate density of the ideal gas.
@@ -82,8 +108,11 @@ class IdealGas:
         :param float p: Pressure (Pa) of the gas.
         :param float T: Temperature (K) of the gas.
         :return: Gas density (kg/m3).
+        :raises ValueError: If pressure or temperature is not finite and positive.
         """
 
+        self._validate_positive(p, "Pressure")
+        self._validate_positive(T, "Temperature")
         return p / (self.R * T)
 
     @lru_cache(maxsize=1024)
@@ -92,8 +121,10 @@ class IdealGas:
 
         :param float T: Temperature (K) of the gas.
         :return: Sound velocity (m/s).
+        :raises ValueError: If temperature is not finite and positive.
         """
 
+        self._validate_positive(T, "Temperature")
         return np.sqrt(self.gamma * self.R * T)
 
     @lru_cache(maxsize=1024)
@@ -104,8 +135,11 @@ class IdealGas:
         :param float T: Temperature (K) of the gas.
         :param float p: Pressure (Pa) of the gas. By default, 1e5, since dynamic viscosity is independent of pressure.
         :return: Gas mixture dynamic viscosity (Pa s).
+        :raises ValueError: If pressure or temperature is not finite and positive.
         """
 
+        self._validate_positive(p, "Pressure")
+        self._validate_positive(T, "Temperature")
         # It is possible that during some internal calculations, when the flow solution is not yet converged, a
         # very small temperature is reached. Keep the 300 K floor, but respect higher lower bounds of
         # individual CEA viscosity fits, for example 373.2 K for H2O.
