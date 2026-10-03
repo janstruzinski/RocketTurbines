@@ -858,8 +858,7 @@ class TraupelLossModel:
             (2 * isentropic_work_coefficient_ss)  # -
         return max(zeta_clearance_rotor, 0)
 
-    @staticmethod
-    def calculate_admission_loss(admission_fraction, isentropic_work_coefficient_ss,
+    def calculate_admission_loss(self, admission_fraction, isentropic_work_coefficient_ss,
                                  flow_coefficient, blade_length_over_mean_diameter, blade_width_over_mean_diameter,
                                  outlet_angle, partial_admission_rotor):
         """A method to calculate the rotor partial-admission loss coefficient.
@@ -877,7 +876,9 @@ class TraupelLossModel:
 
         # Calculate C factor. If rotor is free:
         if partial_admission_rotor == "free":
-            C_coefficient = 0.8 * (0.045 + 0.58 * blade_length_over_mean_diameter) * np.sin(outlet_angle)  # -
+            if self.rotor == "impulse_low_M" or "impulse_high_M": correction = 0.8
+            else: correction = 1
+            C_coefficient = correction * (0.045 + 0.58 * blade_length_over_mean_diameter) * np.sin(outlet_angle)  # -
         # If rotor is partially enclosed:
         elif partial_admission_rotor == "enclosed":
             C_coefficient = 0.0095 + 0.55 * max(0.125 - blade_length_over_mean_diameter, 0)**2  # -
