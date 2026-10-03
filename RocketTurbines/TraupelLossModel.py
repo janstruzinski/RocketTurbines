@@ -548,7 +548,7 @@ class TraupelLossModel:
         :rtype: float
         """
 
-        return self.interpolator_chi_R(Re, relative_roughness)
+        return max(self.interpolator_chi_R(Re, relative_roughness), 0)
 
     def calculate_chi_M(self, outlet_Mach_number, blade_row):
         """A method to calculate the Mach-number correction factor chi_M for the configured blade row.
@@ -568,7 +568,7 @@ class TraupelLossModel:
                          "near_sonic_outlet": self.interpolator_chi_M_curve_2,
                          "impulse_low_M": self.interpolator_chi_M_curve_3,
                          "impulse_high_M": self.interpolator_chi_M_curve_4}
-        return interpolators[configuration](outlet_Mach_number)
+        return max(interpolators[configuration](outlet_Mach_number), 0)
 
     def calculate_zeta_p0(self, inlet_angle, outlet_angle):
         """A method to calculate the uncorrected profile-loss coefficient zeta_p0.
@@ -579,7 +579,7 @@ class TraupelLossModel:
         :rtype: float
         """
 
-        return self.interpolator_zeta_p0(inlet_angle, outlet_angle)
+        return max(self.interpolator_zeta_p0(inlet_angle, outlet_angle), 0)
 
     def calculate_zeta_h(self, delta_a_ratio, trailing_edge_blockage, Re):
         """A method to calculate the Reynolds-corrected loss due to underpressure behind the trailing edge.
@@ -595,15 +595,13 @@ class TraupelLossModel:
         # Below Re = 8e4 the underpressure effect disappears, so the nomogram contribution is zero.
         if Re <= 8e4:
             return 0.0
-
         zeta_h = self.interpolator_zeta_h(delta_a_ratio, trailing_edge_blockage)  # -
         if Re >= 1.5e5:
             return zeta_h
-
         # Approximate Traupel's elliptical transition with a quarter ellipse that levels off at full strength.
         relative_Re = (Re - 8e4) / (1.5e5 - 8e4)  # -
         transition_factor = np.sqrt(1 - (1 - relative_Re)**2)  # -
-        return zeta_h * transition_factor
+        return max(zeta_h * transition_factor, 0)
 
     def calculate_zeta_f(self, length_ratio, speed_parameter):
         """A method to calculate the blade-row fanning-loss coefficient zeta_f.
@@ -614,7 +612,7 @@ class TraupelLossModel:
         :rtype: float
         """
 
-        return self.interpolator_zeta_f(length_ratio, speed_parameter)
+        return max(self.interpolator_zeta_f(length_ratio, speed_parameter), 0)
 
     def calculate_F(self, turning_angle, inlet_over_outlet_velocity):
         """A method to calculate factor F for endwall and secondary-flow losses.
@@ -625,7 +623,7 @@ class TraupelLossModel:
         :rtype: float
         """
 
-        return self.interpolator_F(turning_angle, inlet_over_outlet_velocity)
+        return max(self.interpolator_F(turning_angle, inlet_over_outlet_velocity), 0)
 
     def calculate_c_f(self, Re, relative_roughness):
         """A method to calculate the friction factor c_f.
@@ -636,7 +634,7 @@ class TraupelLossModel:
         :rtype: float
         """
 
-        return self.interpolator_c_f(Re, relative_roughness)
+        return max(self.interpolator_c_f(Re, relative_roughness), 0)
 
     def calculate_K_sigma(self, outlet_angle, velocity_change_ratio, normalized_clearance):
         """A method to calculate the clearance-loss factor K_sigma.
@@ -650,7 +648,7 @@ class TraupelLossModel:
 
         # Figure 8.4.16 uses the sine of Traupel's outlet angle as its first coordinate.
         sine_angle = np.sin(outlet_angle)  # -
-        return self.interpolator_K_sigma(sine_angle, velocity_change_ratio, normalized_clearance)
+        return max(self.interpolator_K_sigma(sine_angle, velocity_change_ratio, normalized_clearance), 0)
 
     def calculate_C_M(self, Re):
         """A method to calculate the disk-friction coefficient C_M.
@@ -660,7 +658,7 @@ class TraupelLossModel:
         :rtype: float
         """
 
-        return self.interpolator_C_M(Re)
+        return max(self.interpolator_C_M(Re), 0)
 
     def calculate_z(self, incidence_angle):
         """A method to calculate incidence-loss factor z using the curve selected at initialization.
@@ -674,7 +672,7 @@ class TraupelLossModel:
         interpolators = {"low": self.interpolator_z_b,
                          "medium": self.interpolator_z_average,
                          "high": self.interpolator_z_a}
-        return interpolators[self.incidence_loss](incidence_angle)
+        return max(interpolators[self.incidence_loss](incidence_angle), 0)
 
     def calculate_phi(self, p_2_over_p_1, teeth_spacing_over_seal_clearance, teeth_number):
         """A method to calculate the half-labyrinth flow function phi from Figure 10.4.2.
@@ -692,8 +690,8 @@ class TraupelLossModel:
             teeth_number, teeth_spacing_over_seal_clearance)  # -
         pressure_ratio = max(p_2_over_p_1, critical_pressure_ratio)  # -
         # The Phi^2 interpolator itself is uncapped; apply the limit here before taking the square root.
-        phi_squared = self.interpolator_phi_squared(
-            pressure_ratio, teeth_spacing_over_seal_clearance, teeth_number)  # -
+        phi_squared = max(self.interpolator_phi_squared(pressure_ratio, teeth_spacing_over_seal_clearance,
+                                                        teeth_number), 0)  # -
         return np.sqrt(phi_squared)
 
     def calculate_blade_row_aerodynamic_loss(self, blade_row, inlet_angle, outlet_angle, t_TE_over_pitch,
@@ -1069,7 +1067,6 @@ class TraupelLossModel:
         D_tip = turbine_geometry["D_tip"]  # m
         if not shrouded_rotor:
             u = analysis_results["u"]  # m/s
-            w_1 = analysis_results["w_1"]  # m/s
             w_1_normalized = w_1_blade / u  # -
             s_r_over_l_rotor = s_r / l_rotor  # -
             D_tip_over_D_mean = D_tip / D_m  # -
@@ -1101,7 +1098,7 @@ class TraupelLossModel:
                                                c_rotor_over_D_m, beta_2, partial_admission_rotor)  # -
         # Sum these losses and get total dissipated enthalpy
         zeta_rotor_additional = zeta_disk_friction + zeta_admission + zeta_clearance_rotor  # -
-        delta_h_ideal = analysis_results["psi_ideal"] * analysis_results["u"]**2  # J/kg
+        delta_h_ideal = analysis_results["delta_h_ideal"]  # J/kg
         delta_h_loss_rotor_additional = zeta_rotor_additional * delta_h_ideal  # J/kg
 
         # Calculate entropy generation in the rotor for the blade row alone
