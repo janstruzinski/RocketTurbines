@@ -171,6 +171,7 @@ class Turbine1D:
                                                  "h_0": None,   # Total/static enthalpy at station 0, J/kg
                                                  "psi_tt": None, # Total-to-total real work coefficient, -
                                                  "psi_tt_ideal": None, # Total-to-total ideal work coefficient, -
+                                                 "psi_ss_ideal": None,  # Static-to-static ideal work coefficient, -
                                                  "psi_ss_ideal_design": None,  # Static-to-static ideal work coefficient
                                                  # at the design point, -
                                                  "theta_1": None, # Flow coefficient at station 1, -
@@ -213,12 +214,18 @@ class Turbine1D:
                                                  "h_t2": None, # Total enthalpy at station 2, J/kg
                                                  "h_2_ideal_r_real_s": None, # Static enthalpy assuming ideal
                                                  # expansion at station 2, J/kg
-                                                 "delta_h_t": None, # Total enthalpy drop through the rotor, J/kg
+                                                 "delta_h_t": None, # Total enthalpy drop through the stage, J/kg
+                                                 "delta_h_ideal": None,  # Isentropic enthalpy drop through
+                                                 # the stage, J/kg
                                                  "delta_s_rotor": None, # Entropy increase at rotor due to aerodynamic
                                                  # losses in the blade row, J/kg/K
                                                  "delta_s_rotor_additional": None,  # Entropy increase at rotor
                                                  # due to additional losses like clearances, disk friction or partial
                                                  # admission, J/kg/K
+                                                 "delta_h_stator_ideal": None,  # Isentropic enthalpy drop through the
+                                                 # stator, J/kg
+                                                 "delta_h_rotor_ideal": None,  # Isentropic enthalpy drop through the
+                                                 # rotor assuming real expansion through the stator, J/kg
                                                  "a_2": None, # Sound velocity at station 2, m/s
                                                  "a_2_ideal_r_real_s": None, # Sound velocity assuming ideal
                                                  # expansion at station 2, m/s
@@ -962,8 +969,8 @@ class Turbine1D:
         # Calculate real pressure reaction, R_p
         R_p = (p_1 - p_2) / (p_0 - p_2)  # -
         # Calculate static-to-static work coefficient
-        delta_h_ideal = h_0 - h_2_ideal
-        psi_ss_ideal = delta_h_ideal / u ** 2
+        delta_h_ideal = h_0 - h_2_ideal # J/kg
+        psi_ss_ideal = delta_h_ideal / u ** 2 # -
 
         # Package thermodynamic properties, v_2 and loading coefficients into analysis_results dictionary.
         # Make it a copy of analysis_results_at_design_point, such that the values there stay constant during
@@ -987,9 +994,11 @@ class Turbine1D:
                                  "v_2": v_2,  # m/s
                                  "R_p": R_p,  # -
                                  "psi_tt_ideal": psi_tt_ideal,  # -
+                                 "psi_ss_ideal": psi_ss_ideal,  # -
                                  "psi_ss_ideal_design": psi_ss_ideal,  # -
                                  "R_h_tt": R_h_tt,  # -
                                  "theta_1": theta_1,  # -
+                                 "delta_h_ideal": delta_h_ideal, # -
                                  })
 
         # Return residual and analysis results
@@ -1048,6 +1057,8 @@ class Turbine1D:
         dummy_b1 = dummy_a1 - 1  # -
         w_1 = u * np.sqrt(theta_1**2 + dummy_b1**2)  # m/s
         M_r1 = w_1 / a_1  # -
+        # Calculate isentropic enthalpy drop through the stator
+        delta_h_stator_ideal = h_0 - h_1_ideal
 
         # Now velocity and Mach number at station 2. Ideal values at station 2
         # still assume real values at station 1. First calculate velocity of sound at station 2.
@@ -1065,6 +1076,8 @@ class Turbine1D:
         w_2_ideal_r_real_s = np.sqrt(w_2**2 + 2 * delta_h_loss_rotor)  # m/s
         M_r2 = w_2 / a_2  # -
         M_r2_ideal_r_real_s = w_2_ideal_r_real_s / a_2_ideal_r_real_s  # -
+        # Calculate isentropic enthalpy drop through the rotor, assuming real expansion at the stator
+        delta_h_rotor_ideal = h_1 - h_2_ideal_r_real_s
 
         # Calculate Reynolds numbers only for the solved outlet states.
         Re_s1 = rho_1 * v_1 * self.c_stator / gas.calculate_dynamic_viscosity(T_1)  # -
@@ -1092,6 +1105,8 @@ class Turbine1D:
                                  "M_r2_ideal_r_real_s": M_r2_ideal_r_real_s,  # -
                                  "Re_s1": Re_s1,  # -
                                  "Re_r2": Re_r2,  # -
+                                 "delta_h_stator_ideal": delta_h_stator_ideal, # J/kg
+                                 "delta_h_rotor_ideal": delta_h_rotor_ideal, # J/kg
                                  })
         return analysis_results
 
