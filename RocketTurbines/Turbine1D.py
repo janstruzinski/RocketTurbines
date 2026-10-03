@@ -343,7 +343,8 @@ class Turbine1D:
         :raises TypeError: If gas is not an IdealGas instance or loss_model is not a TraupelLossModel instance.
         :raises ValueError: If the specified shaft work and outlet axial kinetic energy leave no positive outlet
             static enthalpy.
-        :raises RuntimeError: If the entropy-rise, h_2/h_t0 or blade-row flow-coefficient solve does not converge.
+        :raises RuntimeError: If the entropy-rise solve does not converge, or the h_2/h_t0 or blade-row
+            flow-coefficient solve fails its convergence, solution-value or dimensional-residual checks.
         """
 
         # Verify that user inputs are correct.
@@ -557,7 +558,8 @@ class Turbine1D:
         :raises TypeError: If loss_model is not a TraupelLossModel instance.
         :raises ValueError: If shaft work and outlet axial kinetic energy leave no positive outlet static enthalpy,
             or an h_2/h_t0 trial is not finite and positive.
-        :raises RuntimeError: If the h_2/h_t0 or blade-row flow-coefficient solve does not converge.
+        :raises RuntimeError: If an internal solve does not converge, returns a nonpositive or nonfinite solution,
+            or its absolute dimensional residual is not below 1e-3 J/kg (h_2/h_t0) or 1e-3 m/s (theta_2_blade).
         """
 
         if not isinstance(loss_model, TraupelLossModel):
@@ -671,8 +673,16 @@ class Turbine1D:
             raise RuntimeError("Numerical solve for h_2/h_t0 did not converge.")
         # Obtain solution and the remaining results
         h_2_over_h_t0 = h_2_over_h_t0_solution.root  # -
+        # The solved enthalpy ratio must be finite and positive before calculating the final thermodynamic state.
+        if not np.isfinite(h_2_over_h_t0) or h_2_over_h_t0 <= 0:
+            raise RuntimeError("Numerical solve for h_2/h_t0 returned a nonfinite or nonpositive solution.")
         analysis_results, residual = self.__calculate_thermodynamic_properties(
-            h_2_over_h_t0, delta_s_stator_total, delta_s_rotor_total, delta_s_rotor_additional)  # residual: J/kg
+            h_2_over_h_t0, delta_s_stator_total, delta_s_rotor_total, delta_s_rotor_additional)  # residual: -
+        # Restore the dimensional energy residual and require an absolute error below 1e-3 J/kg.
+        enthalpy_residual = residual * h_t0  # J/kg
+        if not np.isfinite(enthalpy_residual) or abs(enthalpy_residual) >= 1e-3:
+            raise RuntimeError("Numerical solve for h_2/h_t0 has an invalid or excessive total-enthalpy residual: "
+                               f"{enthalpy_residual} J/kg; its absolute value must be below 1e-3 J/kg.")
 
         # Complete the outlet flow properties only after h_2/h_t0 satisfies the energy balance.
         analysis_results = self.__calculate_blade_rows_outlet_velocities(analysis_results)
@@ -757,7 +767,16 @@ class Turbine1D:
             raise RuntimeError("Numerical solve for theta_2_blade did not converge.")
         # Obtain remaining results
         theta_2_blade = theta_2_blade_solution.root  # -
-        blade_row_results, _ = self.__calculate_blade_row_velocities(alpha_1, beta_2, theta_2_blade, analysis_results)
+        # The solved flow coefficient must be finite and positive before calculating the final blade-row state.
+        if not np.isfinite(theta_2_blade) or theta_2_blade <= 0:
+            raise RuntimeError("Numerical solve for theta_2_blade returned a nonfinite or nonpositive solution.")
+        blade_row_results, residual = self.__calculate_blade_row_velocities(
+            alpha_1, beta_2, theta_2_blade, analysis_results)  # residual: -
+        # Restore the dimensional velocity residual and require an absolute error below 1e-3 m/s.
+        velocity_residual = residual * u  # m/s
+        if not np.isfinite(velocity_residual) or abs(velocity_residual) >= 1e-3:
+            raise RuntimeError("Numerical solve for theta_2_blade has an invalid or excessive velocity residual: "
+                               f"{velocity_residual} m/s; its absolute value must be below 1e-3 m/s.")
 
         # Some additional geometry must be calculated for the loss model. Pack to dictionary to pass to the loss model.
         D_hub, D_tip, D_mean, l_rotor, h_shroud, s_ax_shroud = self.__calculate_geometry(analysis_results)  # m
