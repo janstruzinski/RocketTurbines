@@ -876,7 +876,7 @@ class TraupelLossModel:
 
         # Calculate C factor. If rotor is free:
         if partial_admission_rotor == "free":
-            if self.rotor == "impulse_low_M" or "impulse_high_M": correction = 0.8
+            if self.rotor in ("impulse_low_M", "impulse_high_M"): correction = 0.8
             else: correction = 1
             C_coefficient = correction * (0.045 + 0.58 * blade_length_over_mean_diameter) * np.sin(outlet_angle)  # -
         # If rotor is partially enclosed:
