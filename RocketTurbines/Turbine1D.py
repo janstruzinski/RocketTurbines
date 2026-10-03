@@ -16,7 +16,10 @@ class Turbine1D:
         """Turbine1D.calculate_entropy_rise there are two internal numerical loops.
 
         The first one calculates consistent thermodynamic state at each station, by varying pressure ratio """ \
-        """through the turbine such that energy balance is achieved. After this, the blade angles are calculated. """ \
+        """through the turbine such that energy balance is achieved. Once the pressure ratio is found, """ \
+        """__calculate_blade_rows_outlet_velocities updates the analysis results with the remaining outlet """ \
+        """velocities, isentropic row reference states, sound speeds, Mach numbers and Reynolds numbers. """ \
+        """These calculations include all stage losses. After this, the blade angles are calculated. """ \
         """Once these are known, second internal numerical loop finds flow states for blade rows alone, without """ \
         """any consideration for partial admission, clearance and disk friction losses and only taking into """ \
         """account aerodynamic losses in blade row passages. This numerical loop varies flow coefficient for the """ \
@@ -49,7 +52,13 @@ class Turbine1D:
         #    |      |    Turbine1D.__calculate_thermodynamic_properties --------+            |
         #    |      |                                                                       |
         #    |      v  (after inner loop 1 converges)                                       |
-        #    |    Analysis results: station states and velocities                           |
+        #    |    Analysis results: station states and absolute rotor outlet velocity       |
+        #    |      |                                                                       |
+        #    |      v                                                                       |
+        #    |    Turbine1D.__calculate_blade_rows_outlet_velocities                         |
+        #    |      |                                                                       |
+        #    |      v                                                                       |
+        #    |    Updated analysis results: outlet velocities, Mach and Reynolds numbers    |
         #    |      |                                                                       |
         #    |      v                                                                       |
         #    |    Turbine1D.__calculate_flow_angles                                          |
@@ -278,7 +287,7 @@ class Turbine1D:
             "mdot_leak": None,  # Mass flow leaking through the rotor shroud seal (zero if unshrouded), kg/s
         }
 
-    def size_turbine(self, gas, loading_coefficient, flow_coefficient, reaction_isentropic, RPM,
+    def size_turbine(self, gas: IdealGas, loading_coefficient, flow_coefficient, reaction_isentropic, RPM,
                      shaft_power, mdot, T_0, p_0, radial_clearance, no_blades_stator, no_blades_rotor,
                      chord_over_pitch_stator, t_TE_stator, t_TE_rotor, Ra_roughness,
                      loss_model: TraupelLossModel, admission_fraction=1, partial_admission_rotor="free",
@@ -532,7 +541,7 @@ class Turbine1D:
         """A method to calculate residuals between the assumed entropy rises and the entropy rises returned by the loss
         model, together with the turbine analysis results. This method has two internal numerical loops - one to
          calculate consistent thermodynamic state at each station for assumed entropy increases through blade rows with
-         _calculate_thermodynamic_variables, and another one to calculate flow states for blade rows alone without
+         __calculate_thermodynamic_properties, and another one to calculate flow states for blade rows alone without
          inclusion of additional losses like clearance, partial admission or disk friction.
 
         Definitions of the values read from analysis_results_at_design_point are in Turbine1D.__init__.
@@ -670,8 +679,10 @@ class Turbine1D:
         # Obtain solution and the remaining results
         p_0_over_p_2 = PR_solution.root  # -
         analysis_results, residual = self.__calculate_thermodynamic_properties(
-            p_0_over_p_2, delta_s_stator_total, delta_s_rotor_total, delta_s_rotor_additional)  # residual: -
+            p_0_over_p_2, delta_s_stator_total, delta_s_rotor_total, delta_s_rotor_additional)  # residual: J/kg
 
+        # Complete the outlet flow properties only after the pressure ratio satisfies the energy balance.
+        analysis_results = self.__calculate_blade_rows_outlet_velocities(analysis_results)
 
         # Flow angles can be now calculated. These are equal to metal angles. These are affected by the total entropy
         # generation in the rotor, as it affects theta_1 through rho_2.
@@ -852,8 +863,8 @@ class Turbine1D:
 
     def __calculate_thermodynamic_properties(self, p_0_over_p_2, total_delta_s_stator, total_delta_s_rotor,
                                              delta_s_rotor_additional):
-        """A method to calculate thermodynamic properties, velocities and Mach numbers at turbine stations 1 and 2 for
-         the assumed pressure ratio. It also calculates energy residual at station 2 for that ratio.
+        """Calculate thermodynamic states at turbine stations 1 and 2 and the outlet total-enthalpy residual for
+        the assumed pressure ratio.
 
         Definitions of the values read from analysis_results_at_design_point are in Turbine1D.__init__.
 
@@ -922,8 +933,77 @@ class Turbine1D:
         # First calculate ideal psi
         h_t2_over_h_t0 = h_t2_calculated / h_0  # -
         psi_ideal = psi * (1 - h_t2_over_h_t0 * np.exp(-delta_s / gas.Cp)) / (1 - h_t2_over_h_t0)  # -
+        # Calculate real pressure reaction, R_p
+        R_p = (p_1 - p_2) / (p_0 - p_2)  # -
 
-        # Now velocity and Mach number at station 1. First calculate velocity of sound there:
+        # Package thermodynamic properties, v_2 and loading coefficients into analysis_results dictionary.
+        # Make it a copy of analysis_results_at_design_point, such that the values there stay constant during
+        # iterations.
+        analysis_results = self.analysis_results_at_design_point.copy()
+        analysis_results.update({"p_0_over_p_2": p_0_over_p_2, # -
+                                 "h_0": h_0,  # J/kg
+                                 "p_1": p_1,  # Pa
+                                 "T_1": T_1,  # K
+                                 "rho_1": rho_1,  # kg/m^3
+                                 "h_1": h_1,  # J/kg
+                                 "h_t1": h_t1,  # J/kg
+                                 "delta_s_stator": total_delta_s_stator,  # J/(kg K)
+                                 "p_2": p_2,  # Pa
+                                 "T_2": T_2,  # K
+                                 "rho_2": rho_2,  # kg/m^3
+                                 "h_2": h_2,  # J/kg
+                                 "h_t2": h_t2,  # J/kg
+                                 "delta_s_rotor": total_delta_s_rotor - delta_s_rotor_additional,  # J/(kg K)
+                                 "delta_s_rotor_additional": delta_s_rotor_additional,  # J/(kg K)
+                                 "v_2": v_2,  # m/s
+                                 "R_p": R_p,  # -
+                                 "psi_ideal": psi_ideal,  # -
+                                 "psi_ideal_design": psi_ideal,  # -
+                                 "R_h": R_h,  # -
+                                 "theta_1": theta_1,  # -
+                                 })
+
+        # Return residual and analysis results
+        return analysis_results, residual
+
+    def __calculate_blade_rows_outlet_velocities(self, analysis_results):
+        """Calculate outlet velocities and related flow properties for the rotor and stator blade rows and update the
+         supplied analysis_results dictionary.
+
+        This method adds real and isentropic reference velocities, sound speeds, Mach numbers and Reynolds numbers at
+         stations 1 and 2 to that dictionary. The stator isentropic reference starts at station 0; the rotor isentropic
+          reference starts at the real station 1 state. The corresponding reference enthalpies and temperatures are also
+           added to the dictionary. Reconstruction of the flow state of the blade row alone without additional rotor
+            losses is performed separately by __calculate_blade_row_velocities.
+
+        :param dict analysis_results: Dictionary returned by __calculate_thermodynamic_properties for the solved
+            pressure ratio. Required values include gas, thermodynamic states, v_2, u, psi, R_h and flow coefficients.
+            Variable definitions are in Turbine1D.__init__.
+        :return: The supplied analysis_results dictionary with added outlet flow properties and isentropic reference
+         states.
+        :rtype: dict
+        """
+
+        # Read the flow states and stage coefficients.
+        gas = analysis_results["gas"]  # IdealGas object
+        h_0 = analysis_results["h_0"]  # J/kg
+        p_0 = analysis_results["p_0"]  # Pa
+        p_1 = analysis_results["p_1"]  # Pa
+        T_1 = analysis_results["T_1"]  # K
+        rho_1 = analysis_results["rho_1"]  # kg/m^3
+        h_1 = analysis_results["h_1"]  # J/kg
+        p_2 = analysis_results["p_2"]  # Pa
+        T_2 = analysis_results["T_2"]  # K
+        rho_2 = analysis_results["rho_2"]  # kg/m^3
+        h_2 = analysis_results["h_2"]  # J/kg
+        v_2 = analysis_results["v_2"]  # m/s
+        u = analysis_results["u"]  # m/s
+        psi = analysis_results["psi"]  # -
+        R_h = analysis_results["R_h"]  # -
+        theta_1 = analysis_results["theta_1"]  # -
+        theta_2 = analysis_results["theta_2"]  # -
+
+        # Now calculate velocity and Mach number at station 1. First calculate velocity of sound there:
         a_1 = gas.calculate_sound_velocity(T_1)  # m/s
         h_1_ideal = h_0 * (p_1 / p_0) ** (gas.R / gas.Cp)  # J/kg
         T_1_ideal = h_1_ideal / gas.Cp  # K
@@ -957,27 +1037,13 @@ class Turbine1D:
         M_r2 = w_2 / a_2  # -
         M_r2_ideal_r_real_s = w_2_ideal_r_real_s / a_2_ideal_r_real_s  # -
 
-        # Calculate real pressure reaction, R_p
-        R_p = (p_1 - p_2) / (p_0 - p_2)  # -
-
-        # Calculate Reynolds numbers
+        # Calculate Reynolds numbers only for the solved outlet states.
         Re_s1 = rho_1 * v_1 * self.c_stator / gas.calculate_dynamic_viscosity(T_1)  # -
         Re_r2 = rho_2 * w_2 * self.c_rotor / gas.calculate_dynamic_viscosity(T_2)  # -
 
-        # Package thermodynamic properties, velocities and loading coefficients into analysis_results dictionary.
-        # Make it a copy of analysis_results_at_design_point, such that the values there stay constant during
-        # iterations.
-        analysis_results = self.analysis_results_at_design_point.copy()
-        analysis_results.update({"p_0_over_p_2": p_0_over_p_2, # -
-                                 "h_0": h_0,  # J/kg
-                                 "p_1": p_1,  # Pa
-                                 "T_1": T_1,  # K
-                                 "rho_1": rho_1,  # kg/m^3
-                                 "T_1_ideal": T_1_ideal,  # K
-                                 "h_1": h_1,  # J/kg
-                                 "h_t1": h_t1,  # J/kg
+        # Extend the dictionary with results at the design point.
+        analysis_results.update({"T_1_ideal": T_1_ideal,  # K
                                  "h_1_ideal": h_1_ideal,  # J/kg
-                                 "delta_s_stator": total_delta_s_stator,  # J/(kg K)
                                  "a_1": a_1,  # m/s
                                  "a_1_ideal": a_1_ideal,  # m/s
                                  "v_1": v_1,  # m/s
@@ -986,34 +1052,19 @@ class Turbine1D:
                                  "M_s1": M_s1,  # -
                                  "M_s1_ideal": M_s1_ideal,  # -
                                  "M_r1": M_r1,  # -
-                                 "p_2": p_2,  # Pa
-                                 "T_2": T_2,  # K
-                                 "rho_2": rho_2,  # kg/m^3
                                  "T_2_ideal_r_real_s": T_2_ideal_r_real_s,  # K
-                                 "h_2": h_2,  # J/kg
-                                 "h_t2": h_t2,  # J/kg
                                  "h_2_ideal_r_real_s": h_2_ideal_r_real_s,  # J/kg
-                                 "delta_s_rotor": total_delta_s_rotor - delta_s_rotor_additional,  # J/(kg K)
-                                 "delta_s_rotor_additional": delta_s_rotor_additional,  # J/(kg K)
                                  "a_2": a_2,  # m/s
                                  "a_2_ideal_r_real_s": a_2_ideal_r_real_s,  # m/s
-                                 "v_2": v_2,  # m/s
                                  "w_2": w_2,  # m/s
                                  "w_2_ideal_r_real_s": w_2_ideal_r_real_s,  # m/s
                                  "M_s2": M_s2,  # -
                                  "M_r2": M_r2,  # -
                                  "M_r2_ideal_r_real_s": M_r2_ideal_r_real_s,  # -
-                                 "R_p": R_p,  # -
-                                 "psi_ideal": psi_ideal,  # -
-                                 "psi_ideal_design": psi_ideal,  # -
-                                 "R_h": R_h,  # -
-                                 "theta_1": theta_1,  # -
                                  "Re_s1": Re_s1,  # -
                                  "Re_r2": Re_r2,  # -
                                  })
-
-        # Return residual and analysis results
-        return analysis_results, residual
+        return analysis_results
 
     @staticmethod
     def __calculate_flow_angles(analysis_results):
