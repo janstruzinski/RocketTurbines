@@ -947,10 +947,11 @@ class TraupelLossModel:
         """
 
         # Get inlet and outlet flow angles (measured from meridional axis) and change them to Traupel convention
-        # (measured from circumferential axis)
-        alpha_1 = np.pi/2 - np.abs(analysis_results["alpha_1"])  # rad
-        beta_1 = np.pi/2 - np.abs(analysis_results["beta_1"])  # rad
-        beta_2 = np.pi/2 - np.abs(analysis_results["beta_2"])  # rad
+        # (measured from circumferential axis). Traupel measures stator outlet and rotor inlet
+        # from the positive circumferential direction, but rotor outlet from the negative direction.
+        alpha_1 = np.pi / 2 - analysis_results["alpha_1"]  # rad
+        beta_1 = np.pi / 2 - analysis_results["beta_1"]  # rad
+        beta_2 = np.pi / 2 + analysis_results["beta_2"]  # rad
 
         # Calculate aerodynamic loss coefficient for the stator. First retrieve some variables and calculate
         # normalized inputs. Quantities in analysis_results and blade_row_results at station 1 are the same,
