@@ -791,8 +791,8 @@ class TraupelLossModel:
 
     def calculate_shrouded_rotor_clearance_loss(self, tip_diameter, seal_clearance, teeth_number, teeth_spacing,
                                                 admission_fraction, p_2_over_p_1, mdot, p_1, rho_1,
-                                                design_isentropic_loading_coefficient,
-                                                operation_isentropic_loading_coefficient):
+                                                design_isentropic_work_coefficient_ss,
+                                                operation_isentropic_work_coefficient_ss):
         """A method to calculate shrouded-rotor clearance loss and the flow leaking through its half-labyrinth seal.
 
         :param float tip_diameter: Rotor tip diameter (m).
@@ -804,8 +804,10 @@ class TraupelLossModel:
         :param float mdot: Main mass flow rate (kg/s).
         :param float p_1: Seal inlet pressure (Pa).
         :param float rho_1: Seal inlet fluid density (kg/m^3).
-        :param float design_isentropic_loading_coefficient: Isentropic loading coefficient at design (-).
-        :param float operation_isentropic_loading_coefficient: Isentropic loading coefficient at operation (-).
+        :param float design_isentropic_work_coefficient_ss: Static-to-static isentropic loading coefficient at design
+         point (-).
+        :param float operation_isentropic_work_coefficient_ss: Static-to-static isentropic loading coefficient at
+         operating point (-).
         :return: Shrouded-rotor clearance loss coefficient (-) and seal leakage mass flow rate (kg/s), respectively.
         :rtype: tuple[float, float]
         """
@@ -819,25 +821,26 @@ class TraupelLossModel:
         # Calculate relative leak flow rate, mu coefficient
         mu = mdot_leak_rotor / (mdot - mdot_leak_rotor)  # -
         # Calculate speed parameters
-        v_operation = 1 / np.sqrt(2 * operation_isentropic_loading_coefficient)  # -
-        v_design = 1 / np.sqrt(2 * design_isentropic_loading_coefficient)  # -
+        v_operation = 1 / np.sqrt(2 * operation_isentropic_work_coefficient_ss)  # -
+        v_design = 1 / np.sqrt(2 * design_isentropic_work_coefficient_ss)  # -
         # Calculate clearance loss and return it together with the leak rate
         zeta_clearance_rotor = mu * (1 - ((v_operation - v_design) / v_design)**2)  # -
         return zeta_clearance_rotor, mdot_leak_rotor
 
 
     def calculate_unshrouded_rotor_clearance_loss(self, normalized_inlet_velocity,
-                                                  isentropic_loading_coefficient, clearance_over_blade_length,
+                                                  isentropic_work_coefficient_ss, clearance_over_blade_length,
                                                   chord_over_blade_length, tip_over_mean_diameter, isentropic_reaction,
                                                   outlet_angle, circumferential_velocity_change, axial_velocity):
         """A method to calculate the clearance loss coefficient of an unshrouded rotor.
 
         :param float normalized_inlet_velocity: Inlet velocity normalized by the blade velocity (-).
-        :param float isentropic_loading_coefficient: Isentropic loading coefficient of the rotor (-).
+        :param float isentropic_work_coefficient_ss: Static-to-static isentropic loading coefficient of the stage (-).
         :param float clearance_over_blade_length: Radial clearance over blade length (-).
         :param float chord_over_blade_length: Blade chord over blade length (-).
         :param float tip_over_mean_diameter: Rotor tip diameter over mean turbine diameter (-).
-        :param float isentropic_reaction: Isentropic reaction of the turbine stage (-).
+        :param float isentropic_reaction: Isentropic reaction of the turbine stage according to
+         Traupel's definition (-).
         :param float outlet_angle: Rotor outlet angle measured from the vertical direction (rad).
         :param float circumferential_velocity_change: Change in circumferential velocity across the rotor (m/s).
         :param float axial_velocity: Axial velocity used to normalize the circumferential velocity change (m/s).
@@ -852,19 +855,19 @@ class TraupelLossModel:
 
         # Now calculate zeta_clearance_rotor
         zeta_clearance_rotor = \
-            K_sigma * (2 * isentropic_reaction * isentropic_loading_coefficient + normalized_inlet_velocity**2) * \
+            K_sigma * (2 * isentropic_reaction * isentropic_work_coefficient_ss + normalized_inlet_velocity**2) * \
             max(clearance_over_blade_length - 0.002 * chord_over_blade_length, 0) * tip_over_mean_diameter / \
-            (2 * isentropic_loading_coefficient)  # -
+            (2 * isentropic_work_coefficient_ss)  # -
         return max(zeta_clearance_rotor, 0)
 
     @staticmethod
-    def calculate_admission_loss(admission_fraction, isentropic_loading_coefficient,
+    def calculate_admission_loss(admission_fraction, isentropic_work_coefficient_ss,
                                  flow_coefficient, blade_length_over_mean_diameter, blade_width_over_mean_diameter,
                                  outlet_angle, partial_admission_rotor):
         """A method to calculate the rotor partial-admission loss coefficient.
 
         :param float admission_fraction: Partial admission fraction of the rotor circumference (-).
-        :param float isentropic_loading_coefficient: Isentropic loading coefficient of the rotor (-).
+        :param float isentropic_work_coefficient_ss: Static-to-static isentropic loading coefficient of the stage (-).
         :param float flow_coefficient: Turbine flow coefficient (-).
         :param float blade_length_over_mean_diameter: Rotor blade length over mean turbine diameter (-).
         :param float blade_width_over_mean_diameter: Rotor blade width over mean turbine diameter (-).
@@ -885,21 +888,21 @@ class TraupelLossModel:
         if admission_fraction < 1:
             zeta_admission = \
                 C_coefficient * (1 - admission_fraction) / \
-                (admission_fraction * flow_coefficient * isentropic_loading_coefficient) + \
+                (admission_fraction * flow_coefficient * isentropic_work_coefficient_ss) + \
                 0.21 * blade_width_over_mean_diameter / \
-                (admission_fraction * np.sqrt(isentropic_loading_coefficient))  # -
+                (admission_fraction * np.sqrt(isentropic_work_coefficient_ss))  # -
         elif admission_fraction == 1:
             zeta_admission = 0
         return zeta_admission
 
     def calculate_disk_friction_loss(self, admission_fraction, hub_over_mean_diameter, hub_diameter_over_blade_length,
-                                     isentropic_loading_coefficient, flow_coefficient, Reynolds_number):
+                                     isentropic_work_coefficient_ss, flow_coefficient, Reynolds_number):
         """A method to calculate the rotor disk-friction loss coefficient.
 
         :param float admission_fraction: Admitted fraction of the rotor circumference (-).
         :param float hub_over_mean_diameter: Rotor hub diameter over mean turbine diameter (-).
         :param float hub_diameter_over_blade_length: Rotor hub diameter over blade length (-).
-        :param float isentropic_loading_coefficient: Isentropic loading coefficient of the rotor (-).
+        :param float isentropic_work_coefficient_ss: Static-to-static isentropic loading coefficient of the stage (-).
         :param float flow_coefficient: Turbine flow coefficient (-).
         :param float or integer Reynolds_number: Reynolds number used for the disk-friction coefficient (-).
         :return: Rotor disk-friction loss coefficient (-).
@@ -910,7 +913,7 @@ class TraupelLossModel:
         C_M = self.calculate_C_M(Reynolds_number)  # -
         # Calculate and return zeta_friction
         zeta_friction = 1.27 * C_M * hub_over_mean_diameter**4 * hub_diameter_over_blade_length / \
-                        (admission_fraction * flow_coefficient * isentropic_loading_coefficient)  # -
+                        (admission_fraction * flow_coefficient * isentropic_work_coefficient_ss)  # -
         return zeta_friction
 
     def calculate_incidence_losses(self, incidence_angle, inlet_to_outlet_velocity_ratio, inlet_Mach_number):
@@ -953,6 +956,11 @@ class TraupelLossModel:
         beta_1 = np.pi / 2 - analysis_results["beta_1"]  # rad
         beta_2 = np.pi / 2 + analysis_results["beta_2"]  # rad
 
+        # Also calculate reaction according to Traupel's definition
+        delta_h_stator_ideal = analysis_results["delta_h_stator_ideal"]
+        delta_h_rotor_ideal = analysis_results["delta_h_rotor_ideal"]
+        R_h_Traupel = delta_h_rotor_ideal / (delta_h_rotor_ideal + delta_h_stator_ideal)
+
         # Calculate aerodynamic loss coefficient for the stator. First retrieve some variables and calculate
         # normalized inputs. Quantities in analysis_results and blade_row_results at station 1 are the same,
         # so analysis results are used here.
@@ -973,8 +981,8 @@ class TraupelLossModel:
         s_ax_over_l_stator = s_ax / l_stator  # -
         M_s1 = analysis_results["M_s1"]  # -
         Re_s1 = analysis_results["Re_s1"]  # -
-        psi_ideal = analysis_results["psi_ideal"]  # -
-        speed_parameter = 1 / np.sqrt(2 * psi_ideal)  # -
+        psi_ss_ideal = analysis_results["psi_ss_ideal"]  # -
+        speed_parameter = 1 / np.sqrt(2 * psi_ss_ideal)  # -
         zeta_aerodynamic_stator = \
             self.calculate_blade_row_aerodynamic_loss(blade_row="stator", inlet_angle=np.pi/2, outlet_angle=alpha_1,
                                                       t_TE_over_pitch=t_TE_over_p_stator,
@@ -1054,7 +1062,7 @@ class TraupelLossModel:
         rho_1 = analysis_results["rho_1"]  # kg/m^3
         Re_disk = analysis_results["omega"] * D_hub**2 * rho_1 / (2 * gas.calculate_dynamic_viscosity(T_1))  # -
         zeta_disk_friction = self.calculate_disk_friction_loss(admission_fraction, D_hub_over_D_mean, D_hub_over_l_blade,
-                                                           psi_ideal, theta_2, Re_disk)  # -
+                                                           psi_ss_ideal, theta_2, Re_disk)  # -
         # Clearance loss
         # First consider the case if the rotor is unshrouded:
         s_r = turbine_geometry["s_r"]  # m
@@ -1065,13 +1073,12 @@ class TraupelLossModel:
             w_1_normalized = w_1_blade / u  # -
             s_r_over_l_rotor = s_r / l_rotor  # -
             D_tip_over_D_mean = D_tip / D_m  # -
-            R_ideal = analysis_results["R_h_ideal"]  # -
             v_ax = theta_2 * u  # m/s
             delta_w_circumferential = abs(w_1_blade * np.sin(analysis_results["beta_1"]) - \
                                       w_2_blade * np.sin(analysis_results["beta_2"]))  # m/s
             zeta_clearance_rotor = \
-                self.calculate_unshrouded_rotor_clearance_loss(w_1_normalized, psi_ideal, s_r_over_l_rotor,
-                                                               c_over_l_rotor, D_tip_over_D_mean, R_ideal, beta_2,
+                self.calculate_unshrouded_rotor_clearance_loss(w_1_normalized, psi_ss_ideal, s_r_over_l_rotor,
+                                                               c_over_l_rotor, D_tip_over_D_mean, R_h_Traupel, beta_2,
                                                                delta_w_circumferential, v_ax)  # -
             mdot_leak = 0  # kg/s
         # Now consider the case if the rotor is shrouded:
@@ -1082,15 +1089,15 @@ class TraupelLossModel:
             p_1 = analysis_results["p_1"]  # Pa
             p_2_over_p_1 = p_2 / p_1  # -
             mdot = analysis_results["mdot_total"]  # kg/s
-            design_psi_ideal = analysis_results["psi_ideal_design"]  # -
+            psi_ss_ideal_design = analysis_results["psi_ss_ideal_design"]  # -
             zeta_clearance_rotor, mdot_leak = \
                 self.calculate_shrouded_rotor_clearance_loss(D_tip, s_r, seal_teeth_number, seal_teeth_spacing,
                                                              admission_fraction, p_2_over_p_1, mdot, p_1, rho_1,
-                                                             design_psi_ideal, psi_ideal)  # (-, kg/s)
+                                                             psi_ss_ideal_design, psi_ss_ideal)  # (-, kg/s)
         # Partial admission loss
         partial_admission_rotor = turbine_geometry["partial_admission_rotor"]
         c_rotor_over_D_m = c_rotor / D_m  # -
-        zeta_admission = self.calculate_admission_loss(admission_fraction, psi_ideal, theta_2, l_rotor_over_D_m,
+        zeta_admission = self.calculate_admission_loss(admission_fraction, psi_ss_ideal, theta_2, l_rotor_over_D_m,
                                                c_rotor_over_D_m, beta_2, partial_admission_rotor)  # -
         # Sum these losses and get total dissipated enthalpy
         zeta_rotor_additional = zeta_disk_friction + zeta_admission + zeta_clearance_rotor  # -
