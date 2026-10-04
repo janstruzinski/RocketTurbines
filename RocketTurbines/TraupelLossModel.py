@@ -548,6 +548,8 @@ class TraupelLossModel:
         :rtype: float
         """
 
+        # Sometimes extrapolation beyond data given by Traupel can return negative values. Therefore, the minimum
+        # values the interpolator can return is zero.
         return max(self.interpolator_chi_R(Re, relative_roughness), 0)
 
     def calculate_chi_M(self, outlet_Mach_number, blade_row):
@@ -568,6 +570,8 @@ class TraupelLossModel:
                          "near_sonic_outlet": self.interpolator_chi_M_curve_2,
                          "impulse_low_M": self.interpolator_chi_M_curve_3,
                          "impulse_high_M": self.interpolator_chi_M_curve_4}
+        # Sometimes extrapolation beyond data given by Traupel can return negative values. Therefore, the minimum
+        # values the interpolator can return is zero.
         return max(interpolators[configuration](outlet_Mach_number), 0)
 
     def calculate_zeta_p0(self, inlet_angle, outlet_angle):
@@ -579,7 +583,9 @@ class TraupelLossModel:
         :rtype: float
         """
 
-        return max(self.interpolator_zeta_p0(inlet_angle, outlet_angle), 0)
+        # zeta_p0 minimum value is assumed to be 0.001. It cannot be zero like for other coefficients, since division
+        # by zeta_p0 occurs for other coefficients.
+        return max(self.interpolator_zeta_p0(inlet_angle, outlet_angle), 0.001)
 
     def calculate_zeta_h(self, delta_a_ratio, trailing_edge_blockage, Re):
         """A method to calculate the Reynolds-corrected loss due to underpressure behind the trailing edge.
@@ -597,10 +603,14 @@ class TraupelLossModel:
             return 0.0
         zeta_h = self.interpolator_zeta_h(delta_a_ratio, trailing_edge_blockage)  # -
         if Re >= 1.5e5:
-            return zeta_h
+            # Sometimes extrapolation beyond data given by Traupel can return negative values. Therefore, the minimum
+            # values the interpolator can return is zero.
+            return max(zeta_h, 0)
         # Approximate Traupel's elliptical transition with a quarter ellipse that levels off at full strength.
         relative_Re = (Re - 8e4) / (1.5e5 - 8e4)  # -
         transition_factor = np.sqrt(1 - (1 - relative_Re)**2)  # -
+        # Sometimes extrapolation beyond data given by Traupel can return negative values. Therefore, the minimum
+        # values the interpolator can return is zero.
         return max(zeta_h * transition_factor, 0)
 
     def calculate_zeta_f(self, length_ratio, speed_parameter):
@@ -612,6 +622,8 @@ class TraupelLossModel:
         :rtype: float
         """
 
+        # Sometimes extrapolation beyond data given by Traupel can return negative values. Therefore, the minimum
+        # values the interpolator can return is zero.
         return max(self.interpolator_zeta_f(length_ratio, speed_parameter), 0)
 
     def calculate_F(self, turning_angle, inlet_over_outlet_velocity):
@@ -623,6 +635,8 @@ class TraupelLossModel:
         :rtype: float
         """
 
+        # Sometimes extrapolation beyond data given by Traupel can return negative values. Therefore, the minimum
+        # values the interpolator can return is zero.
         return max(self.interpolator_F(turning_angle, inlet_over_outlet_velocity), 0)
 
     def calculate_c_f(self, Re, relative_roughness):
@@ -634,6 +648,8 @@ class TraupelLossModel:
         :rtype: float
         """
 
+        # Sometimes extrapolation beyond data given by Traupel can return negative values. Therefore, the minimum
+        # values the interpolator can return is zero.
         return max(self.interpolator_c_f(Re, relative_roughness), 0)
 
     def calculate_K_sigma(self, outlet_angle, velocity_change_ratio, normalized_clearance):
@@ -648,6 +664,8 @@ class TraupelLossModel:
 
         # Figure 8.4.16 uses the sine of Traupel's outlet angle as its first coordinate.
         sine_angle = np.sin(outlet_angle)  # -
+        # Sometimes extrapolation beyond data given by Traupel can return negative values. Therefore, the minimum
+        # values the interpolator can return is zero.
         return max(self.interpolator_K_sigma(sine_angle, velocity_change_ratio, normalized_clearance), 0)
 
     def calculate_C_M(self, Re):
@@ -658,6 +676,8 @@ class TraupelLossModel:
         :rtype: float
         """
 
+        # Sometimes extrapolation beyond data given by Traupel can return negative values. Therefore, the minimum
+        # values the interpolator can return is zero.
         return max(self.interpolator_C_M(Re), 0)
 
     def calculate_z(self, incidence_angle):
@@ -672,6 +692,8 @@ class TraupelLossModel:
         interpolators = {"low": self.interpolator_z_b,
                          "medium": self.interpolator_z_average,
                          "high": self.interpolator_z_a}
+        # Sometimes extrapolation beyond data given by Traupel can return negative values. Therefore, the minimum
+        # values the interpolator can return is zero.
         return max(interpolators[self.incidence_loss](incidence_angle), 0)
 
     def calculate_phi(self, p_2_over_p_1, teeth_spacing_over_seal_clearance, teeth_number):
@@ -689,7 +711,7 @@ class TraupelLossModel:
         critical_pressure_ratio = self.interpolator_critical_pressure_ratio(
             teeth_number, teeth_spacing_over_seal_clearance)  # -
         pressure_ratio = max(p_2_over_p_1, critical_pressure_ratio)  # -
-        # The Phi^2 interpolator itself is uncapped; apply the limit here before taking the square root.
+        # The zero limit is applied to the interpolator before taking a square root
         phi_squared = max(self.interpolator_phi_squared(pressure_ratio, teeth_spacing_over_seal_clearance,
                                                         teeth_number), 0)  # -
         return np.sqrt(phi_squared)
@@ -816,6 +838,9 @@ class TraupelLossModel:
         phi = self.calculate_phi(p_2_over_p_1, teeth_spacing / seal_clearance, teeth_number)  # -
         # Calculate leak rate
         mdot_leak_rotor = admission_fraction * A_seal * phi * np.sqrt(p_1 * rho_1)  # kg/s
+        # If it is higher than the main flow, raise an error
+        if mdot_leak_rotor >= mdot:
+            ValueError("Massflow through the seal is higher than through the rotor.")
         # Calculate relative leak flow rate, mu coefficient
         mu = mdot_leak_rotor / (mdot - mdot_leak_rotor)  # -
         # Calculate speed parameters
@@ -881,6 +906,9 @@ class TraupelLossModel:
             C_coefficient = correction * (0.045 + 0.58 * blade_length_over_mean_diameter) * np.sin(outlet_angle)  # -
         # If rotor is partially enclosed:
         elif partial_admission_rotor == "enclosed":
+            # Enclosed row formula works only for blade_length_over_mean_diameter < 0.125. However, for the lack of
+            # other alternatives, it is also used beyond that limit. Partial admission turbines in rocket engines
+            # usually have a low l/D, so such extrapolation is deemed acceptable.
             C_coefficient = 0.0095 + 0.55 * max(0.125 - blade_length_over_mean_diameter, 0)**2  # -
         # Calculate and return zeta_admission. It is assumed there is only one partial admission sector, which is
         # common in rocket engine turbines.
@@ -1102,15 +1130,16 @@ class TraupelLossModel:
         delta_h_ideal = analysis_results["delta_h_ideal"]  # J/kg
         delta_h_loss_rotor_additional = zeta_rotor_additional * delta_h_ideal  # J/kg
 
-        # Calculate entropy generation in the rotor for the blade row alone
-        delta_h_loss_rotor_total = delta_h_loss_rotor + delta_h_loss_rotor_additional  # J/kg
+        # Calculate total entropy generation for the rotor
+        delta_h_loss_rotor_total = delta_h_loss_rotor + delta_h_loss_rotor_additional
         T_2 = analysis_results["T_2"]  # K
-        T_2_ideal = T_2 - delta_h_loss_rotor_total / gas.Cp  # K
-        # T_2_a is a temperature that incorporated dissipated enthalpy due to aerodynamic losses in the blade row alone
-        T_2_a = T_2_ideal + delta_h_loss_rotor / gas.Cp  # K
-        delta_s_rotor = gas.Cp * np.log(T_2_a / T_2_ideal)  # J/(kg K)
-        # Now calculate entropy generation in the rotor for the additional losses
-        delta_s_rotor_additional = gas.Cp * np.log(T_2 / T_2_a)  # J/(kg K)
+        delta_s_rotor_total = -gas.Cp * np.log(1 - delta_h_loss_rotor_total / (gas.Cp * T_2))  # J/(kg K)
+        # Calculate it for the blade row alone such that it is consistent with the blade row flow state at convergence
+        T_2_blade = blade_row_results["T_2_blade"]
+        delta_s_rotor = -gas.Cp * np.log(1 - delta_h_loss_rotor / (gas.Cp * T_2_blade))
+        # Now calculate entropy generation in the rotor for the additional losses such that the total entrapy rise
+        # agrees
+        delta_s_rotor_additional = delta_s_rotor_total - delta_s_rotor  # J/(kg K)
 
         # Pack Traupel loss analysis results into a dictionary.
         Traupel_loss_analysis_results = {
@@ -1130,7 +1159,7 @@ class TraupelLossModel:
             "delta_h_loss_rotor_total": delta_h_loss_rotor_total,  # Total specific enthalpy dissipated in the
             # rotor, J/kg
             "delta_s_stator": delta_s_stator,  # Specific entropy rise across the stator, J/(kg K)
-            "delta_s_rotor": delta_s_rotor,  # Specific entropy rise across the rotor blade row, J/(kg K)
+            "delta_s_rotor": delta_s_rotor,  # Specific entropy rise across the rotor blade row alone, J/(kg K)
             "delta_s_rotor_additional": delta_s_rotor_additional,  # Specific entropy rise from additional rotor
             # losses, J/(kg K)
             "mdot_leak": mdot_leak,  # Mass flow leaking through the rotor shroud seal (zero if unshrouded), kg/s
