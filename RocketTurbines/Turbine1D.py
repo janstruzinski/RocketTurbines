@@ -337,10 +337,10 @@ class Turbine1D:
         :param float or integer admission_fraction: Admission fraction (-) of the turbine stage. By default, 1.
         :param string partial_admission_rotor: Whether partial admission rotor (if used) is "enclosed" or "free".
          By default, "free".
-        :param float or integer t_TE_stator: Tangential thickness (m) of the trailing edge for the stator.
-         In other words, length of the projection of the thickness on the tangential axis.
-        :param float or integer t_TE_rotor: Tangential thickness (m) of the trailing edge for the rotor.
-         In other words, length of the projection of the thickness on the tangential axis.
+        :param float or integer t_TE_stator: Circumferential thickness (m) of the trailing edge for the stator.
+         In other words, length of the projection of the thickness on the circumferential axis.
+        :param float or integer t_TE_rotor: Circumferential thickness (m) of the trailing edge for the rotor.
+         In other words, length of the projection of the thickness on the circumferential axis.
         :param float or integer Ra_roughness: Roughness of the turbine flow surfaces in Ra.
         :param float or integer s_ax_over_pitch_rotor: Axial distance between stator and rotor over rotor pitch (-).
          By default, 0.35, which is in the range of 0.3-0.35 given by Traupel.
@@ -556,7 +556,8 @@ class Turbine1D:
         if (not np.all(np.isfinite(entropy_residual))
                 or np.any(np.abs(entropy_residual) >= 1e-4)):
             raise RuntimeError("Numerical solve for the stator and rotor entropy rises has an invalid or excessive "
-                               f"entropy residual: {entropy_residual} J/(kg K); each absolute value must be below 1e-3 J/(kg K).")
+                               f"entropy residual: {entropy_residual} J/(kg K); each absolute value must be below"
+                               f" 1e-4 J/(kg K).")
 
 
         # Update analysis_results_at_design_point and blade row results
@@ -599,7 +600,8 @@ class Turbine1D:
         :raises ValueError: If shaft work and outlet axial kinetic energy leave no positive outlet static enthalpy,
             or an h_2/h_t0 trial is not finite and positive.
         :raises RuntimeError: If an internal solve does not converge, returns a nonpositive or nonfinite solution,
-            or its absolute dimensional residual is not below 1e-3 J/kg (h_2/h_t0) or 1e-3 m/s (theta_2_blade).
+            returns a theta_2_blade solution on the wrong Mach branch, or its absolute dimensional residual is not
+            below 1e-3 J/kg (h_2/h_t0) or 1e-3 m/s (theta_2_blade).
         """
 
         if not isinstance(loss_model, TraupelLossModel):
@@ -708,6 +710,7 @@ class Turbine1D:
         if numerical_scheme == "newton":
             h_2_over_h_t0_solution = root_scalar(get_enthalpy_residual, x0=h_2_max_over_h_t0, method="newton",
                                                  maxiter=1000, xtol=1e-12, rtol=1e-10)
+
         # Raise error if the solution is not converged
         if not h_2_over_h_t0_solution.converged:
             raise RuntimeError("Numerical solve for h_2/h_t0 did not converge.")
@@ -761,7 +764,8 @@ class Turbine1D:
         theta_2_crit = theta_2_max * np.sqrt((gas.gamma - 1) / (gas.gamma + 1))  # -
         subsonic_branch_bracket = [1e-3 * theta_2_crit, theta_2_crit]
         supersonic_branch_bracket = [theta_2_crit, (1 - 1e-3) * theta_2_max]
-        bracket = subsonic_branch_bracket if theta_2 < theta_2_crit else supersonic_branch_bracket
+        subsonic_branch = theta_2 < theta_2_crit
+        bracket = subsonic_branch_bracket if subsonic_branch else supersonic_branch_bracket
         
         # Define residual function to solve
         def get_theta_2_blade_residual(theta_2_blade):
@@ -807,9 +811,17 @@ class Turbine1D:
             raise RuntimeError("Numerical solve for theta_2_blade did not converge.")
         # Obtain remaining results
         theta_2_blade = theta_2_blade_solution.root  # -
+
         # The solved flow coefficient must be finite and positive before calculating the final blade-row state.
         if not np.isfinite(theta_2_blade) or theta_2_blade <= 0:
             raise RuntimeError("Numerical solve for theta_2_blade returned a nonfinite or nonpositive solution.")
+        # Both schemes must preserve the selected Mach branch; the sonic boundary belongs to both intervals.
+        if ((subsonic_branch and theta_2_blade > theta_2_crit)
+                or (not subsonic_branch and theta_2_blade < theta_2_crit)):
+            branch = "subsonic" if subsonic_branch else "supersonic"
+            raise RuntimeError("Numerical solve for theta_2_blade returned a solution on the wrong Mach branch: "
+                               f"theta_2_blade = {theta_2_blade}; expected the {branch} branch with "
+                               f"theta_2_crit = {theta_2_crit}.")
         blade_row_results, residual = self.__calculate_blade_row_velocities(
             alpha_1, beta_2, theta_2_blade, analysis_results)  # residual: -
         # Restore the dimensional velocity residual and require an absolute error below 1e-3 m/s.
