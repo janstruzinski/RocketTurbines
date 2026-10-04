@@ -530,19 +530,21 @@ class Turbine1D:
         # First define the function to get entropy residual
         def get_entropy_residual(delta_s):
             return self.calculate_entropy_rise(delta_s[0], delta_s[1], delta_s[2], loss_model)[0]
-        # Estimate losses with zero entropy rise as input, then use calculated entropy rise as the default initial guess
-        # and residual scales for numerical solver.
-        entropy_estimate = np.array(get_entropy_residual([0, 0, 0]))
+        # Estimate losses with input entropy rise (delta_s_estimate), then use calculated entropy rise as the default
+        # initial solution guess and residual scales for numerical solver. The reason entropy change is estimated this
+        # way, is because delta_s_estimate can be a list of zeros, which is a poor initial solution for a real turbine
+        # flow, and it is also non-feasible scales for normalizing the residual.
+        calculated_delta_s_estimate = np.array(get_entropy_residual(delta_s_estimate)) + np.array(delta_s_estimate)
         # Raise an error if these entropy estimates are negative or not finite
-        if not np.all(np.isfinite(entropy_estimate)) or np.any(entropy_estimate < 0):
+        if not np.all(np.isfinite(calculated_delta_s_estimate)) or np.any(calculated_delta_s_estimate < 0):
             raise ValueError("Loss-model entropy estimates at zero entropy rises must be finite and nonnegative.")
-        # First, use entropy estimates as scales to normalise calculated residual and speed up convergence.
+        # First, use calculated entropy estimates as scales to normalise residual and speed up convergence.
         # To avoid division by zero, ensure minimum scale is 1. That floor value is rarely crossed for designs with
-        # losses.
-        entropy_scales = np.maximum(entropy_estimate, 1.)  # J/(kg K)
-        # If nonzero initial entropy rises were given as input, use it as initial solution. Otherwise, use entropy
-        # estimate.
-        initial_entropy = np.array(delta_s_estimate) if np.any(delta_s_estimate) else entropy_estimate
+        # losses, so it is deemed a good choice.
+        entropy_scales = np.maximum(calculated_delta_s_estimate, 1.)  # J/(kg K)
+        # If nonzero entropy estimates were given as input, use these as initial solution. Otherwise, use
+        # calculated entropy estimate.
+        initial_entropy = np.array(delta_s_estimate) if np.any(delta_s_estimate) else calculated_delta_s_estimate
         # Call the numerical solver. Larger difference steps reduce inner solvers noise. The upper bound is five times
         # multiple of the larger of entropy_scales and initial_entropy.
         entropy_solution = least_squares(get_entropy_residual, initial_entropy,
