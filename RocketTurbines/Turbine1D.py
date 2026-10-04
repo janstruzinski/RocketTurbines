@@ -1,5 +1,5 @@
 import numpy as np
-from scipy.optimize import root_scalar, root
+from scipy.optimize import root_scalar, least_squares
 from .TraupelLossModel import TraupelLossModel
 from .IdealGas import IdealGas
 
@@ -303,9 +303,8 @@ class Turbine1D:
 
     def size_turbine(self, gas: IdealGas, work_coefficient_tt, flow_coefficient, reaction_isentropic_tt, RPM,
                      shaft_power, mdot, T_0, p_0, radial_clearance, no_blades_stator, no_blades_rotor,
-                     chord_over_pitch_stator, t_TE_stator, t_TE_rotor, Ra_roughness,
-                     loss_model: TraupelLossModel, admission_fraction=1, partial_admission_rotor="free",
-                     chord_over_pitch_rotor=2.5,
+                     chord_over_pitch_stator, t_TE_stator, t_TE_rotor, Ra_roughness, loss_model: TraupelLossModel,
+                     admission_fraction=1, partial_admission_rotor="free", chord_over_pitch_rotor=2.5,
                      s_ax_over_pitch_rotor=0.35, delta_s_estimate=[0, 0, 0], shrouded_rotor=False,
                      h_shroud_over_blade_length=0.008, s_ax_shroud_over_h_shroud=2, t_shroud=None,
                      seal_teeth_number=None):
@@ -355,10 +354,10 @@ class Turbine1D:
         :param TraupelLossModel loss_model: Traupel loss model to be used in the analysis.
         :param list delta_s_estimate: List of initial estimates of the entropy rises (J/kg/K) due to stator, rotor and
          additional rotor losses. Additional rotor losses represent clearance, partial admission or disk friction
-          losses. By default, [0, 0, 0].
+          losses. The default [0, 0, 0] uses the loss-model result evaluated at zero entropy rises instead.
         :raises TypeError: If gas is not an IdealGas instance or loss_model is not a TraupelLossModel instance.
         :raises ValueError: If the specified shaft work and outlet axial kinetic energy leave no positive outlet
-            static enthalpy.
+            static enthalpy, or the loss model returns nonfinite or negative entropy estimates at zero entropy rises.
         :raises RuntimeError: If the entropy-rise solve does not converge, returns nonfinite or negative entropy
             rises, or has a nonfinite or excessive entropy residual (absolute value must be below 1e-4 J/(kg K)),
              or the h_2/h_t0 or blade-row flow-coefficient solve fails its convergence,
@@ -531,16 +530,26 @@ class Turbine1D:
         # First define the function to get entropy residual
         def get_entropy_residual(delta_s):
             return self.calculate_entropy_rise(delta_s[0], delta_s[1], delta_s[2], loss_model)[0]
-        # Get an estimate of entropy rise scales for solver scaling. These are the entropy
-        # scales for assumed values equal to zero. This represents the result of loss model as if all input velocities
-        # and flow angles were ideal.
-        entropy_scales = np.array(get_entropy_residual([0, 0, 0]))
-        # If any of the entropy scales are zero, do not use any scaling at all:
-        if np.any(entropy_scales == 0): entropy_scales = np.ones(3)
-        # Solve for entropy increase
-        entropy_solution = root(get_entropy_residual, np.array(delta_s_estimate), method="hybr",
-                                options={"xtol":1e-6, "eps": 1e-12, "maxfev": 1000, "factor": 1,
-                                         "diag": 1/entropy_scales})
+        # Estimate losses with zero entropy rise as input, then use calculated entropy rise as the default initial guess
+        # and residual scales for numerical solver.
+        entropy_estimate = np.array(get_entropy_residual([0, 0, 0]))
+        # Raise an error if these entropy estimates are negative or not finite
+        if not np.all(np.isfinite(entropy_estimate)) or np.any(entropy_estimate < 0):
+            raise ValueError("Loss-model entropy estimates at zero entropy rises must be finite and nonnegative.")
+        # First, use entropy estimates as scales to normalise calculated residual and speed up convergence.
+        # To avoid division by zero, ensure minimum scale is 1. That floor value is rarely crossed for designs with
+        # losses.
+        entropy_scales = np.maximum(entropy_estimate, 1.)  # J/(kg K)
+        # If nonzero initial entropy rises were given as input, use it as initial solution. Otherwise, use entropy
+        # estimate.
+        initial_entropy = np.array(delta_s_estimate) if np.any(delta_s_estimate) else entropy_estimate
+        # Call the numerical solver. Larger difference steps reduce inner solvers noise. The upper bound is five times
+        # multiple of the larger of entropy_scales and initial_entropy.
+        entropy_solution = least_squares(get_entropy_residual, initial_entropy,
+                                        bounds=(np.zeros(3), 5 * np.maximum(entropy_scales, initial_entropy)),
+                                        method="dogbox", jac="2-point", x_scale=entropy_scales,
+                                        loss="linear", tr_solver="exact", diff_step=1e-4,
+                                        xtol=1e-6, ftol=None, gtol=1e-4, max_nfev=300, verbose=2)
         # Raise an error if not converged
         if not entropy_solution.success:
             raise RuntimeError("Numerical solve for the stator and rotor entropy rises did not converge.")
