@@ -260,12 +260,14 @@ class Turbine1D:
             "w_1_blade": None,  # Relative velocity at station 1 for the blade row alone, m/s
             "p_1_blade": None,  # Static pressure at station 1 for the blade row alone, Pa
             "T_1_blade": None,  # Static temperature at station 1 for the blade row alone, K
+            "h_1_blade": None,  # Static enthalpy at station 1 for the blade row alone, J/kg
             "rho_1_blade": None,  # Static density at station 1 for the blade row alone, kg/m3
             "M_s1_blade": None,  # Absolute Mach number at station 1 for the blade row alone, -
             "v_2_blade": None,  # Absolute velocity at station 2 for the blade row alone, m/s
             "w_2_blade": None,  # Relative velocity at station 2 for the blade row alone, m/s
             "p_2_blade": None,  # Static pressure at station 2 for the blade row alone, Pa
             "T_2_blade": None,  # Static temperature at station 2 for the blade row alone, K
+            "h_2_blade": None,  # Static enthalpy at station 2 for the blade row alone, J/kg
             "h_t2_blade": None,  # Total specific enthalpy at station 2 for the blade row alone, J/kg
             "rho_2_blade": None,  # Static density at station 2 for the blade row alone, kg/m3
             "M_r1_blade": None,  # Relative Mach number at station 1 for the blade row alone, -
@@ -276,7 +278,7 @@ class Turbine1D:
             # the stage, -
             "p_0_over_p_2_blade": None,  # Pressure ratio for the blade row alone, -
             "Re_s1_blade": None,  # Reynolds number based on v_1_blade and stator chord, -
-            "Re_r2_blade": None,  # Reynolds number based on v_2_blade and rotor chord, -
+            "Re_r2_blade": None,  # Reynolds number based on w_2_blade and rotor chord, -
         }
 
         # Traupel loss analysis results at the design point.
@@ -326,7 +328,7 @@ class Turbine1D:
         :param float or integer p_0: Total pressure (Pa) at station 0. It is assumed it is approximately equal to
             static pressure there due to negligible velocity.
         :param float or integer radial_clearance: Radial clearance (m) of the rotor blade.
-        :param integer no_blades_stator: Number of stator (-) blades/nozzles.
+        :param integer no_blades_stator: Number of stator blades/nozzles within the admitted circumference (-).
         :param integer no_blades_rotor: Number of rotor (-) blades.
         :param float or integer chord_over_pitch_stator: Ratio of stator chord to its blade/nozzle pitch (-).
         :param float or integer chord_over_pitch_rotor: Ratio of rotor chord to its blade pitch (-). By default,
@@ -357,8 +359,10 @@ class Turbine1D:
         :raises TypeError: If gas is not an IdealGas instance or loss_model is not a TraupelLossModel instance.
         :raises ValueError: If the specified shaft work and outlet axial kinetic energy leave no positive outlet
             static enthalpy.
-        :raises RuntimeError: If the entropy-rise solve does not converge, or the h_2/h_t0 or blade-row
-            flow-coefficient solve fails its convergence, solution-value or dimensional-residual checks.
+        :raises RuntimeError: If the entropy-rise solve does not converge, returns nonfinite or negative entropy
+            rises, or has a nonfinite or excessive entropy residual (absolute value must be below 1e-4 J/(kg K)),
+             or the h_2/h_t0 or blade-row flow-coefficient solve fails its convergence,
+              solution-value or dimensional-residual checks.
         """
 
         # Verify that user inputs are correct.
@@ -368,21 +372,25 @@ class Turbine1D:
         if not isinstance(gas, IdealGas):
             raise TypeError("gas must be an IdealGas instance.")
 
-        # VNow verify all the scalars.
+        # Now verify all the scalars.
         positive_inputs = {
             "work_coefficient_tt": work_coefficient_tt, "flow_coefficient": flow_coefficient,
             "RPM": RPM, "shaft_power": shaft_power, "mdot": mdot, "T_0": T_0, "p_0": p_0,
             "no_blades_stator": no_blades_stator, "no_blades_rotor": no_blades_rotor,
             "chord_over_pitch_stator": chord_over_pitch_stator,
             "chord_over_pitch_rotor": chord_over_pitch_rotor, "admission_fraction": admission_fraction,
-            "radial_clearance": radial_clearance, "s_ax_over_pitch_rotor": s_ax_over_pitch_rotor,
-            "h_shroud_over_blade_length": h_shroud_over_blade_length,
-            "s_ax_shroud_over_h_shroud": s_ax_shroud_over_h_shroud
+            "radial_clearance": radial_clearance, "s_ax_over_pitch_rotor": s_ax_over_pitch_rotor
         }
         nonnegative_inputs = {
             "t_TE_stator": t_TE_stator, "t_TE_rotor": t_TE_rotor, "Ra_roughness": Ra_roughness,
-            "s_ax_shroud_over_h_shroud": s_ax_shroud_over_h_shroud, "reaction_isentropic_tt": reaction_isentropic_tt
+            "reaction_isentropic_tt": reaction_isentropic_tt
         }
+        shroud_inputs = {"h_shroud_over_blade_length": h_shroud_over_blade_length,
+                         "s_ax_shroud_over_h_shroud": s_ax_shroud_over_h_shroud}
+        if shrouded_rotor:
+            positive_inputs.update(shroud_inputs)
+        else:
+            nonnegative_inputs.update({name: value for name, value in shroud_inputs.items() if value is not None})
         # Optional shroud dimensions and tooth count must be also valid whenever they are supplied.
         if t_shroud is not None:
             positive_inputs["t_shroud"] = t_shroud
@@ -402,7 +410,7 @@ class Turbine1D:
             if value < 0:
                 raise ValueError(f"{name} must be nonnegative.")
 
-        # Isentropic reaction cannot be above one
+        # Restrict conventional turbine designs to isentropic reaction at or below one.
         if reaction_isentropic_tt > 1:
             raise ValueError(f"reaction_isentropic_tt must be smaller than or equal to one.")
 
@@ -448,7 +456,7 @@ class Turbine1D:
             raise ValueError("Shaft work and exit axial kinetic energy leave no positive exit static enthalpy.")
         # Tangential trailing-edge thickness must be smaller than its corresponding blade pitch.
         validation_D_Euler = 2 * np.sqrt((shaft_power / mdot) / work_coefficient_tt) / (RPM * 2 * np.pi / 60)
-        if (t_TE_stator >= validation_D_Euler * np.pi / no_blades_stator
+        if (t_TE_stator >= admission_fraction * validation_D_Euler * np.pi / no_blades_stator
                 or t_TE_rotor >= validation_D_Euler * np.pi / no_blades_rotor):
             raise ValueError("Each trailing-edge thickness must be smaller than its blade pitch.")
 
@@ -467,7 +475,7 @@ class Turbine1D:
         T_t2 = h_t2 / gas.Cp # K
 
         # Calculate available geometry already
-        self.p_stator = self.D_Euler * np.pi / no_blades_stator  # m
+        self.p_stator = admission_fraction * self.D_Euler * np.pi / no_blades_stator  # m
         self.p_rotor = self.D_Euler * np.pi / no_blades_rotor  # m
         self.c_stator = self.p_stator * chord_over_pitch_stator  # m
         self.c_rotor = self.p_rotor * chord_over_pitch_rotor  # m
@@ -487,6 +495,15 @@ class Turbine1D:
         self.partial_admission_rotor = partial_admission_rotor
         self.seal_teeth_number = seal_teeth_number  # -
         if self.shrouded_rotor: self.seal_teeth_spacing = self.c_rotor / (seal_teeth_number - 1)  # m
+        # If not shrouded, set all shroud related geometry to None in case turbine is resized.
+        if not self.shrouded_rotor:
+            self.seal_teeth_spacing = None
+            self.seal_teeth_number = None
+            self.t_shroud = None
+            self.h_shroud = None
+            self.s_ax_shroud = None
+            self.h_shroud_over_blade_length = None
+            self.s_ax_shroud_over_h_shroud = None
         # Change Ra roughness to sand grain equivalent roughness
         self.sand_grain_roughness = 5.863 * Ra_roughness # m
 
@@ -514,23 +531,32 @@ class Turbine1D:
         # First define the function to get entropy residual
         def get_entropy_residual(delta_s):
             return self.calculate_entropy_rise(delta_s[0], delta_s[1], delta_s[2], loss_model)[0]
-        # Get an estimate of entropy rise scales for normalization of the residual. This estimate are the entropy
+        # Get an estimate of entropy rise scales for solver scaling. These are the entropy
         # scales for assumed values equal to zero. This represents the result of loss model as if all input velocities
-        # and flow angles were ideal. This is only performed if any of the values in delta_s_estimate is zero.
-        entropy_scales = get_entropy_residual([0, 0, 0])
+        # and flow angles were ideal.
+        entropy_scales = np.array(get_entropy_residual([0, 0, 0]))
         # If any of the entropy scales are zero, do not use any scaling at all:
-        if any(entropy_scales) == 0: entropy_scales = [1, 1, 1]
+        if np.any(entropy_scales == 0): entropy_scales = np.ones(3)
         # Solve for entropy increase
         entropy_solution = root(get_entropy_residual, np.array(delta_s_estimate), method="hybr",
                                 options={"xtol":1e-6, "eps": 1e-12, "maxfev": 1000, "factor": 1,
-                                         "diag": 1/np.array(entropy_scales)})
+                                         "diag": 1/entropy_scales})
         # Raise an error if not converged
         if not entropy_solution.success:
             raise RuntimeError("Numerical solve for the stator and rotor entropy rises did not converge.")
+        # Entropy rises must be finite and nonnegative; zero is an admissible lossless limit.
+        if not np.all(np.isfinite(entropy_solution.x)) or np.any(entropy_solution.x < 0):
+            raise RuntimeError("Numerical solve for the stator and rotor entropy rises returned nonfinite or negative values.")
         # Get entropy increases and the rest of the results
         delta_s_stator, delta_s_rotor, delta_s_rotor_additional = entropy_solution.x  # J/(kg K)
-        _, analysis_results, blade_row_results, loss_model_results = \
+        entropy_residual, analysis_results, blade_row_results, loss_model_results = \
             self.calculate_entropy_rise(delta_s_stator, delta_s_rotor, delta_s_rotor_additional, loss_model)
+        # Require each unscaled final entropy residual to be finite and below 1e-4 J/(kg K) in absolute value.
+        entropy_residual = np.array(entropy_residual)  # J/(kg K)
+        if (not np.all(np.isfinite(entropy_residual))
+                or np.any(np.abs(entropy_residual) >= 1e-4)):
+            raise RuntimeError("Numerical solve for the stator and rotor entropy rises has an invalid or excessive "
+                               f"entropy residual: {entropy_residual} J/(kg K); each absolute value must be below 1e-3 J/(kg K).")
 
 
         # Update analysis_results_at_design_point and blade row results
@@ -581,7 +607,7 @@ class Turbine1D:
 
         # In rocket turbines, there are no clearance losses in stators, while partial admission losses belong to the
         # rotor. Therefore, entropy generation in the stator due to aerodynamic losses constitute total entropy
-        # generation through the rotor.
+        # generation through the stator.
         delta_s_stator_total = delta_s_stator  # J/(kg K)
         # In the rotor, aside from aerodynamic losses, there are additional losses like clearance, partial admission
         # or disk friction losses. Total entropy generation is thus the sum of all of these.
@@ -900,8 +926,8 @@ class Turbine1D:
         :param float total_delta_s_rotor: Total specific entropy rise across the rotor (J/kg/K).
         :param float delta_s_rotor_additional: Specific entropy rise due to clearance, partial admission and disk
             friction losses in the rotor (J/kg/K).
-        :return: Dictionary with turbine analysis results and residual of the total enthalpy at station 2 (J/kg),
-            respectively.
+        :return: Dictionary with turbine analysis results and residual of the total enthalpy at station 2
+         normalized by h_t0 (-), respectively.
         :rtype: tuple[dict, float]
         :raises ValueError: If h_2/h_t0 is not finite and positive.
         """
@@ -960,7 +986,7 @@ class Turbine1D:
         # Calculate total enthalpy at the outlet
         h_t2_calculated = h_2 + v_2**2 / 2 # J/kg
         # Finally, the total enthalpy residual can be calculated. It is normalized by h_t0.
-        residual = (h_t2_calculated - h_t2) / h_t0 # J/kg
+        residual = (h_t2_calculated - h_t2) / h_t0 # -
 
         # Calculate remaining values of interest.
         # First calculate ideal psi_tt
@@ -998,7 +1024,7 @@ class Turbine1D:
                                  "psi_ss_ideal_design": psi_ss_ideal,  # -
                                  "R_h_tt": R_h_tt,  # -
                                  "theta_1": theta_1,  # -
-                                 "delta_h_ideal": delta_h_ideal, # -
+                                 "delta_h_ideal": delta_h_ideal, # J/kg
                                  })
 
         # Return residual and analysis results
