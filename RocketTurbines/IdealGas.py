@@ -15,6 +15,9 @@ class IdealGas:
         :param list mass_fractions: List with mass fractions of the species in the mixture.
         :param list cea_species: Optional list with NASA CEA gas names in the same order as species. If omitted,
          species must also be valid CEA names, for example "H2O" instead of "Water".
+         The user must ensure that the CoolProp species and CEA species lists identify the same chemical species
+         in the same order, even when their names differ between the two databases. Chemical correspondence
+         between the lists is not validated automatically.
         Species with zero mass fraction are removed from all aligned lists before property checks.
         :raises ValueError: If temperatures are not finite and positive, T_max <= T_min, or composition lists
          are empty, inconsistent, or contain invalid fractions.
@@ -131,6 +134,10 @@ class IdealGas:
     def calculate_dynamic_viscosity(self, T, p=1e5):
         """A method to calculate dynamic viscosity of the gas mixture using Wilke's rule and NASA transport equations
         from CEA.
+
+        The minimum evaluation temperature is the greater of 300 K and the highest of the minimum fitted
+        temperatures for the active CEA species. For example, H2O sets a limit of 373.2 K. Requests below this
+        limit return viscosity evaluated at the limiting temperature. This limit applies to all calls.
 
         :param float T: Temperature (K) of the gas.
         :param float p: Pressure (Pa) of the gas. By default, 1e5, since dynamic viscosity is independent of pressure.

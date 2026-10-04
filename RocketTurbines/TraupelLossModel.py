@@ -9,7 +9,10 @@ class TraupelLossModel:
         """A class to calculate turbine losses with Traupel meanline loss model presented in
          "Thermische Turbomaschinen", which is very suitable for steam, supersonic turbines. All graphs are digitalized
           as ready to use interpolators in class properties. Class methods allow to calculate specific loss
-           coefficients, which are defined as dissipated enthalpy over isentropic enthalpy drop through the rotor.
+           coefficients. Aerodynamic blade-row loss coefficients are defined as dissipated enthalpy over the
+           corresponding ideal outlet kinetic energy in the absolute frame for the stator or relative frame for
+           the rotor. Additional stage-loss coefficients are defined as dissipated enthalpy over the static-to-static
+           isentropic enthalpy drop of the stage.
 
         :param str extrapolation_method: Method used outside the digitized data region, either "linear" or "closest".
             The latter returns the value at the closest point in the digitized region.
@@ -1099,7 +1102,7 @@ class TraupelLossModel:
             w_1_normalized = w_1_blade / u  # -
             s_r_over_l_rotor = s_r / l_rotor  # -
             D_tip_over_D_mean = D_tip / D_m  # -
-            v_ax = theta_2 * u  # m/s
+            v_ax = w_2_blade * np.cos(analysis_results["beta_2"])  # m/s
             delta_w_circumferential = abs(w_1_blade * np.sin(analysis_results["beta_1"]) - \
                                       w_2_blade * np.sin(analysis_results["beta_2"]))  # m/s
             zeta_clearance_rotor = \
