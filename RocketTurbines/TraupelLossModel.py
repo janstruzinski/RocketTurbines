@@ -840,7 +840,7 @@ class TraupelLossModel:
         mdot_leak_rotor = admission_fraction * A_seal * phi * np.sqrt(p_1 * rho_1)  # kg/s
         # If it is higher than the main flow, raise an error
         if mdot_leak_rotor >= mdot:
-            ValueError("Massflow through the seal is higher than through the rotor.")
+            raise ValueError("Massflow through the seal is higher than through the rotor.")
         # Calculate relative leak flow rate, mu coefficient
         mu = mdot_leak_rotor / (mdot - mdot_leak_rotor)  # -
         # Calculate speed parameters
