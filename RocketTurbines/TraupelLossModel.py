@@ -2,7 +2,6 @@ import warnings
 import numpy as np
 from scipy.interpolate import PchipInterpolator, RegularGridInterpolator
 
-
 class TraupelLossModel:
     def __init__(self, extrapolation_method="linear", warn_on_extrapolation=True, incidence_loss="medium",
                  stator="regular", rotor="regular"):

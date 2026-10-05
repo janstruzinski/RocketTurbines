@@ -1,7 +1,7 @@
 import numpy as np
 from scipy.optimize import root_scalar, least_squares
-from .TraupelLossModel import TraupelLossModel
-from .IdealGas import IdealGas
+from TraupelLossModel import TraupelLossModel
+from IdealGas import IdealGas
 
 class Turbine1D:
     def __init__(self):
@@ -1281,12 +1281,3 @@ class Turbine1D:
                              "Re_r2_blade": Re_r2_blade,  # -
                              }
         return blade_row_results, residual
-
-
-    # def assign_geometry(self):
-    #     #TODO Create a function to manually assign all geometry
-    #     ...
-    #
-    # def analyse_turbine(self):
-    #     # TODO Create a function to analyze the turbine off-desing
-    #     ...

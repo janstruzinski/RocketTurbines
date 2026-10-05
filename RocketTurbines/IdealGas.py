@@ -3,7 +3,6 @@ from functools import lru_cache
 import numpy as np
 from thermoprop import CEA
 
-
 class IdealGas:
     def __init__(self, T_max, T_min, species, mass_fractions, cea_species=None, P_max=1e5, P_min=1e5):
         """A class representing ideal, calorically perfect gas mixture. Specific heat is an average value from
