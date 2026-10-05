@@ -340,7 +340,7 @@ class Turbine1D:
          In other words, length of the projection of the thickness on the circumferential axis.
         :param float or integer t_TE_rotor: Circumferential thickness (m) of the trailing edge for the rotor.
          In other words, length of the projection of the thickness on the circumferential axis.
-        :param float or integer Ra_roughness: Roughness of the turbine flow surfaces in Ra.
+        :param float or integer Ra_roughness: Roughness of the turbine flow surfaces in Ra (m).
         :param float or integer s_ax_over_pitch_rotor: Axial distance between stator and rotor over rotor pitch (-).
          By default, 0.35, which is in the range of 0.3-0.35 given by Traupel.
         :param boolean shrouded_rotor: Boolean whether the rotor is shrouded. By default, False.
@@ -357,7 +357,7 @@ class Turbine1D:
           losses. The default [0, 0, 0] uses the loss-model result evaluated at zero entropy rises instead.
         :raises TypeError: If gas is not an IdealGas instance or loss_model is not a TraupelLossModel instance.
         :raises ValueError: If the specified shaft work and outlet axial kinetic energy leave no positive outlet
-            static enthalpy, or the loss model returns nonfinite or negative entropy estimates at zero entropy rises.
+            static enthalpy, or the loss model returns nonfinite or negative entropy estimates at delta_s_estimate.
         :raises RuntimeError: If the entropy-rise solve does not converge, returns nonfinite or negative entropy
             rises, or has a nonfinite or excessive entropy residual (absolute value must be below 1e-4 J/(kg K)),
              or the h_2/h_t0 or blade-row flow-coefficient solve fails its convergence,
@@ -459,6 +459,10 @@ class Turbine1D:
                 or t_TE_rotor >= validation_D_Euler * np.pi / no_blades_rotor):
             raise ValueError("Each trailing-edge thickness must be smaller than its blade pitch.")
 
+        # Set object properties to None's in case the turbine is being resized.
+        for name, value in vars(self).items():
+            setattr(self, name, dict.fromkeys(value) if isinstance(value, dict) else None)
+
         # Calculate the blade speed from given requirements
         delta_h_t = shaft_power / mdot  # J/kg
         u = np.sqrt(delta_h_t / work_coefficient_tt)  # m/s
@@ -531,14 +535,14 @@ class Turbine1D:
         def get_entropy_residual(delta_s):
             return self.calculate_entropy_rise(delta_s[0], delta_s[1], delta_s[2], loss_model)[0]
         # Estimate losses with input entropy rise (delta_s_estimate), then use calculated entropy rise as the default
-        # initial solution guess and residual scales for numerical solver. The reason entropy change is estimated this
+        # initial solution guess and variable scales for numerical solver. The reason entropy change is estimated this
         # way, is because delta_s_estimate can be a list of zeros, which is a poor initial solution for a real turbine
-        # flow, and it is also non-feasible scales for normalizing the residual.
+        # flow, and it is also non-feasible scales for normalizing the variables.
         calculated_delta_s_estimate = np.array(get_entropy_residual(delta_s_estimate)) + np.array(delta_s_estimate)
         # Raise an error if these entropy estimates are negative or not finite
         if not np.all(np.isfinite(calculated_delta_s_estimate)) or np.any(calculated_delta_s_estimate < 0):
-            raise ValueError("Loss-model entropy estimates at zero entropy rises must be finite and nonnegative.")
-        # First, use calculated entropy estimates as scales to normalise residual and speed up convergence.
+            raise ValueError("Loss-model entropy estimates at delta_s_estimate must be finite and nonnegative.")
+        # First, use calculated entropy estimates as scales to normalise variables and speed up convergence.
         # To avoid division by zero, ensure minimum scale is 1. That floor value is rarely crossed for designs with
         # losses, so it is deemed a good choice.
         entropy_scales = np.maximum(calculated_delta_s_estimate, 1.)  # J/(kg K)
@@ -551,13 +555,14 @@ class Turbine1D:
                                         bounds=(np.zeros(3), 5 * np.maximum(entropy_scales, initial_entropy)),
                                         method="dogbox", jac="2-point", x_scale=entropy_scales,
                                         loss="linear", tr_solver="exact", diff_step=1e-4,
-                                        xtol=1e-6, ftol=None, gtol=1e-4, max_nfev=300, verbose=2)
+                                        xtol=1e-6, ftol=None, gtol=1e-6, max_nfev=300, verbose=2)
         # Raise an error if not converged
         if not entropy_solution.success:
             raise RuntimeError("Numerical solve for the stator and rotor entropy rises did not converge.")
         # Entropy rises must be finite and nonnegative; zero is an admissible lossless limit.
         if not np.all(np.isfinite(entropy_solution.x)) or np.any(entropy_solution.x < 0):
-            raise RuntimeError("Numerical solve for the stator and rotor entropy rises returned nonfinite or negative values.")
+            raise RuntimeError("Numerical solve for the stator and rotor entropy rises returned nonfinite or negative"
+                               " values.")
         # Get entropy increases and the rest of the results
         delta_s_stator, delta_s_rotor, delta_s_rotor_additional = entropy_solution.x  # J/(kg K)
         entropy_residual, analysis_results, blade_row_results, loss_model_results = \

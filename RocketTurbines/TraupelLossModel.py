@@ -729,7 +729,8 @@ class TraupelLossModel:
 
         :param str blade_row: Blade row being evaluated, either "stator" or "rotor".
         :param float inlet_angle: Blade-row inlet angle measured from the positive vertical direction (rad).
-        :param float outlet_angle: Blade-row outlet angle measured from the negative vertical direction (rad).
+        :param float outlet_angle: Blade-row outlet angle measured from the positive vertical direction for the stator
+            and the negative vertical direction for the rotor (rad).
         :param float t_TE_over_pitch: Projection of the trailing-edge thickness on tangential axis over blade pitch (-).
         :param float roughness_over_chord: Equivalent sand roughness over blade chord (-).
         :param float roughness_over_hydraulic_diameter: Equivalent sand roughness over hydraulic diameter (-).
