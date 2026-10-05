@@ -5,7 +5,7 @@ from thermoprop import CEA
 
 
 class IdealGas:
-    def __init__(self, T_max, T_min, species, mass_fractions, cea_species=None):
+    def __init__(self, T_max, T_min, species, mass_fractions, cea_species=None, P_max=1e5, P_min=1e5):
         """A class representing ideal, calorically perfect gas mixture. Specific heat is an average value from
         CoolProp for given temperature range.
 
@@ -18,7 +18,10 @@ class IdealGas:
          The user must ensure that the CoolProp species and CEA species lists identify the same chemical species
          in the same order, even when their names differ between the two databases. Chemical correspondence
          between the lists is not validated automatically.
-        Species with zero mass fraction are removed from all aligned lists before property checks.
+        :param int or float P_max: Maximum pressure (Pa), usually turbine inlet pressure. Used to check if species are
+         gaseous at provided T_max. By default, 1e5.
+        :param int or float P_min: Minimum pressure (Pa), usually turbine outlet pressure. Used to check if species are
+         gaseous at provided T_min. By default, 1e5.
         :raises ValueError: If temperatures are not finite and positive, T_max <= T_min, or composition lists
          are empty, inconsistent, or contain invalid fractions.
         """
@@ -74,9 +77,9 @@ class IdealGas:
         # Check if species are gasous, so that the specific heat is calculated correctly later on.
         gas_phases = ("gas", "supercritical_gas")
         for f in species:
-            if cp.PhaseSI("P", 1e5, "T", T_max, f) not in gas_phases or\
-                    cp.PhaseSI("P", 1e5, "T", T_min, f) not in gas_phases:
-                raise ValueError(f"{f} must be gas at T_max and T_min.")
+            if cp.PhaseSI("P", P_max, "T", T_max, f) not in gas_phases or\
+                    cp.PhaseSI("P", P_min, "T", T_min, f) not in gas_phases:
+                raise ValueError(f"{f} must be gas at T_max and T_min at P_max and P_min respectively.")
 
         # First get mole fractions of the mixture
         molar_masses = [cp.PropsSI("M", f) for f in species]
