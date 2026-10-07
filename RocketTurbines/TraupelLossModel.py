@@ -3,7 +3,7 @@ import numpy as np
 from scipy.interpolate import PchipInterpolator, RegularGridInterpolator
 
 class TraupelLossModel:
-    def __init__(self, extrapolation_method="linear", warn_on_extrapolation=True, incidence_loss="medium",
+    def __init__(self, extrapolation_method, warn_on_extrapolation=True, incidence_loss="medium",
                  stator="regular", rotor="regular"):
         """A class to calculate turbine losses with Traupel meanline loss model presented in
          "Thermische Turbomaschinen", which is very suitable for steam, supersonic turbines. All graphs are digitalized
@@ -14,7 +14,8 @@ class TraupelLossModel:
            isentropic enthalpy drop of the stage.
 
         :param str extrapolation_method: Method used outside the digitized data region, either "linear" or "closest".
-            The latter returns the value at the closest point in the digitized region.
+            The latter returns the value at the closest point in the digitized region. "closest" was found to be more
+            accurate for conventional designs.
         :param bool warn_on_extrapolation: Whether to warn on each out-of-bounds interpolation call.
         :param str incidence_loss: Incidence-loss level: "high" uses curve a, "low" uses curve b and "medium"
             averages the two curves. By default, "medium".
@@ -727,9 +728,9 @@ class TraupelLossModel:
         """A method to calculate the total aerodynamic loss coefficient of a stator or rotor blade row.
 
         :param str blade_row: Blade row being evaluated, either "stator" or "rotor".
-        :param float inlet_angle: Blade-row inlet angle measured from the positive vertical direction (rad).
-        :param float outlet_angle: Blade-row outlet angle measured from the positive vertical direction for the stator
-            and the negative vertical direction for the rotor (rad).
+        :param float inlet_angle: Blade-row inlet flow angle measured from the positive vertical direction (rad).
+        :param float outlet_angle: Blade-row outlet flow angle measured from the positive vertical direction for the
+         stator and the negative vertical direction for the rotor (rad).
         :param float t_TE_over_pitch: Projection of the trailing-edge thickness on tangential axis over blade pitch (-).
         :param float roughness_over_chord: Equivalent sand roughness over blade chord (-).
         :param float roughness_over_hydraulic_diameter: Equivalent sand roughness over hydraulic diameter (-).
@@ -867,7 +868,8 @@ class TraupelLossModel:
         :param float tip_over_mean_diameter: Rotor tip diameter over mean turbine diameter (-).
         :param float isentropic_reaction: Isentropic reaction of the turbine stage according to
          Traupel's definition (-).
-        :param float outlet_angle: Rotor outlet angle measured from the vertical direction (rad).
+        :param float outlet_angle: Blade row outlet flow angle for rotor measured from the negative vertical
+         direction (rad).
         :param float circumferential_velocity_change: Change in circumferential velocity across the rotor (m/s).
         :param float axial_velocity: Axial velocity used to normalize the circumferential velocity change (m/s).
         :return: Unshrouded rotor clearance loss coefficient (-).
@@ -896,7 +898,8 @@ class TraupelLossModel:
         :param float flow_coefficient: Turbine flow coefficient (-).
         :param float blade_length_over_mean_diameter: Rotor blade length over mean turbine diameter (-).
         :param float blade_width_over_mean_diameter: Rotor blade width over mean turbine diameter (-).
-        :param float outlet_angle: Rotor outlet angle measured from the vertical direction (rad).
+        :param float outlet_angle: Blade row outlet flow angle for rotor, measured from the negative vertical direction
+         (rad).
         :param str partial_admission_rotor: Rotor configuration, either "free" or "enclosed".
         :return: Partial-admission loss coefficient (-).
         :rtype: float
@@ -971,9 +974,9 @@ class TraupelLossModel:
 
         Exact definitions of the variables in the input dictionaries are in Turbine1D.__init__.
 
-        :param dict analysis_results: Turbine flow, thermodynamic, and operating-point results.
+        :param dict analysis_results: Turbine flow analysis results that account for all losses.
         :param dict turbine_geometry: Stator, rotor, and seal geometry and roughness.
-        :param dict blade_row_results: Blade-row inlet and outlet flow results.
+        :param dict blade_row_results: Blade-row flow analysis results that account only for profile losses.
         :return: Stator entropy increase, rotor blade-row entropy increase, additional rotor entropy increase
                  (J/(kg K)), and a dictionary of the calculated losses and leakage mass flow rate.
         :rtype: tuple[float, float, float, dict]
@@ -984,7 +987,9 @@ class TraupelLossModel:
         # from the positive circumferential direction, but rotor outlet from the negative direction.
         alpha_1 = np.pi / 2 - analysis_results["alpha_1"]  # rad
         beta_1 = np.pi / 2 - analysis_results["beta_1"]  # rad
-        beta_2 = np.pi / 2 + analysis_results["beta_2"]  # rad
+        # Rotor outlet angle before additional losses occur. This represents local flow angle at Euler diameter for the
+        # flow immediately after leaving rotor blade profile.
+        beta_2 = np.pi / 2 + blade_row_results["beta_2_blade"]  # rad
 
         # Also calculate reaction according to Traupel's definition
         delta_h_stator_ideal = analysis_results["delta_h_stator_ideal"]
@@ -1102,9 +1107,10 @@ class TraupelLossModel:
             w_1_normalized = w_1_blade / u  # -
             s_r_over_l_rotor = s_r / l_rotor  # -
             D_tip_over_D_mean = D_tip / D_m  # -
-            v_ax = w_2_blade * np.cos(analysis_results["beta_2"])  # m/s
+            # Use blade row flow results to calculate remaining inputs
+            v_ax = w_2_blade * np.cos(blade_row_results["beta_2_blade"])  # m/s
             delta_w_circumferential = abs(w_1_blade * np.sin(analysis_results["beta_1"]) - \
-                                      w_2_blade * np.sin(analysis_results["beta_2"]))  # m/s
+                                      w_2_blade * np.sin(blade_row_results["beta_2_blade"]))  # m/s
             zeta_clearance_rotor = \
                 self.calculate_unshrouded_rotor_clearance_loss(w_1_normalized, psi_ss_ideal, s_r_over_l_rotor,
                                                                c_over_l_rotor, D_tip_over_D_mean, R_h_Traupel, beta_2,
