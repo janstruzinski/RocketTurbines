@@ -10,8 +10,10 @@ class TraupelLossModel:
           as ready to use interpolators in class properties. Class methods allow to calculate specific loss
            coefficients. Aerodynamic blade-row loss coefficients are defined as dissipated enthalpy over the
            corresponding ideal outlet kinetic energy in the absolute frame for the stator or relative frame for
-           the rotor. Additional stage-loss coefficients are defined as dissipated enthalpy over the static-to-static
-           isentropic enthalpy drop of the stage.
+           the rotor. Additional stage-loss coefficients are defined as specific work lost due to clearance,
+           disk friction and partial admission over the static-to-static isentropic enthalpy drop of the stage.
+           At convergence, the combined additional work loss h_t2 - h_t2_blade. Its corresponding static
+           enthalpy increment is h_2 - h_2_blade.
 
         :param str extrapolation_method: Method used outside the digitized data region, either "linear" or "closest".
             The latter returns the value at the closest point in the digitized region. "closest" was found to be more

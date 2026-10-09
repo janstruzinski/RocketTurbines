@@ -366,11 +366,11 @@ class Turbine1D:
           losses. The default [0, 0, 0] uses the loss-model result evaluated at zero entropy rises instead.
         :raises TypeError: If gas is not an IdealGas instance or loss_model is not a TraupelLossModel instance.
         :raises ValueError: If the specified shaft work and outlet axial kinetic energy leave no positive outlet
-            static enthalpy, or the loss model returns nonfinite or negative entropy estimates at delta_s_estimate.
+            static enthalpy, the loss model returns nonfinite or negative entropy estimates at delta_s_estimate,
+             or the prescribed blade-row state is infeasible.
         :raises RuntimeError: If the entropy-rise solve does not converge, returns nonfinite or negative entropy
             rises, or has a nonfinite or excessive entropy residual (absolute value must be below 1e-4 J/(kg K)),
-             or the h_2/h_t0 or blade-row flow-coefficient solve fails its convergence,
-              solution-value or dimensional-residual checks.
+             or the h_2/h_t0 solve fails its convergence, solution value or residual checks.
         """
 
         # Verify that user inputs are correct.
@@ -956,8 +956,8 @@ class Turbine1D:
         zeta_stator_Denton = T_2 * total_delta_s_stator / (h_0 - h_1)  # -
         zeta_rotor_Denton = 2 * T_2 * total_delta_s_rotor / w_2_squared  # -
         # Calculate total-to-total and total-to-static efficiencies
-        eta_tt = delta_h_t / (delta_h_t + T_2 * delta_s)  # -
-        eta_ts = delta_h_t / (h_0 - h_2 + T_2 * delta_s)  # -
+        eta_tt = delta_h_t / delta_h_t_ideal  # -
+        eta_ts = delta_h_t / delta_h_ideal  # -
 
         # Package thermodynamic properties, v_2 and loading coefficients into analysis_results dictionary.
         # Make it a copy of analysis_results_at_design_point, such that the values there stay constant during
