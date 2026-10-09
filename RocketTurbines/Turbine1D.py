@@ -163,6 +163,14 @@ class Turbine1D:
                                                  "p_0": None,   # Total/static pressure at station 0, Pa
                                                  "loss_model": None,  # TraupelLossModel object used for calculations, -
                                                  "h_0": None,   # Total/static enthalpy at station 0, J/kg
+                                                 "eta_tt": None, # Total-to-total efficiency, -
+                                                 "eta_ts": None, # Total-to-static efficiency, -
+                                                 "zeta_stator_Denton": None, # Stator entropy loss coefficient based
+                                                 # on T_2 and absolute stator outlet kinetic energy, according to Denton
+                                                 # definition, -
+                                                 "zeta_rotor_Denton": None, # Rotor entropy loss coefficient including
+                                                 # additional losses, based on T_2 and relative outlet kinetic energy,
+                                                 # according to Denton definition -
                                                  "psi_tt": None, # Total-to-total real work coefficient, -
                                                  "psi_tt_ideal": None, # Total-to-total ideal work coefficient, -
                                                  "psi_ss_ideal": None,  # Static-to-static ideal work coefficient, -
@@ -942,6 +950,15 @@ class Turbine1D:
         delta_h_ideal = h_0 - h_2_ideal # J/kg
         psi_ss_ideal = delta_h_ideal / u ** 2 # -
 
+        # Calculate Denton loss coefficients
+        w_2_squared = u**2 * (theta_2**2 + (-R_h_tt - psi_tt / 2
+                                          + (theta_2**2 - theta_1**2) / (2 * psi_tt))**2)
+        zeta_stator_Denton = T_2 * total_delta_s_stator / (h_0 - h_1)  # -
+        zeta_rotor_Denton = 2 * T_2 * total_delta_s_rotor / w_2_squared  # -
+        # Calculate total-to-total and total-to-static efficiencies
+        eta_tt = delta_h_t / (delta_h_t + T_2 * delta_s)  # -
+        eta_ts = delta_h_t / (h_0 - h_2 + T_2 * delta_s)  # -
+
         # Package thermodynamic properties, v_2 and loading coefficients into analysis_results dictionary.
         # Make it a copy of analysis_results_at_design_point, such that the values there stay constant during
         # iterations.
@@ -969,6 +986,10 @@ class Turbine1D:
                                  "R_h_tt": R_h_tt,  # -
                                  "theta_1": theta_1,  # -
                                  "delta_h_ideal": delta_h_ideal, # J/kg
+                                 "zeta_stator_Denton": zeta_stator_Denton,  # -
+                                 "zeta_rotor_Denton": zeta_rotor_Denton,  # -
+                                 "eta_tt": eta_tt,  # -
+                                 "eta_ts": eta_ts,  # -
                                  })
 
         # Return residual and analysis results
