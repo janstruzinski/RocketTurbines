@@ -894,8 +894,9 @@ class TraupelLossModel:
         """A method to calculate the rotor partial-admission loss coefficient.
 
         :param float admission_fraction: Partial admission fraction of the rotor circumference (-).
-        :param float isentropic_work_coefficient_ss: Static-to-static isentropic loading coefficient of the stage (-).
-        :param float flow_coefficient: Turbine flow coefficient (-).
+        :param float isentropic_work_coefficient_ss: Static-to-static isentropic loading coefficient of the stage (-)
+        calculated using the mean diameter.
+        :param float flow_coefficient: Turbine flow coefficient (-)  calculated using the mean diameter..
         :param float blade_length_over_mean_diameter: Rotor blade length over mean turbine diameter (-).
         :param float blade_width_over_mean_diameter: Rotor blade width over mean turbine diameter (-).
         :param float outlet_angle: Blade row outlet flow angle for rotor, measured from the negative vertical direction
@@ -935,8 +936,9 @@ class TraupelLossModel:
         :param float admission_fraction: Admitted fraction of the rotor circumference (-).
         :param float hub_over_mean_diameter: Rotor hub diameter over mean turbine diameter (-).
         :param float hub_diameter_over_blade_length: Rotor hub diameter over blade length (-).
-        :param float isentropic_work_coefficient_ss: Static-to-static isentropic loading coefficient of the stage (-).
-        :param float flow_coefficient: Turbine flow coefficient (-).
+        :param float isentropic_work_coefficient_ss: Static-to-static isentropic loading coefficient of the stage (-)
+         calculated using the mean diameter.
+        :param float flow_coefficient: Turbine flow coefficient (-) calculated using the mean diameter.
         :param float or integer Reynolds_number: Reynolds number used for the disk-friction coefficient (-).
         :return: Rotor disk-friction loss coefficient (-).
         :rtype: float
@@ -1094,10 +1096,14 @@ class TraupelLossModel:
         D_hub_over_D_mean = D_hub / D_m  # -
         D_hub_over_l_blade = D_hub / l_rotor  # -
         theta_2 = analysis_results["theta_2"]  # -
+        # Disk friction and partial admission require coefficients normalized at the mean diameter.
+        u_mean = analysis_results["omega"] * D_m / 2  # m/s
+        psi_ss_ideal_mean = psi_ss_ideal * (analysis_results["u"] / u_mean)**2  # -
+        theta_2_mean = theta_2 * analysis_results["u"] / u_mean  # -
         rho_1 = analysis_results["rho_1"]  # kg/m^3
         Re_disk = analysis_results["omega"] * D_hub**2 * rho_1 / (2 * gas.calculate_dynamic_viscosity(T_1))  # -
         zeta_disk_friction = self.calculate_disk_friction_loss(admission_fraction, D_hub_over_D_mean, D_hub_over_l_blade,
-                                                           psi_ss_ideal, theta_2, Re_disk)  # -
+                                                           psi_ss_ideal_mean, theta_2_mean, Re_disk)  # -
         # Clearance loss
         # First consider the case if the rotor is unshrouded:
         s_r = turbine_geometry["s_r"]  # m
@@ -1132,8 +1138,9 @@ class TraupelLossModel:
         # Partial admission loss
         partial_admission_rotor = turbine_geometry["partial_admission_rotor"]
         c_rotor_over_D_m = c_rotor / D_m  # -
-        zeta_admission = self.calculate_admission_loss(admission_fraction, psi_ss_ideal, theta_2, l_rotor_over_D_m,
-                                               c_rotor_over_D_m, beta_2, partial_admission_rotor)  # -
+        zeta_admission = self.calculate_admission_loss(admission_fraction, psi_ss_ideal_mean, theta_2_mean,
+                                                       l_rotor_over_D_m, c_rotor_over_D_m, beta_2,
+                                                       partial_admission_rotor)  # -
         # Sum these losses and get the sum dissipated enthalpy
         zeta_rotor_additional = zeta_disk_friction + zeta_admission + zeta_clearance_rotor  # -
         delta_h_ideal = analysis_results["delta_h_ideal"]  # J/kg
