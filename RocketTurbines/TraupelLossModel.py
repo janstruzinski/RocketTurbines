@@ -1134,21 +1134,36 @@ class TraupelLossModel:
         c_rotor_over_D_m = c_rotor / D_m  # -
         zeta_admission = self.calculate_admission_loss(admission_fraction, psi_ss_ideal, theta_2, l_rotor_over_D_m,
                                                c_rotor_over_D_m, beta_2, partial_admission_rotor)  # -
-        # Sum these losses and get total dissipated enthalpy
+        # Sum these losses and get the sum dissipated enthalpy
         zeta_rotor_additional = zeta_disk_friction + zeta_admission + zeta_clearance_rotor  # -
         delta_h_ideal = analysis_results["delta_h_ideal"]  # J/kg
         delta_h_loss_rotor_additional = zeta_rotor_additional * delta_h_ideal  # J/kg
 
-        # Calculate total entropy generation for the rotor
-        delta_h_loss_rotor_total = delta_h_loss_rotor + delta_h_loss_rotor_additional
+        # Calculate the sum of dissipated enthalpy in the rotor blade row and total work lost due to additional losses
+        delta_h_loss_rotor_sum = delta_h_loss_rotor + delta_h_loss_rotor_additional
+        # The entropy formulas below compare static enthalpies at the same outlet pressure.
+        # delta_h_loss_rotor is a static enthalpy loss, but delta_h_loss_rotor_additional
+        # is a work loss (an outlet total enthalpy increment), so their sum cannot be used directly.
+        # The reconstructed blade-row outlet includes only aerodynamic losses. The stage
+        # outlet also includes additional losses. Their pressures match, but their absolute
+        # velocities can differ. Since h_t = h + v**2 / 2, the static enthalpy increment due to additional losses is
+        # h_2 - h_2_blade = delta_h_loss_rotor_additional + outlet_kinetic_energy_blade - outlet_kinetic_energy_stage.
+        # Adding this increment to the aerodynamic static loss gives the difference between stage outlet's
+        # static enthalpy and the rotor's isentropic outlet static enthalpy. This difference can be used to calculate
+        # total entropy increase through the rotor.
+        outlet_kinetic_energy_blade = blade_row_results["v_2_blade"]**2 / 2  # J/kg
+        outlet_kinetic_energy_stage = analysis_results["v_2"]**2 / 2  # J/kg
+        delta_h_loss_rotor_sum_static = \
+            delta_h_loss_rotor_sum + outlet_kinetic_energy_blade - outlet_kinetic_energy_stage # J/kg
+        # Calculate total entropy increase through the rotor
         T_2 = analysis_results["T_2"]  # K
-        delta_s_rotor_total = -gas.Cp * np.log(1 - delta_h_loss_rotor_total / (gas.Cp * T_2))  # J/(kg K)
-        # Calculate it for the blade row alone such that it is consistent with the blade row flow state at convergence
+        delta_s_rotor_sum = -gas.Cp * np.log(1 - delta_h_loss_rotor_sum_static / (gas.Cp * T_2))  # J/(kg K)
+        # Calculate entropy increase for the blade row alone such that it is consistent with the blade row flow state
+        # at convergence
         T_2_blade = blade_row_results["T_2_blade"]
         delta_s_rotor = -gas.Cp * np.log(1 - delta_h_loss_rotor / (gas.Cp * T_2_blade))
-        # Now calculate entropy generation in the rotor for the additional losses such that the total entrapy rise
-        # agrees
-        delta_s_rotor_additional = delta_s_rotor_total - delta_s_rotor  # J/(kg K)
+        # Calculate entropy increase due to additional losses.
+        delta_s_rotor_additional = delta_s_rotor_sum - delta_s_rotor  # J/(kg K)
 
         # Pack Traupel loss analysis results into a dictionary.
         Traupel_loss_analysis_results = {
@@ -1163,10 +1178,12 @@ class TraupelLossModel:
             # coefficients, -
             "delta_h_loss_stator": delta_h_loss_stator,  # Specific enthalpy dissipated in the stator, J/kg
             "delta_h_loss_rotor": delta_h_loss_rotor,  # Specific enthalpy dissipated in the rotor blade row, J/kg
-            "delta_h_loss_rotor_additional": delta_h_loss_rotor_additional,  # Specific enthalpy dissipated by
+            "delta_h_loss_rotor_additional": delta_h_loss_rotor_additional,  # Specific work lost due to
             # additional rotor losses, J/kg
-            "delta_h_loss_rotor_total": delta_h_loss_rotor_total,  # Total specific enthalpy dissipated in the
-            # rotor, J/kg
+            "delta_h_loss_rotor_sum": delta_h_loss_rotor_sum,  # The sum of dissipated enthalpy in the rotor blade row
+            # and total work lost due to additional losses , J/kg
+            "delta_h_loss_rotor_sum_static": delta_h_loss_rotor_sum_static,  # The sum of dissipated enthalpy in the
+            # rotor blade row and static enthalpy increment through the rotor due to additional losses, J/kg
             "delta_s_stator": delta_s_stator,  # Specific entropy rise across the stator, J/(kg K)
             "delta_s_rotor": delta_s_rotor,  # Specific entropy rise across the rotor blade row alone, J/(kg K)
             "delta_s_rotor_additional": delta_s_rotor_additional,  # Specific entropy rise from additional rotor

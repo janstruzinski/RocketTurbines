@@ -291,8 +291,11 @@ class Turbine1D:
             "zeta_rotor_additional": None,  # Sum of rotor disk-friction, clearance and admission coefficients, -
             "delta_h_loss_stator": None,  # Specific enthalpy dissipated in the stator, J/kg
             "delta_h_loss_rotor": None,  # Specific enthalpy dissipated in the rotor blade row, J/kg
-            "delta_h_loss_rotor_additional": None,  # Specific enthalpy dissipated by additional rotor losses, J/kg
-            "delta_h_loss_rotor_total": None,  # Total specific enthalpy dissipated in the rotor, J/kg
+            "delta_h_loss_rotor_additional": None,  # Specific work lost due to additional rotor losses, J/kg
+            "delta_h_loss_rotor_sum": None,  # Sum of enthalpy dissipated in the rotor blade-row and total
+            # work lost due to additional losses, J/kg
+            "delta_h_loss_rotor_sum_static": None, # Sum of dissipated enthalpy in the rotor blade row and static
+            # enthalpy increment through the rotor due to additional losses, J/kg
             "delta_s_stator": None,  # Specific entropy rise across the stator, J/(kg K)
             "delta_s_rotor": None,  # Specific entropy rise across the rotor blade row, J/(kg K)
             "delta_s_rotor_additional": None,  # Specific entropy rise from additional rotor losses, J/(kg K)
@@ -1156,9 +1159,9 @@ class Turbine1D:
             raise ValueError("Blade-row outlet flow coefficient must be finite and positive.")
         w_2_blade_axial = u * theta_2_blade  # m/s
         w_2_tangential_blade_squared = w_2_blade_squared - w_2_blade_axial**2  # m^2/s^2
-        # Check if tangential velocity is nonnegative, but take floating-point roundoff into account in case the flow
-        # is purely axial.
-        roundoff_tolerance = 64 * np.finfo(float).eps * max(w_2_blade_squared, w_2_blade_axial**2)
+        # Check if tangential velocity is non-negative, but take floating point round-off into account in case the flow
+        # is purely axial. A factor of 10 is used here for robustness.
+        roundoff_tolerance = 10 * np.finfo(float).eps * max(w_2_blade_squared, w_2_blade_axial**2)
         if (not np.isfinite(w_2_tangential_blade_squared)
                 or w_2_tangential_blade_squared < -roundoff_tolerance):
             raise ValueError("Blade-row continuity requires an axial velocity greater than the relative outlet speed.")
