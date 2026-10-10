@@ -5,34 +5,38 @@
 Hi,
 
 Welcome to RocketTurbines, a Python library for sizing and meanline analysis of axial turbines. It was created with
-supersonic rocket turbines in mind, including impulse stages and partial admission, but can also be used for subsonic
-stages. It calculates turbine dimensions, nonisentropic flow states, velocities, flow angles and losses from the
-specified design-point requirements. I hope you will find it useful.
+supersonic rocket turbines in mind, but can also be used for subsonic stages. It calculates turbine dimensions,
+nonisentropic flow states, velocities, flow angles and losses based on given requirements. I hope you will find it
+useful.
 
 With kind regards, Jan
 
 ## General Overview
 
-RocketTurbines sizes a single stator-and-rotor stage from prescribed shaft power, mass flow, speed, loading, flow
-coefficient and isentropic reaction. The stage state and its empirical losses are coupled: a numerical solver finds
-entropy rises that agree with the losses calculated for the resulting flow and geometry.
+RocketTurbines sizes a single turbine stage from prescribed shaft power, mass flow, RPM, work and flow
+coefficients and isentropic reaction. The stage flow calculations and its empirical losses are coupled: a numerical
+solver finds entropy rises that agree with the losses calculated for the resulting flow and geometry.
 
 The repository is organised as follows:
 
-- `RocketTurbines/Turbine1D.py` defines the `Turbine1D` stage, sizing procedure, thermodynamic calculations and geometry.
-- `RocketTurbines/TraupelLossModel.py` defines `TraupelLossModel`, its digitised empirical coefficients and loss methods.
-- `RocketTurbines/IdealGas.py` defines the `IdealGas` mixture properties used by the turbine and loss model.
+- `RocketTurbines/Turbine1D.py` defines `Turbine1D` class, which includes turbine sizing procedure and thermodynamic
+  calculations.
+- `RocketTurbines/TraupelLossModel.py` defines `TraupelLossModel` class, which is a digitized loss model from
+  "Thermische Turbomaschinen" (2001) by Traupel. It includes sampled empirical coefficients from graphs and methods to
+  calculate loss coefficients and entropy generation through the state.
+- `RocketTurbines/IdealGas.py` defines the `IdealGas` class, which defines mixture properties used by the turbine and
+  loss model classes.
 - `RocketTurbines/example.py` demonstrates sizing a partial-admission impulse turbine with a water-vapour/oxygen mixture.
 - `docs/figures/` contains the empirical-coefficient plots shown below. `docs/plot_traupel_coefficients.py` regenerates
   them directly from `TraupelLossModel` with Matplotlib.
 - `setup.py` installs the three class modules, and `LICENSE` contains the GNU General Public License version 3.
 
-The current public stage workflow is design-point sizing. Results are stored in the turbine object; an independent
-off-design stage-analysis or performance-map method is not implemented.
+The current workflow only includes design-point sizing. Results are stored in Turbine1D object; an independent
+off-design analysis or performance-map creation are not yet implemented.
 
 All dimensional inputs and outputs use SI units. Pressures are in Pa, temperatures in K, mass flow in kg/s, shaft
 power in W, lengths in m, specific enthalpy in J/kg and specific entropy in J/(kg K). Rotational speed is in RPM.
-Flow angles are in radians unless an argument or result explicitly uses degrees.
+Flow angles are in radians unless degrees are explicitly stated.
 
 ## Installation
 
@@ -42,31 +46,11 @@ Python 3.11 or newer is required. Install the library directly from GitHub:
 pip3 install git+https://github.com/janstruzinski/RocketTurbines
 ```
 
-The installation includes NumPy, SciPy, CoolProp and ThermoProp. The module imports follow the same style as DynamicPumps:
-
-```python
-from Turbine1D import Turbine1D
-from TraupelLossModel import TraupelLossModel
-from IdealGas import IdealGas
-```
-
-To run the supplied example from a checkout:
-
-```text
-python RocketTurbines/example.py
-```
-
-To regenerate the README figures, also install Matplotlib and run:
-
-```text
-pip3 install matplotlib
-python docs/plot_traupel_coefficients.py
-```
-
 ## Disclaimer
 
-This library is intended for preliminary turbine sizing and engineering analysis. The empirical correlations and
-meanline assumptions should be checked for the particular design. LLM was used for the generation of this README.
+This library is intended for preliminary turbine sizing and engineering analysis. The extrapolation of empirical
+correlations and meanline assumptions should be checked for the particular design. LLM was used for the generation of
+this README, docstrings and a few parts of the code.
 
 ## Documentation
 
@@ -78,29 +62,29 @@ Its principal workflow is:
 1. Construct an `IdealGas` mixture and a `TraupelLossModel` object.
 2. Construct an empty `Turbine1D` object.
 3. Call `size_turbine(...)` with the required shaft power, flow conditions, stage coefficients and geometry inputs.
-4. Read the geometry attributes and the three stored design-point result dictionaries.
+4. Read the geometry attributes and the three stored design-point result dictionaries from `Turbine1D` object..
 
 #### Assumptions and nomenclature
 
-The model uses a calorically perfect ideal gas, negligible inlet velocity, equal flow areas at stations 1 and 2 and
-a constant Euler diameter. Rotor axial width is taken equal to its chord. Geometry is represented at the meanline;
-the code calculates flow angles rather than blade metal angles or detailed blade profiles.
+The model uses a calorically perfect ideal gas, negligible inlet velocity at station 0, equal flow areas at stations 1
+and 2 and a constant Euler diameter. Rotor axial width is taken equal to its chord. Geometry is represented at the
+meanline; the code calculates flow angles, not blade metal angles or detailed blade profiles.
 
 Station 0 is before the stator, station 1 is between the stator and rotor, and station 2 is after the rotor. In the
 equations below, $v$ is absolute velocity, $w$ is rotor-relative velocity, $u$ is blade speed, $h$ is static enthalpy,
-and $h_t=h+v^2/2$ is absolute total enthalpy. The result names use `_t` for total properties, `_s` and `_r` for
+and $h_t=h+v^2/2$ is absolute total enthalpy. Naming convention uses `_t` for total properties, `_s` and `_r` for
 stationary and rotating reference frames, `_ideal` for isentropic reference quantities, and `_tt`, `_ts` and `_ss`
 for total-to-total, total-to-static and static-to-static quantities. `_ideal_r_real_s` means isentropic rotor expansion
 following the actual stator state.
 
 Angles in the turbine results are measured from the axial/meridional direction. The `_blade` results describe the
-rotor passage with its aerodynamic losses at the same outlet static pressure as the complete stage. They supply the
-local cascade flow needed by the loss correlations.
+rotor passage flow state calculated only with its aerodynamic losses at the same outlet static pressure as the complete
+stage. They supply the local cascade flow needed by the loss correlations.
 
 #### Design-point quantities and geometry
 
 `size_turbine(...)` takes `gas`, `work_coefficient_tt`, `flow_coefficient`, `reaction_isentropic_tt`, `RPM`,
-`shaft_power`, `mdot`, `T_0`, `p_0` and a `loss_model`. The specified loading is the real shaft-work coefficient;
+`shaft_power`, `mdot`, `T_0`, `p_0` and a `loss_model`. The specified loading is the real work coefficient;
 the specified flow coefficient is based on the rotor outlet axial velocity:
 
 $$
@@ -132,8 +116,8 @@ R_{h,tt,\mathrm{ideal}}=
 $$
 
 The remaining inputs prescribe radial clearance, stator and rotor blade counts, chord-to-pitch ratios, trailing-edge
-thickness and surface roughness. For admission fraction $\varepsilon$, stator count $n_s$ within the admitted arc and
-rotor count $n_r$ around the full circumference,
+thickness and surface roughness. For admission fraction $\varepsilon$, stator blades number $n_s$ is blade count within
+the admitted arc and rotor blades number $n_r$ is blade count around the full circumference,
 
 $$
 p_s=\frac{\varepsilon\pi D_E}{n_s}, \qquad p_r=\frac{\pi D_E}{n_r}, \qquad
@@ -141,7 +125,8 @@ c_s=(c/p)_s p_s, \qquad c_r=(c/p)_r p_r.
 $$
 
 `t_TE_stator` and `t_TE_rotor` are the circumferential projections of trailing-edge thickness. The axial row gap is
-`s_ax_over_pitch_rotor` times rotor pitch. Equivalent sand roughness is $k_s=5.863R_a$.
+`s_ax_over_pitch_rotor` times rotor pitch. Metal roughness given as input is changed into equivalent sand-grain
+roughness using $k_s=5.863R_a$.
 
 Once the flow solution determines outlet density, the full annulus area and diameters are
 
@@ -160,7 +145,7 @@ greater than two. Tooth spacing is $c_r/(n_{\mathrm{teeth}}-1)$. `t_shroud` stor
 
 #### Sizing logic and numerical solution
 
-The following diagram is reproduced from the comments in `Turbine1D.__init__`:
+The following diagram explains turbine sizing & flow calculations procedure in `Turbine1D` and `TraupelLossModel`:
 
 ```text
  Turbine1D.size_turbine
@@ -174,45 +159,46 @@ The following diagram is reproduced from the comments in `Turbine1D.__init__`:
    |      |                                                                       |
    |      +--> INNER LOOP -------------------------------------------+            |
    |      |      Vary: h_2/h_t0                                      |            |
-   |      |      Residual: calculated minus prescribed outlet        |            |
+   |      |      Residual: calculated minus assumed outlet           |            |
    |      |                total enthalpy, divided by h_t0           |            |
    |      |      |                                                   |            |
    |      |      v                                                   |            |
-   |      |    Turbine1D.__calculate_thermodynamic_properties --------+            |
+   |      |    Turbine1D.__calculate_thermodynamic_properties --------+           |
    |      |                                                                       |
    |      v  (after inner loop converges)                                         |
    |    Analysis results: station states and absolute rotor outlet velocity       |
    |      |                                                                       |
    |      v                                                                       |
-   |    Turbine1D.__calculate_blade_rows_outlet_velocities                         |
+   |    Turbine1D.__calculate_blade_rows_outlet_velocities                        |
    |      |                                                                       |
    |      v                                                                       |
    |    Updated analysis results: outlet velocities, Mach and Reynolds numbers    |
    |      |                                                                       |
    |      v                                                                       |
-   |    Turbine1D.__calculate_flow_angles                                          |
+   |    Turbine1D.__calculate_flow_angles                                         |
    |      |                                                                       |
    |      v                                                                       |
    |    Analysis results with flow angles                                         |
    |      |                                                                       |
    |      v                                                                       |
-   |    Turbine1D.__calculate_blade_row_velocities                                 |
-   |      Prescribed: stage outlet static pressure and aerodynamic entropy rise   |
+   |    Turbine1D.__calculate_blade_row_velocities                                |
+   |      Prescribed: stage outlet static pressure and rotor aerodynamic entropy  |
+   |       rise                                                                   |
    |      |                                                                       |
    |      v                                                                       |
-   |    Blade-row results: states, velocities and flow angles                       |
+   |    Blade-row results: states, velocities and flow angles                     |
    |      |                                                                       |
    |      v                                                                       |
-   |    Turbine1D.__calculate_geometry                                             |
+   |    Turbine1D.__calculate_geometry                                            |
    |      |                                                                       |
    |      v                                                                       |
-   |    Turbine geometry, together with analysis and blade-row results             |
+   |    Turbine geometry, together with analysis and blade-row results            |
    |      |                                                                       |
    |      v                                                                       |
-   |    TraupelLossModel.calculate_entropy_increase                                 |
+   |    TraupelLossModel.calculate_entropy_increase                               |
    |      |                                                                       |
    |      v                                                                       |
-   |    Calculated entropy rises and loss results                                  |
+   |    Calculated entropy rises and loss results                                 |
    |      |                                                                       |
    |      +--> Calculate entropy-rise residuals ----------------------------------+
    |
@@ -233,9 +219,10 @@ $$
 \mathbf{r}=\mathbf{x}_{\mathrm{loss\ model}}-\mathbf{x}.
 $$
 
-SciPy's bounded `least_squares()` uses `dogbox` and a two-point numerical Jacobian. `delta_s_estimate` supplies three
-nonnegative initial estimates. Its default `[0, 0, 0]` is replaced by the loss-model estimate evaluated at zero entropy
-rise. At the accepted solution, each dimensional entropy residual must be below $10^{-4}$ J/(kg K) in absolute value.
+Theseare found using SciPy's bounded `least_squares()` with `dogbox` and a two-point numerical Jacobian.
+`delta_s_estimate` supplies three nonnegative initial estimates. Its default `[0, 0, 0]` is replaced by the loss-model
+estimate evaluated at zero entropy rise (in other words, the new estimate represents the first estimate from fixed point
+iteration scheme). At the accepted solution, each entropy residual must be below $10^{-4}$ J/(kg K) in absolute value.
 
 During each outer evaluation, an inner solve varies $h_2/h_{t0}$ to satisfy
 
@@ -243,8 +230,9 @@ $$
 r_h=\frac{h_2+v_2^2/2-h_{t2}}{h_{t0}}=0.
 $$
 
-The inner solver uses TOMS 748 with a verified bracket, or a Newton fallback when necessary. The ideal-gas entropy
-relation determines pressures from the assumed entropy rises and static temperatures:
+This allows to find all other thermodynamic properties at station 0 and 1. The inner solver uses TOMS 748 with a
+bracket, or a Newton fallback when necessary. The ideal-gas entropy relation determines pressures from the assumed
+entropy rises and static temperatures:
 
 $$
 \Delta s=c_p\ln\left(\frac{T_{\mathrm{out}}}{T_{\mathrm{in}}}\right)
@@ -260,7 +248,7 @@ $$
 
 Equal-area continuity gives $\theta_1=\theta_2\rho_2/\rho_1$. The prescribed isentropic reaction determines the
 intermediate state, while the real reaction $R_{h,tt}=(h_1-h_2)/\Delta h_t$ enters the velocity triangles. Define
-$d_\theta=(\theta_2^2-\theta_1^2)/(2\psi_{tt})$. The circumferential velocities are
+$d_\theta=(\theta_2^2-\theta_1^2)/(2\psi_{tt})$. The circumferential velocities are then
 
 $$
 \frac{v_{\theta,1}}{u}=1-R_{h,tt}+\frac{\psi_{tt}}{2}+d_\theta, \qquad
@@ -268,9 +256,10 @@ $$
 $$
 
 Relative velocities have $w_\theta=v_\theta-u$. Flow angles use `atan2(circumferential velocity, axial velocity)`.
-The local rotor-passage solution retains only aerodynamic rotor entropy rise at the prescribed stage outlet pressure;
-continuity and constant-radius rothalpy determine its outlet velocities. Geometry and losses are then recalculated
-before the entropy residuals are returned.
+Additional flow solution is calculated for the rotor blade row alone with the aerodynamic entropy rise, but without
+entropy rise due to additional losses. This flow state represents flow in the test cascade and is used in Traupel
+loss model to calculate blade profile losses. Afterward, geometry is sized and losses are then recalculated. The
+entropy residuals can be then returned.
 
 #### Stored results and efficiencies
 
@@ -280,9 +269,10 @@ The result dictionaries are:
 
 - `analysis_results_at_design_point`: complete stage states, velocities, Mach and Reynolds numbers, flow angles,
   loading, reaction, pressure ratio, entropy rises, shaft power and efficiencies.
-- `blade_row_results_at_design_point`: local rotor-passage states, velocities, flow angles and associated coefficients.
-- `loss_model_results_at_design_point`: aerodynamic and incidence loss coefficients, disk friction, clearance,
-  admission, dissipated enthalpies, entropy rises and shroud leakage flow.
+- `blade_row_results_at_design_point`: local rotor blade row flow state without additional losses.
+  It includes velocities, flow angles and associated coefficients.
+- `loss_model_results_at_design_point`: aerodynamic, incidence, disk friction, clearance and
+  admission loss coefficients, dissipated enthalpies, entropy rises and shroud leakage flow.
 
 The reported efficiencies use the exact isentropic enthalpy drops at the corresponding outlet total or static
 pressure. With $\Delta s_{\mathrm{stage}}$ denoting total stage entropy rise, the ideal reference enthalpies are
@@ -300,39 +290,39 @@ $$
 $$
 
 `psi_tt_ideal` uses the same total-to-total isentropic enthalpy drop. `zeta_stator_Denton` and `zeta_rotor_Denton` are
-entropy-based diagnostic loss
-coefficients and use a different normalisation from Traupel's coefficients below.
+entropy-based loss coefficients based on Denton's definition and use a different normalisation from Traupel's
+coefficients below.
 
-`calculate_entropy_rise(...)` is also public. After sizing inputs have been assigned, it evaluates a trial set of
-entropy rises and returns `(residuals, analysis_results, blade_row_results, loss_model_results)`.
+After sizing calculations have been performed, `calculate_entropy_rise(...)` evaluates a trial set of entropy rises and
+returns `(residuals, analysis_results, blade_row_results, loss_model_results)`.
 
 ### TraupelLossModel
 
 `TraupelLossModel` in `RocketTurbines/TraupelLossModel.py` implements empirical turbine-loss correlations from
 Walter Traupel's *Thermische Turbomaschinen*, Volume I. It separates aerodynamic passage losses from clearance,
 disk-friction and partial-admission losses. The equations below describe the implemented relations, including their
-numerical approximations. All empirical plots are redrawn directly from the coefficient data and interpolators in
-the class, so the reader can inspect the values used by the library here.
+numerical approximations. All plots are redrawn directly from the sampled empirical coefficient data using
+interpolators in the class, so the reader can inspect the values used by the library here.
 
 #### Configuration and coefficient interpolation
 
-Construct the model with `extrapolation_method="closest"` or `"linear"`. `"closest"` clips each input coordinate to
-the digitised grid boundary; `"linear"` extends the interpolator in its interpolation coordinates. Reynolds-number
-axes are logarithmic for $\chi_R$ and $c_f$, and both axes are logarithmic for $C_M$.
+Construct the model with `extrapolation_method="closest"` or `"linear"`. `"closest"` means no extrapolation of 
+empirical coefficients - closest sampled value is used instead. `"linear"` extends the interpolator with linear
+extrapolation. Reynolds-number axes are logarithmic for $\chi_R$ and $c_f$, and both axes are logarithmic for $C_M$.
 `warn_on_extrapolation=True` emits a warning for every out-of-bounds coefficient evaluation.
 
 The other constructor options are:
 
-| Argument | Values | Meaning |
-| --- | --- | --- |
-| `incidence_loss` | `"high"`, `"medium"`, `"low"` | Upper curve, average of the two curves, or lower curve. Default: `"medium"`. |
-| `stator` | `"regular"`, `"near_sonic_outlet"` | Mach correction for an accelerating cascade. Default: `"regular"`. |
-| `rotor` | `"regular"`, `"near_sonic_outlet"`, `"impulse_low_M"`, `"impulse_high_M"` | Accelerating or impulse-rotor Mach correction. Default: `"regular"`. |
+| Argument | Values | Meaning                                                                                                           |
+| --- | --- |-------------------------------------------------------------------------------------------------------------------|
+| `incidence_loss` | `"high"`, `"medium"`, `"low"` | High, average or low empirical coefficient used for incidence losses. Default: `"medium"`.                        |
+| `stator` | `"regular"`, `"near_sonic_outlet"` | Determines stator type and what Mach correction is used for the profile loss of the stator. Default: `"regular"`. |
+| `rotor` | `"regular"`, `"near_sonic_outlet"`, `"impulse_low_M"`, `"impulse_high_M"` | Determines rotor type and what Mach correction is used for the profile loss of the rotor. Default: `"regular"`.   |
 
 The impulse options also select the corresponding endwall and free-rotor partial-admission coefficients.
 `"impulse_low_M"` represents a rounded leading edge; `"impulse_high_M"` represents a sharp leading edge.
 
-The principal digitised ranges are:
+The ranges of sampled graphs with empirical coefficients are:
 
 | Coefficient | Input coordinates and grid limits |
 | --- | --- |
@@ -348,14 +338,15 @@ The principal digitised ranges are:
 | $z$ | High curve: -50 to +43.7 degrees; low curve: -50 to +60 degrees |
 | $\Phi^2$ | $p_2/p_1=0.3$ to 1; tooth spacing/clearance: 5 to 13; teeth: 4 to 15 |
 
-These are lookup ranges, rather than validation of a turbine design. For example, the stator uses zero inlet/outlet
-speed ratio for $F$, which is outside that graph's digitised range and therefore uses the configured boundary rule.
-The $K_\sigma$ grid includes prepared extensions described below. Negative interpolated coefficients are floored at
-zero; $\zeta_{p0}$ has a floor of 0.001 because it appears in denominators.
+These are interpolation boundaries, rather than guidelines of a turbine design. For example, if the stator uses zero
+inlet/outlet speed ratio for $F$, which is outside that graph's digitised range, configured extrapolation method will
+be used for it. The $K_\sigma$ sampling grid was extended with extrapolation; otherwise the interpolation range would
+be very small. Negative interpolated coefficients are floored at zero; $\zeta_{p0}$ has a floor of 0.001 because it
+appears in denominators.
 
 #### Loss definitions and angle convention
 
-For a blade row, the aerodynamic-plus-incidence coefficient is defined by the dissipated static enthalpy divided
+For a blade row, the aerodynamic-plus-incidence loss coefficient is defined by the dissipated static enthalpy divided
 by ideal outlet kinetic energy. Let $q$ denote stator absolute or rotor-relative outlet speed. Then
 
 $$
@@ -373,7 +364,7 @@ $$
 $$
 
 Traupel measures stator outlet and rotor inlet angles from the positive circumferential direction, and rotor outlet
-angle from the negative circumferential direction. The turbine-to-loss-model conversion is
+angle from the negative circumferential direction. The `Turbine1D` to `TraupelLossModel` angle conversion is:
 
 $$
 \alpha_{1,T}=\frac{\pi}{2}-\alpha_1, \qquad
@@ -384,7 +375,8 @@ $$
 In the following blade-row equations, $a$ and $b$ are Traupel inlet and outlet angles, $c$ is chord, $l$ is radial
 blade length, $p$ is pitch, $D_m$ is mean diameter, $k_s$ is equivalent sand roughness, and
 $\delta_a=t_{TE}/p$ is the circumferential trailing-edge blockage. Direct calls to `calculate_zeta_p0()`,
-`calculate_F()` and `calculate_z()` use degrees; the assembled loss methods take angles in radians.
+`calculate_F()` and `calculate_z()` interpolators use degrees, but the methods that wrap these interpolators take
+angles in radians.
 
 #### Profile and trailing-edge losses
 
@@ -400,21 +392,31 @@ outlet angles, $\zeta_h$ for trailing-edge underpressure, and $\zeta_C$ for trai
 
 ![Mach correction, basic profile loss and trailing-edge underpressure coefficients](docs/figures/traupel_profile_coefficients.png)
 
-The trailing-edge plot shows the full-strength nomogram value $\zeta_{h,\infty}$. The code applies the following
-Reynolds-number transition:
+The trailing-edge plot shows the nomogram value $\zeta_{h,\infty}$. The code applies the following
+Reynolds-number transition mentioned by Traupel:
 
 $$
-\zeta_h=g(Re)\zeta_{h,\infty}, \qquad
-g(Re)=\begin{cases}
-0, & Re\leq8\times10^4,\\
-\sqrt{1-\left(1-\dfrac{Re-8\times10^4}{7\times10^4}\right)^2},
-& 8\times10^4<Re<1.5\times10^5,\\
-1, & Re\geq1.5\times10^5.
-\end{cases}
+\zeta_h=g(Re)\zeta_{h,\infty}.
 $$
 
-The quarter-ellipse transition is an approximation used in this implementation. The following plots show the
-profile roughness correction, endwall friction coefficient and disk-friction coefficient used by the model:
+The transition factor is defined over three Reynolds-number intervals:
+
+$$
+g(Re)=0, \qquad Re\leq8\times10^4.
+$$
+
+$$
+g(Re)=\sqrt{1-\left(1-\frac{Re-8\times10^4}{7\times10^4}\right)^2}, \qquad
+8\times10^4\lt Re\lt1.5\times10^5.
+$$
+
+$$
+g(Re)=1, \qquad Re\geq1.5\times10^5.
+$$
+
+The quarter-ellipse transition is an approximation used in this implementation, since Traupel did not specify exact
+formula. The following plots show the profile roughness correction, endwall friction coefficient and disk-friction
+coefficient used by the model:
 
 ![Reynolds-number and roughness correction, endwall friction and disk-friction coefficients](docs/figures/traupel_reynolds_coefficients.png)
 
@@ -424,18 +426,22 @@ The fanning coefficient $\zeta_f$ depends on $l/D_m$ and speed parameter
 $\nu=1/\sqrt{2\psi_{ss,\mathrm{ideal}}}$. Set $\bar\zeta_p=\zeta_p+\zeta_f$, $L=l/p$, and
 
 $$
-L_{\mathrm{crit}}=B\sqrt{\bar\zeta_p}, \qquad
-B=\begin{cases}10,&\text{impulse rotor},\\7,&\text{accelerating cascade}.\end{cases}
+L_{\mathrm{crit}}=B\sqrt{\bar\zeta_p}.
 $$
 
-The residual endwall/secondary-flow loss is
+$B=10$ for an impulse rotor and $B=7$ for an accelerating cascade.
+
+For $L\geq L_{\mathrm{crit}}$, the residual endwall/secondary-flow loss is
 
 $$
-\zeta_{\mathrm{rest}}=\begin{cases}
-\zeta_a+\dfrac{\zeta_p}{\zeta_{p0}}\dfrac{F}{L}, & L\geq L_{\mathrm{crit}},\\
-\zeta_a+\dfrac{\zeta_p}{\zeta_{p0}}\dfrac{F}{L_{\mathrm{crit}}}
-+A_c\dfrac{c}{p}\left(\dfrac{1}{L}-\dfrac{1}{L_{\mathrm{crit}}}\right), & L<L_{\mathrm{crit}}.
-\end{cases}
+\zeta_{\mathrm{rest}}=\zeta_a+\frac{\zeta_p}{\zeta_{p0}}\frac{F}{L}.
+$$
+
+For $L\lt L_{\mathrm{crit}}$, it is
+
+$$
+\zeta_{\mathrm{rest}}=\zeta_a+\frac{\zeta_p}{\zeta_{p0}}\frac{F}{L_{\mathrm{crit}}}
++A_c\frac{c}{p}\left(\frac{1}{L}-\frac{1}{L_{\mathrm{crit}}}\right).
 $$
 
 $A_c=0.035$ for an impulse rotor and 0.02 for an accelerating cascade. $F$ depends on turning angle
@@ -470,15 +476,15 @@ i_c=\frac{i}{2(1-M_c)}, \qquad
 \zeta_{\mathrm{incidence}}=z(i_c)\left(\frac{q_{\mathrm{in}}}{q_{\mathrm{out}}}\right)^2.
 $$
 
-The incidence plot above shows `"high"`, `"medium"` and `"low"`. Medium is the average of the two interpolated curves;
-each original curve retains its own bounds outside the displayed common range. In the current design-point sizing
-workflow, both stator and rotor incidence are set to zero. The direct incidence-loss method accepts a prescribed
-nonzero deviation when used separately.
+The incidence plot above shows `"high"`, `"medium"` and `"low"` loss coefficient curves. Medium is the average of the
+two interpolated curves. In the current design-point sizing workflow, both stator and rotor incidence are set to zero.
+The incidence-loss method accepts a nonzero deviation when used separately.
 
 #### Unshrouded rotor clearance
 
-`calculate_unshrouded_rotor_clearance_loss(...)` uses the local rotor-passage velocities. Define radial clearance
-$s_r$, Traupel reaction $R_T$, normalised inlet relative velocity $\bar w_1=w_{1,\mathrm{blade}}/u$, and
+`calculate_unshrouded_rotor_clearance_loss(...)` uses the rotor blade row velocities calculated without additional
+losses. Define radial clearance $s_r$, Traupel reaction $R_T$, normalised inlet relative velocity
+$\bar w_1=w_{1,\mathrm{blade}}/u$, and
 
 $$
 x=\max\left(\frac{s_r}{c}-0.002,0\right), \qquad
@@ -497,10 +503,10 @@ $$
 
 ![Unshrouded rotor clearance coefficient for four outlet-angle panels](docs/figures/traupel_clearance_coefficients.png)
 
-Solid curves show interpolation inside each panel's original velocity-change interval. Dashed portions show the
+Solid curves show interpolation inside each graph's original velocity-change interval. Dashed portions show the
 extensions prepared by the code: PCHIP supplies endpoint slopes and straight lines continue the curves to a common
 $j=1$ to 4 grid. Final coefficient lookups use linear interpolation on that prepared grid. Thus `"closest"` clips
-to the prepared grid bounds, which can extend beyond an original panel's measured interval.
+to the prepared grid bounds, which can extend beyond an original graph's measured interval.
 
 #### Shrouded rotor clearance and half-labyrinth flow
 
@@ -541,7 +547,7 @@ uses the prescribed main mass flow.
 
 #### Partial-admission and disk-friction losses
 
-`calculate_admission_loss(...)` assumes one admitted sector. For $0<\varepsilon<1$,
+`calculate_admission_loss(...)` assumes one admitted sector. For $0\lt\varepsilon\lt1$,
 
 $$
 \zeta_{\mathrm{admission}}=
@@ -550,21 +556,23 @@ $$
 $$
 
 The coefficient is exactly zero at full admission. Here $\theta_m$ and $\psi_{ss,m,\mathrm{ideal}}$ are normalised
-by blade speed at the mean diameter. For `partial_admission_rotor="free"`,
+by blade speed at the mean diameter. For `partial_admission_rotor="free"` (when the rotor is not enclosed on all
+sides),
 
 $$
-C=k\left(0.045+0.58\frac{l}{D_m}\right)\sin\beta_{2,T}, \qquad
-k=\begin{cases}0.8,&\text{impulse rotor},\\1,&\text{accelerating rotor}.\end{cases}
+C=k\left(0.045+0.58\frac{l}{D_m}\right)\sin\beta_{2,T}.
 $$
 
-For `partial_admission_rotor="enclosed"`,
+$k=0.8$ for an impulse rotor and $k=1$ for an accelerating rotor.
+
+For `partial_admission_rotor="enclosed"` (when the rotor is enclosed on all sides except of the admitted arc),
 
 $$
 C=0.0095+0.55\max\left(0.125-\frac{l}{D_m},0\right)^2.
 $$
 
-The enclosed-rotor relation is intended for $l/D_m<0.125$; the implementation continues it beyond that range using
-the limiting value. `calculate_disk_friction_loss(...)` uses the $C_M$ curve shown above:
+The enclosed-rotor relation is intended for $l/D_m\lt0.125$; the implementation continues it beyond that range using
+the limiting value due to lack of other data. `calculate_disk_friction_loss(...)` uses the $C_M$ curve shown above:
 
 $$
 \zeta_{\mathrm{disk}}=
@@ -620,7 +628,7 @@ same order; the library checks list lengths and database availability but does n
 #### Composition and caloric properties
 
 Mass fractions must be finite, nonnegative and sum to one within $10^{-12}$. Zero-fraction species are removed.
-The temperature limits must satisfy $T_{\max}>T_{\min}>0$. `P_max` and `P_min`, both defaulting to $10^5$ Pa, are
+The temperature limits must satisfy $T_{\max}\gt T_{\min}\gt0$. `P_max` and `P_min`, both defaulting to $10^5$ Pa, are
 used to check that each active CoolProp species is gas or supercritical gas at the corresponding temperature limit.
 
 For species molar masses $M_i$ and mass fractions $Y_i$, mole fractions are
@@ -654,7 +662,7 @@ Pressure and temperature must be finite and positive. The returned density is in
 
 #### Dynamic viscosity
 
-`calculate_dynamic_viscosity(T, p=1e5)` obtains species viscosities from NASA CEA transport fits through
+`calculate_dynamic_viscosity(T)` obtains species viscosities from NASA CEA transport fits through
 [ThermoProp](https://github.com/saakethramoju/ThermoProp). Active species must have CEA gas entries and viscosity
 data. The mixture uses Wilke's rule:
 
@@ -666,5 +674,4 @@ $$
 
 The evaluation temperature is floored at the larger of 300 K and the highest minimum fitted viscosity temperature
 among the active species. For example, H2O sets a floor of 373.2 K. Requests below that floor return the limiting
-viscosity. Pressure is checked for positivity but does not change viscosity in this dilute-gas model. The result is
-in Pa s. Density, sound-velocity and viscosity methods cache up to 1024 evaluations each.
+viscosity. The result is in Pa s. Density, sound-velocity and viscosity methods cache up to 1024 evaluations each.
