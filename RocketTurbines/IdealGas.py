@@ -133,7 +133,7 @@ class IdealGas:
         return np.sqrt(self.gamma * self.R * T)
 
     @lru_cache(maxsize=1024)
-    def calculate_dynamic_viscosity(self, T, p=1e5):
+    def calculate_dynamic_viscosity(self, T):
         """A method to calculate dynamic viscosity of the gas mixture using Wilke's rule and NASA transport equations
         from CEA.
 
@@ -142,12 +142,10 @@ class IdealGas:
         limit return viscosity evaluated at the limiting temperature. This limit applies to all calls.
 
         :param float T: Temperature (K) of the gas.
-        :param float p: Pressure (Pa) of the gas. By default, 1e5, since dynamic viscosity is independent of pressure.
         :return: Gas mixture dynamic viscosity (Pa s).
         :raises ValueError: If pressure or temperature is not finite and positive.
         """
 
-        self._validate_positive(p, "Pressure")
         self._validate_positive(T, "Temperature")
         # It is possible that during some internal calculations, when the flow solution is not yet converged, a
         # very small temperature is reached. Keep the 300 K floor, but respect higher lower bounds of
