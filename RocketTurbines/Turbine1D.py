@@ -165,6 +165,8 @@ class Turbine1D:
                                                  "h_0": None,   # Total/static enthalpy at station 0, J/kg
                                                  "eta_tt": None, # Total-to-total efficiency, -
                                                  "eta_ts": None, # Total-to-static efficiency, -
+                                                 "eta_poly_tt": None, # Total-to-total polytropic efficiency, -
+                                                 "eta_poly_ts": None, # Total-to-static polytropic efficiency, -
                                                  "zeta_stator_Denton": None, # Stator entropy loss coefficient based
                                                  # on T_2 and absolute stator outlet kinetic energy, according to Denton
                                                  # definition, -
@@ -958,6 +960,13 @@ class Turbine1D:
         # Calculate total-to-total and total-to-static efficiencies
         eta_tt = delta_h_t / delta_h_t_ideal  # -
         eta_ts = delta_h_t / delta_h_ideal  # -
+        # Calculate total-to-total polytropic efficiency for a calorically perfect gas.
+        log_h_t2_over_h_t0 = np.log(h_t2_over_h_t0)  # -
+        eta_poly_tt = log_h_t2_over_h_t0 / (log_h_t2_over_h_t0 - delta_s / gas.Cp)  # -
+        # Calculate total-to-static polytropic efficiency.
+        log_h_2_over_h_t0 = np.log(h_2 / h_t0)  # -
+        delta_h_poly_ts = (h_0 - h_2) * (1 - delta_s / (gas.Cp * log_h_2_over_h_t0))  # J/kg
+        eta_poly_ts = delta_h_t / delta_h_poly_ts  # -
 
         # Package thermodynamic properties, v_2 and loading coefficients into analysis_results dictionary.
         # Make it a copy of analysis_results_at_design_point, such that the values there stay constant during
@@ -990,6 +999,8 @@ class Turbine1D:
                                  "zeta_rotor_Denton": zeta_rotor_Denton,  # -
                                  "eta_tt": eta_tt,  # -
                                  "eta_ts": eta_ts,  # -
+                                 "eta_poly_tt": eta_poly_tt,  # -
+                                 "eta_poly_ts": eta_poly_ts,  # -
                                  })
 
         # Return residual and analysis results
