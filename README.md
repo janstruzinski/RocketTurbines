@@ -181,7 +181,7 @@ The following diagram explains turbine sizing & flow calculations procedure in `
    |    Analysis results with flow angles                                         |
    |      |                                                                       |
    |      v                                                                       |
-   |    Turbine1D.__calculate_blade_row_velocities                                |
+   |    Turbine1D.__calculate_blade_row_flow_state                                |
    |      Prescribed: stage outlet static pressure and rotor aerodynamic entropy  |
    |       rise                                                                   |
    |      |                                                                       |

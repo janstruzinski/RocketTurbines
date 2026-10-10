@@ -20,8 +20,8 @@ class Turbine1D:
         """__calculate_blade_rows_outlet_velocities updates the analysis results with the remaining outlet """ \
         """velocities, isentropic row reference states, sound speeds, Mach numbers and Reynolds numbers. """ \
         """These calculations include all stage losses. After this, the flow angles are calculated. """ \
-        """The flow state for the blade row alone is then calculated directly at the same outlet static pressure, """ \
-        """without partial admission, clearance and disk friction losses and only taking into account aerodynamic """ \
+        """__calculate_blade_row_flow_state then calculates the flow state for the blade row alone at the same outlet """ \
+        """static pressure, without partial admission, clearance and disk friction losses and only taking into account aerodynamic """ \
         """losses in blade row passages. Continuity and rothalpy determine its outlet velocities and flow angles. """ \
         """Flow state for blade row alone is required by """ \
         """Traupel loss model.
@@ -67,7 +67,7 @@ class Turbine1D:
         #    |    Analysis results with flow angles                                         |
         #    |      |                                                                       |
         #    |      v                                                                       |
-        #    |    Turbine1D.__calculate_blade_row_velocities                                 |
+        #    |    Turbine1D.__calculate_blade_row_flow_state                                 |
         #    |      Prescribed: stage outlet static pressure and aerodynamic entropy rise   |
         #    |      |                                                                       |
         #    |      v                                                                       |
@@ -189,6 +189,7 @@ class Turbine1D:
                                                  "u": None, # Blade velocity at Euler radius, m/s
                                                  "P_shaft": None,   # Shaft power of the turbine, W
                                                  "p_1": None,   # Static pressure at station 1, Pa
+                                                 "p_t1": None,  # Total pressure at station 1, Pa
                                                  "T_1": None,   # Static temperature at station 1, K
                                                  "rho_1": None, # Static density at station 1, kg/m3
                                                  "T_1_ideal": None, # Static temperature assuming ideal expansion at
@@ -210,6 +211,7 @@ class Turbine1D:
                                                  # assuming ideal expansion at station 1, -
                                                  "M_r1": None, # Mach number in rotary reference frame at station 1, -
                                                  "p_2": None, # Static pressure at station 2, Pa
+                                                 "p_t2": None, # Total pressure at station 2, Pa
                                                  "T_2": None, # Static temperature at station 2, K
                                                  "rho_2": None, # Static density at station 2, kg/m3
                                                  "T_2_ideal_r_real_s": None, # Static temperature assuming
@@ -270,6 +272,7 @@ class Turbine1D:
             "v_2_blade": None,  # Absolute velocity at station 2 for the blade row alone, m/s
             "w_2_blade": None,  # Relative velocity at station 2 for the blade row alone, m/s
             "p_2_blade": None,  # Static pressure at station 2 for the blade row alone, Pa
+            "p_t2_blade": None,  # Total pressure at station 2 for the blade row alone, Pa
             "T_2_blade": None,  # Static temperature at station 2 for the blade row alone, K
             "h_2_blade": None,  # Static enthalpy at station 2 for the blade row alone, J/kg
             "h_t2_blade": None,  # Total specific enthalpy at station 2 for the blade row alone, J/kg
@@ -605,9 +608,9 @@ class Turbine1D:
         """A method to calculate residuals between the assumed entropy rises and the entropy rises returned by the loss
         model, together with the turbine analysis results. This method has one internal numerical loop to calculate
          consistent thermodynamic state at each station for assumed entropy increases through blade rows with
-         __calculate_thermodynamic_properties. Flow states for blade rows alone are then calculated directly at the
-         stage outlet static pressure, without inclusion of additional losses like clearance, partial admission or
-         disk friction.
+         __calculate_thermodynamic_properties. __calculate_blade_row_flow_state then calculates the blade row flow
+         state at the stage outlet static pressure, without inclusion of additional losses like clearance, partial
+         admission or disk friction.
 
         Definitions of the values read from analysis_results_at_design_point are in Turbine1D.__init__.
 
@@ -770,10 +773,10 @@ class Turbine1D:
 
 
         # Recalculate rotor flow states at the same outlet static pressure, but without additional losses like disk
-        # friction, clearance or partial admission, as the loss model may require separate blade row velocities.
+        # friction, clearance or partial admission, as the loss model may require a separate blade row flow state.
         # These results only take into account aerodynamic losses in the blade passage itself. The outlet flow
         # coefficient and flow angles follow directly from entropy, rothalpy and continuity.
-        blade_row_results = self.__calculate_blade_row_velocities(analysis_results)
+        blade_row_results = self.__calculate_blade_row_flow_state(analysis_results)
 
         # Some additional geometry must be calculated for the loss model. Pack to dictionary to pass to the loss model.
         D_hub, D_tip, D_mean, l_rotor, h_shroud, s_ax_shroud = self.__calculate_geometry(analysis_results)  # m
@@ -930,6 +933,10 @@ class Turbine1D:
         # Energy is conserved between station 0 and station 1, so:
         h_t1 = h_0  # J/kg
 
+        # Calculate total pressures from isentropic deceleration at each station.
+        p_t1 = p_1 * (h_t1 / h_1)**(gas.Cp / gas.R)  # Pa
+        p_t2 = p_2 * (h_t2 / h_2)**(gas.Cp / gas.R)  # Pa
+
         # Calculate theta_1
         theta_1 = theta_2 * rho_2 / rho_1  # -
         # Calculate real reaction from its definition
@@ -975,12 +982,14 @@ class Turbine1D:
         analysis_results.update({"p_0_over_p_2": p_0_over_p_2, # -
                                  "h_0": h_0,  # J/kg
                                  "p_1": p_1,  # Pa
+                                 "p_t1": p_t1,  # Pa
                                  "T_1": T_1,  # K
                                  "rho_1": rho_1,  # kg/m^3
                                  "h_1": h_1,  # J/kg
                                  "h_t1": h_t1,  # J/kg
                                  "delta_s_stator": total_delta_s_stator,  # J/(kg K)
                                  "p_2": p_2,  # Pa
+                                 "p_t2": p_t2,  # Pa
                                  "T_2": T_2,  # K
                                  "rho_2": rho_2,  # kg/m^3
                                  "h_2": h_2,  # J/kg
@@ -1014,7 +1023,7 @@ class Turbine1D:
          stations 1 and 2 to that dictionary. The stator isentropic reference starts at station 0; the rotor isentropic
           reference starts at the real station 1 state. The corresponding reference enthalpies and temperatures are also
            added to the dictionary. Reconstruction of the flow state of the blade row alone without additional rotor
-            losses is performed separately by __calculate_blade_row_velocities.
+            losses is performed separately by __calculate_blade_row_flow_state.
 
         :param dict analysis_results: Dictionary returned by __calculate_thermodynamic_properties for the solved
             h_2/h_t0. Required values include gas, thermodynamic states, v_2, u, psi_tt, R_h_tt and flow coefficients.
@@ -1138,14 +1147,14 @@ class Turbine1D:
         # Return all flow angles
         return alpha_1, beta_1, alpha_2, beta_2
 
-    def __calculate_blade_row_velocities(self, analysis_results):
-        """A method to calculate velocities and thermodynamic properties for the blade row alone, without additional
-        rotor losses such as clearance, partial admission or disk friction losses, at the same outlet static pressure
-        as the whole stage. Aerodynamic entropy rise determines outlet temperature; constant-radius rothalpy and
-        equal-area continuity determine outlet velocities, flow coefficient and flow angles.
+    def __calculate_blade_row_flow_state(self, analysis_results):
+        """Calculate the flow state for the blade row alone without additional rotor losses such as clearance,
+         partial admission or disk friction losses, at the same outlet static pressure as the whole stage.
+          Aerodynamic entropy rise determines outlet temperature; constant-radius rothalpy and equal-area continuity
+           determine outlet velocities, flow coefficient and flow angles.
 
         :param dict analysis_results: Dictionary with turbine analysis results required to calculate the blade row
-            velocities and thermodynamic properties. Variable definitions are in Turbine1D.__init__.
+            flow state. Variable definitions are in Turbine1D.__init__.
         :return: Dictionary with blade row flow analysis results.
         :rtype: dict
         :raises ValueError: If outlet temperature, relative speed or flow coefficient is not finite and positive,
@@ -1203,6 +1212,7 @@ class Turbine1D:
 
         # Some other quantities can be also calculated for the blade row alone.
         h_t2_blade = h_2_blade + v_2_blade**2 / 2
+        p_t2_blade = p_2_blade * (h_t2_blade / h_2_blade)**(gas.Cp / gas.R)  # Pa
         alpha_2_blade = np.atan2(u + w_2_tangential_blade, w_2_blade_axial)  # rad
         psi_tt_blade = theta_1_blade * np.tan(alpha_1) - theta_2_blade * np.tan(beta_2_blade) - 1  # -
         R_h_tt_blade = (h_1_blade - h_2_blade) / (h_0 - h_t2_blade)  # -
@@ -1225,6 +1235,7 @@ class Turbine1D:
                              "v_2_blade": v_2_blade,  # m/s
                              "w_2_blade": w_2_blade,  # m/s
                              "p_2_blade": p_2_blade,  # Pa
+                             "p_t2_blade": p_t2_blade,  # Pa
                              "T_2_blade": T_2_blade,  # K
                              "h_2_blade": h_2_blade, # J/kg
                              "h_t2_blade": h_t2_blade, # J/kg
