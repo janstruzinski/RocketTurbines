@@ -22,7 +22,8 @@ class IdealGas:
         :param int or float P_min: Minimum pressure (Pa), usually turbine outlet pressure. Used to check if species are
          gaseous at provided T_min. By default, 1e5.
         :raises ValueError: If temperatures are not finite and positive, T_max <= T_min, or composition lists
-         are empty, inconsistent, or contain invalid fractions.
+         are empty, inconsistent, or contain invalid fractions, or an active species lacks NASA CEA gas or
+         transport data, including viscosity or conductivity fits.
         """
 
         self._validate_positive(T_min, "T_min")
@@ -40,7 +41,7 @@ class IdealGas:
         if abs(sum(mass_fractions) - 1) > 1e-12:
             raise ValueError("Mass fractions must sum to 1.")
 
-        # CEA names are used only for viscosity; all thermodynamic properties still use CoolProp names.
+        # CEA names are used for transport properties; all thermodynamic properties still use CoolProp names.
         # If CEA species are not given, use CoolProp species. Also check if CEA species list given has the same number
         # and order as CoolProp species list.
         cea_species = tuple(species if cea_species is None else cea_species)
@@ -53,9 +54,10 @@ class IdealGas:
         mass_fractions = tuple(mass_fractions[i] for i in active_indices)
         cea_species = tuple(cea_species[i] for i in active_indices)
 
-        # Set minimum temperature limit for viscosity evaluation to 300K, as this is the lower bound
+        # Set minimum temperature limits for transport evaluation to 300K, as this is the lower bound
         # to which many transport polynomials in NASA CEA were fitted.
         viscosity_temperature_min = 300.0
+        conductivity_temperature_min = 300.0
         # Check if CEA species exist.
         for f in cea_species:
             if not CEA.has_species(f) or not CEA.is_gas(f):
@@ -70,8 +72,16 @@ class IdealGas:
             # If so, for each species, select lower bound used for fitting as capping limit for viscosity evaluation.
             # The capping limit cannot be lower than 300K.
             viscosity_temperature_min = max(viscosity_temperature_min, min(low_T for low_T, _ in viscosity_ranges))
+            # Also check if NASA CEA has conductivity fits and select their minimum fitted temperature.
+            conductivity_ranges = CEA.transport_temperature_ranges(f, "conductivity")
+            if not conductivity_ranges:
+                raise ValueError(f"NASA CEA conductivity fits are not available for {f!r}.")
+            conductivity_temperature_min = max(conductivity_temperature_min,
+                                               min(low_T for low_T, _ in conductivity_ranges))
         self.cea_species = cea_species
         self._viscosity_temperature_min = viscosity_temperature_min
+        # Conductivity mixing also uses species viscosities, so its temperature limit must respect both fits.
+        self._conductivity_temperature_min = max(conductivity_temperature_min, viscosity_temperature_min)
 
         # Check if species are gasous, so that the specific heat is calculated correctly later on.
         gas_phases = ("gas", "supercritical_gas")
@@ -160,3 +170,50 @@ class IdealGas:
             mixture_viscosity += xi * mu_i / denominator  # Pa*s
 
         return mixture_viscosity
+
+    @lru_cache(maxsize=1024)
+    def calculate_thermal_conductivity(self, T):
+        """Calculate frozen gas-mixture thermal conductivity from NASA CEA transport fits.
+
+        Uses CEA's frozen-composition mixing rule (NASA RP-1311, section 5.2), with
+        binary viscosity interaction fits where available and CEA's rigid-sphere
+        estimate otherwise. The interaction factors include CEA's molecular-mass
+        correction for conductivity. Composition is fixed, so no reaction contribution
+        to thermal conductivity is included.
+
+        The evaluation temperature is floored at the greatest of 300 K and the minimum
+        fitted viscosity and conductivity temperatures of all active species. All
+        species properties and binary interactions are evaluated at that temperature.
+
+        :param float T: Temperature (K) of the gas.
+        :return: Gas mixture thermal conductivity (W/(m K)).
+        :raises ValueError: If temperature is not finite and positive.
+        """
+
+        self._validate_positive(T, "Temperature")
+        # Apply the temperature limit determined in the constructor. This keeps all species conductivities,
+        # viscosities and binary interactions at the same temperature, even for requests below the limit.
+        T = max(T, self._conductivity_temperature_min)
+
+        # First get conductivity and dynamic viscosity of each active species from NASA CEA transport fits.
+        species_conductivities = np.asarray([CEA.conductivity(f, T) for f in self.cea_species])  # W/(m K)
+        species_viscosities = np.asarray([CEA.viscosity(f, T) for f in self.cea_species])  # Pa s
+        # Get the binary viscosity interaction parameters eta_ij. ThermoProp uses CEA binary fits when
+        # available at this temperature, and CEA's rigid-sphere estimate for the remaining pairs.
+        binary_viscosities = CEA.binary_viscosity_interaction_matrix(
+            self.cea_species, T, pure_viscosities=species_viscosities, molecular_weights=self.molar_masses)
+
+        # Arrange molar masses as a column and a row so that each matrix entry represents a species pair i, j.
+        M = np.asarray(self.molar_masses)
+        M_i, M_j = M[:, None], M[None, :]
+        # Calculate CEA's viscosity interaction factors, then apply its molecular-mass correction to obtain
+        # the interaction factors used for thermal conductivity.
+        phi = 2 * M_j * species_viscosities[:, None] / (binary_viscosities * (M_i + M_j))
+        psi = phi * (1 + 2.41 * (M_i - M_j) * (M_i - 0.142 * M_j) / (M_i + M_j)**2)
+        # A species interacting with itself has a factor of one. This also recovers its pure conductivity.
+        np.fill_diagonal(psi, 1.0)
+
+        # Now mix the species conductivities using mole fractions. The matrix product sums X_j * psi_ij
+        # over all species j to form the denominator for each species i in CEA's frozen mixture law.
+        x = np.asarray(self.molar_fractions)
+        return float(np.sum(x * species_conductivities / (psi @ x)))

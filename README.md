@@ -622,7 +622,7 @@ static enthalpy equivalent are stored separately in the loss results.
 
 `IdealGas` in `RocketTurbines/IdealGas.py` represents a fixed-composition, calorically perfect gas mixture.
 Construct it with `T_max`, `T_min`, CoolProp `species` names and `mass_fractions`. Optional `cea_species` supplies
-the corresponding NASA CEA names for viscosity. These two species lists must identify the same chemicals in the
+the corresponding NASA CEA names for transport properties. These two species lists must identify the same chemicals in the
 same order; the library checks list lengths and database availability but does not validate chemical correspondence.
 
 #### Composition and caloric properties
@@ -674,4 +674,35 @@ $$
 
 The evaluation temperature is floored at the larger of 300 K and the highest minimum fitted viscosity temperature
 among the active species. For example, H2O sets a floor of 373.2 K. Requests below that floor return the limiting
-viscosity. The result is in Pa s. Density, sound-velocity and viscosity methods cache up to 1024 evaluations each.
+viscosity. The result is in Pa s.
+
+#### Thermal conductivity
+
+`calculate_thermal_conductivity(T)` obtains species conductivities in W/(m K) from NASA CEA through ThermoProp.
+It uses CEA's frozen-composition mixture law from
+[NASA RP-1311, section 5.2](https://ntrs.nasa.gov/citations/19950013764):
+
+$$
+k_{\mathrm{mix}}=\sum_i\frac{X_i k_i}{\sum_jX_j\psi_{ij}}, \qquad \psi_{ii}=1,
+$$
+
+$$
+\psi_{ij}=\frac{2M_j\mu_i}{(M_i+M_j)\eta_{ij}}
+\left[1+2.41\frac{(M_i-M_j)(M_i-0.142M_j)}{(M_i+M_j)^2}\right], \qquad i\ne j.
+$$
+
+Here $\eta_{ij}$ is the CEA binary viscosity interaction parameter. ThermoProp uses its CEA fit when available
+at the evaluation temperature, otherwise CEA's rigid-sphere estimate from the pure-species viscosities and molar
+masses. The result includes the frozen contribution appropriate to the fixed composition of `IdealGas`.
+
+The evaluation temperature is floored at the greatest of 300 K and the minimum fitted viscosity and conductivity
+temperatures of every active species; all transport data use this same temperature. The constructor checks
+conductivity availability and stores this temperature floor alongside the viscosity floor. Missing conductivity
+fits raise `ValueError` during construction, and invalid temperatures raise `ValueError` when evaluating the
+property. Other transport-range errors propagate from ThermoProp, as for viscosity.
+
+```python
+k = gas.calculate_thermal_conductivity(900.0)  # W/(m K)
+```
+
+Density, sound-velocity, viscosity and thermal-conductivity methods cache up to 1024 evaluations each.
