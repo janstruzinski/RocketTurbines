@@ -2,6 +2,7 @@ import numpy as np
 from scipy.optimize import root_scalar, least_squares
 from TraupelLossModel import TraupelLossModel
 from IdealGas import IdealGas
+from RelaxedAitken import solve_with_relaxed_aitken
 
 class Turbine1D:
     def __init__(self):
@@ -548,6 +549,9 @@ class Turbine1D:
         # First define the function to get entropy residual
         def get_entropy_residual(delta_s):
             return self.calculate_entropy_rise(delta_s[0], delta_s[1], delta_s[2], loss_model)[0]
+        # The fixed-point map returns calculated entropy rises rather than their residuals.
+        def get_new_entropy(delta_s):
+            return np.asarray(get_entropy_residual(delta_s)) + delta_s
         # Estimate losses with input entropy rise (delta_s_estimate), then use calculated entropy rise as the default
         # initial solution guess and variable scales for numerical solver. The reason entropy change is estimated this
         # way, is because delta_s_estimate can be a list of zeros, which is a poor initial solution for a real turbine
@@ -563,22 +567,31 @@ class Turbine1D:
         # If nonzero entropy estimates were given as input, use these as initial solution. Otherwise, use
         # calculated entropy estimate.
         initial_entropy = np.array(delta_s_estimate) if np.any(delta_s_estimate) else calculated_delta_s_estimate
-        # Call the numerical solver. Larger difference steps reduce inner solvers noise. The upper bound is five times
-        # multiple of the larger of entropy_scales and initial_entropy.
-        entropy_solution = least_squares(get_entropy_residual, initial_entropy,
-                                        bounds=(np.zeros(3), 5 * np.maximum(entropy_scales, initial_entropy)),
-                                        method="dogbox", jac="2-point", x_scale=entropy_scales,
-                                        loss="linear", tr_solver="exact", diff_step=1e-4,
-                                        xtol=1e-6, ftol=None, gtol=1e-6, max_nfev=300, verbose=2)
-        # Raise an error if not converged
-        if not entropy_solution.success:
-            raise RuntimeError("Numerical solve for the stator and rotor entropy rises did not converge.")
+        # Try vector Aitken first, using the same initial entropy, scales and bounds as the least_squares fallback.
+        try:
+            entropy = solve_with_relaxed_aitken(
+                get_new_entropy, initial_entropy, initial_relaxation=0.3, min_relaxation=0.05, max_relaxation=3.,
+                bounds=(np.zeros(3), 5 * np.maximum(entropy_scales, initial_entropy)), x_scale=entropy_scales,
+                xtol=1e-6, maxiter=300)
+        # If this does not work, use least_squares fallback
+        except (ValueError, RuntimeError, ArithmeticError):
+            # Call the numerical solver. The upper bound is five times multiple of the larger of entropy_scales and
+            # initial_entropy.
+            entropy_solution = least_squares(get_entropy_residual, initial_entropy,
+                                            bounds=(np.zeros(3), 5 * np.maximum(entropy_scales, initial_entropy)),
+                                            method="dogbox", jac="2-point", x_scale=entropy_scales,
+                                            loss="linear", tr_solver="exact", diff_step=1e-4,
+                                            xtol=1e-6, ftol=None, gtol=1e-6, max_nfev=300, verbose=2)
+            # Raise an error if not converged
+            if not entropy_solution.success:
+                raise RuntimeError("Numerical solve for the stator and rotor entropy rises did not converge.")
+            entropy = entropy_solution.x
         # Entropy rises must be finite and nonnegative; zero is an admissible lossless limit.
-        if not np.all(np.isfinite(entropy_solution.x)) or np.any(entropy_solution.x < 0):
+        if not np.all(np.isfinite(entropy)) or np.any(entropy < 0):
             raise RuntimeError("Numerical solve for the stator and rotor entropy rises returned nonfinite or negative"
                                " values.")
         # Get entropy increases and the rest of the results
-        delta_s_stator, delta_s_rotor, delta_s_rotor_additional = entropy_solution.x  # J/(kg K)
+        delta_s_stator, delta_s_rotor, delta_s_rotor_additional = entropy  # J/(kg K)
         entropy_residual, analysis_results, blade_row_results, loss_model_results = \
             self.calculate_entropy_rise(delta_s_stator, delta_s_rotor, delta_s_rotor_additional, loss_model)
         # Require each unscaled final entropy residual to be finite and below 1e-4 J/(kg K) in absolute value.
@@ -640,12 +653,15 @@ class Turbine1D:
         # or disk friction losses. Total entropy generation is thus the sum of all of these.
         delta_s_rotor_total = delta_s_rotor + delta_s_rotor_additional  # J/(kg K)
 
-
         # Thermodynamic properties at each station must be calculated. Thermodynamic properties depend on h_2/h_t0.
         # It needs to be numerically found, such that energy balance is satisfied and total enthalpy at station 2
-        # agrees with the already calculated one. First, retrieve some variables from analysis_results_at_design_point
+        # agrees with the already calculated one. The inner solution loop first attempts to use relaxed Aitken
+        # iterations. If this does not work, it attempts to use TOMS748 bracketing scheme. As the last fallback,
+        # Newton scheme is attempted.
+
+        # First, retrieve some variables from analysis_results_at_design_point
         # that will be used to obtain solution estimate, as well as feasible bracket for numerical scheme. Bracket
-        # allows to use reliable toms748 scheme, but if it fails, Newton scheme can be used as a fallback.
+        # allows to use reliable toms748 scheme.
         gas = self.analysis_results_at_design_point["gas"]
         h_t0 = self.analysis_results_at_design_point["h_t0"]  # J/kg
         h_t2 = self.analysis_results_at_design_point["h_t2"]  # J/kg
@@ -663,8 +679,9 @@ class Turbine1D:
 
         # Calculate the lower bound on h_2/h_t0 for the bracket as well. These calculations are more complex.
         # They assume nonnegative row entropy rises and ideal reaction, and positive shaft work/loading.
-        # The outer entropy solver can try values outside that domain, so retain Newton scheme as the fallback.
+        # Newton scheme is first retained as the default fallback.
         numerical_scheme = "newton"
+        # If assumptions are satisfied, calculate upper bracket and set bracketing scheme as fallback
         if (delta_s_stator_total >= 0 and delta_s_rotor_total >= 0 and R_h_tt_ideal >= 0
                 and psi_tt > 0 and delta_h_t > 0):
             # Rotor entropy changes the isentropic enthalpy ratio by factor below. Rearranging the reaction relation
@@ -698,49 +715,66 @@ class Turbine1D:
         def get_enthalpy_residual(h_2_over_h_t0_initial):
             return self.__calculate_thermodynamic_properties(h_2_over_h_t0_initial, delta_s_stator_total,
                                                             delta_s_rotor_total, delta_s_rotor_additional)[1]
-        
-        # Verify the candidate bracket after defining the residual. Finite, ordered endpoints and opposite residual
-        # signs are required; a zero endpoint residual is already a root and is accepted by toms748.
-        if numerical_scheme == "bracketing":
-            # Check if values of the bracket are ordered and finite
-            if not np.all(np.isfinite(bracket)) or bracket[0] >= bracket[1]:
-                numerical_scheme = "newton"
-            # If so, evaluate residual at endpoints
-            else:
+
+        # Subtract the normalized energy residual to obtain the next exit static-enthalpy ratio.
+        def get_new_enthalpy_ratio(h_2_over_h_t0_initial):
+            return h_2_over_h_t0_initial - get_enthalpy_residual(h_2_over_h_t0_initial)
+
+        # Attempt to solve for enthalpy ratio now, first with Aitken scheme.
+        # Start at the same upper estimate as Newton and use the solution bracket already estimated for toms748 scheme.
+        # Initial relaxation 1 and cap 1.2 gave the lowest evaluation count across multiple designs.
+        try:
+            h_2_over_h_t0 = solve_with_relaxed_aitken(
+                get_new_enthalpy_ratio, h_2_max_over_h_t0,
+                initial_relaxation=1., min_relaxation=0.05, max_relaxation=1.2,
+                bounds=bracket if numerical_scheme == "bracketing" else
+                (np.finfo(float).eps * h_2_max_over_h_t0, h_2_max_over_h_t0),
+                xtol=1e-14, rtol=1e-12, maxiter=1000)
+        # If Aitken does not work, try fallback schemes
+        except (ValueError, RuntimeError, ArithmeticError):
+            # Verify the candidate bracket. Finite, ordered endpoints and opposite residual
+            # signs are required; a zero endpoint residual is already a root and is accepted by toms748.
+            if numerical_scheme == "bracketing":
+                # Check if values of the bracket are ordered and finite
+                if not np.all(np.isfinite(bracket)) or bracket[0] >= bracket[1]:
+                    numerical_scheme = "newton"
+                # If so, evaluate residual at endpoints
+                else:
+                    try:
+                        residual_at_bracket = [get_enthalpy_residual(h_2_over_h_t0) for h_2_over_h_t0 in bracket]
+                    # If endpoints fail, choose Newton scheme as fallback instead
+                    except ValueError:
+                        numerical_scheme = "newton"
+                    # Also choose Newton scheme if residuals are not zero and don't have opposite signs
+                    else:
+                        if not np.all(np.isfinite(residual_at_bracket)) or (
+                                residual_at_bracket[0] != 0 and residual_at_bracket[1] != 0
+                                and np.signbit(residual_at_bracket[0]) == np.signbit(residual_at_bracket[1])):
+                            numerical_scheme = "newton"
+
+            # Fallback to toms748 scheme if it all checks for it passed.
+            if numerical_scheme == "bracketing":
                 try:
-                    residual_at_bracket = [get_enthalpy_residual(h_2_over_h_t0) for h_2_over_h_t0 in bracket]
-                # If endpoints fail, choose Newton scheme 
+                    h_2_over_h_t0_solution = root_scalar(get_enthalpy_residual, bracket=bracket, method="toms748",
+                                                         options={"k": 2}, maxiter=1000, xtol=1e-14, rtol=1e-12)
+                # An inadmissible state encountered inside the bracket requires the Newton fallback.
                 except ValueError:
                     numerical_scheme = "newton"
-                # Also choose Newton scheme if residuals are not zero and don't have opposite signs
+                # If the solution did not converge, use Newton scheme fallback as well.
                 else:
-                    if not np.all(np.isfinite(residual_at_bracket)) or (
-                            residual_at_bracket[0] != 0 and residual_at_bracket[1] != 0
-                            and np.signbit(residual_at_bracket[0]) == np.signbit(residual_at_bracket[1])):
+                    if not h_2_over_h_t0_solution.converged:
                         numerical_scheme = "newton"
+            # Use Newton when no valid bracket is available or when the bracketing solve failed to converge.
+            if numerical_scheme == "newton":
+                h_2_over_h_t0_solution = root_scalar(get_enthalpy_residual, x0=h_2_max_over_h_t0, method="newton",
+                                                     maxiter=1000, xtol=1e-12, rtol=1e-10)
 
-        # Solve within the verified bracket.
-        if numerical_scheme == "bracketing":
-            try:
-                h_2_over_h_t0_solution = root_scalar(get_enthalpy_residual, bracket=bracket, method="toms748",
-                                                     options={"k": 2}, maxiter=1000, xtol=1e-14, rtol=1e-12)
-            except ValueError:
-                # An inadmissible state encountered inside the bracket also requires the Newton fallback.
-                numerical_scheme = "newton"
-            # If the solution did not converge, use Newton scheme as well.
-            else:
-                if not h_2_over_h_t0_solution.converged:
-                    numerical_scheme = "newton"
-        # Use Newton when no valid bracket is available or when the bracketing solve fails to converge.
-        if numerical_scheme == "newton":
-            h_2_over_h_t0_solution = root_scalar(get_enthalpy_residual, x0=h_2_max_over_h_t0, method="newton",
-                                                 maxiter=1000, xtol=1e-12, rtol=1e-10)
+            # Raise error if the solution obtained from toms748 or Newton is not converged
+            if not h_2_over_h_t0_solution.converged:
+                raise RuntimeError("Numerical solve for h_2/h_t0 did not converge.")
+            # Finally obtain the root
+            h_2_over_h_t0 = h_2_over_h_t0_solution.root  # -
 
-        # Raise error if the solution is not converged
-        if not h_2_over_h_t0_solution.converged:
-            raise RuntimeError("Numerical solve for h_2/h_t0 did not converge.")
-        # Obtain solution and the remaining results
-        h_2_over_h_t0 = h_2_over_h_t0_solution.root  # -
         # The solved enthalpy ratio must be finite and positive before calculating the final thermodynamic state.
         if not np.isfinite(h_2_over_h_t0) or h_2_over_h_t0 <= 0:
             raise RuntimeError("Numerical solve for h_2/h_t0 returned a nonfinite or nonpositive solution.")
