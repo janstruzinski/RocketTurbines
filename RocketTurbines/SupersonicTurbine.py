@@ -98,7 +98,7 @@ class SupersonicTurbine:
 
         # Use numerical solver to that will create a consistent design, in which values assumed for sizing
         # in Turbine1D are equivalent to those obtained from SupersonicTurbineBlading. Use Aitken's scheme.
-        x_solution = solve_with_relaxed_aitken()
+        x_solution = solve_with_relaxed_aitken(...)
 
         # Obtain consistent design objects after solution was found
         dummy, self.turbine_meanline, self.rotor_shape, self.stator_shape, coefficients = \
@@ -234,40 +234,40 @@ class SupersonicTurbine:
 
         # Now calculate rotor surface Mach numbers based on separation margins
         # First lower Mach number
-
+        ...
         # Now upper Mach number
-
+        ...
         # Now calculate rotor shape and dimensions. Use real Mach number at station 1 from Turbine 1D and Mach number
         # at station 2 that assumes isentropic expansion through the rotor
         rotor_shape = ...
 
         # Calculate t_TE_rotor_optimality. t_TE_rotor_optimality is part of residuals, since it will be always
         # decreased to zero by the optimizer.
+        ...
 
         # Calculate total throat area needed to satisfy massflow requirements
+        ...
 
         # Now separate procedures outlined at the top of this method can be followed to shape nozzles in the stator and
         # determines all remaining margins, residuals and optimality coefficients
-
         # If MOC stator nozzles are used
         if ...:
             # First calculate reference width for the MOC nozzle such that minimum thickness is always satisfied.
             ...
-
             # Now calculate stator shape and dimensions. Use isentropic outlet Mach number at station 1 from Turbine1D,
             # as SupersonicStatorNozzle requires ideal value.
             stator_shape = blading.SupersonicStatorNozzle(**self.SupersonicStatorNozzle_arguments, ...)
 
             # Calculate throat height from total throat area, reference width and the number of nozzles
-
+            ...
             # Calculate height optimality factor for MOC nozzle exit
-
+            ...
             # Width optimality factor and thickness margin are always zero
-
+            ...
             # Calculate chord - pitch ratio residuals between meanline design and blade shapes
-
+            ...
             # Calculate trailing edge thickness residuals between meanline design and blade shapes
-
+            ...
             # Now pack all the results and return them
             residuals = ...
             coefficients = ...
@@ -275,24 +275,24 @@ class SupersonicTurbine:
 
         # Follow the procedure if a single MOC stator nozzle is used
         elif ...:
-            # Calculate width and height of the optimal nozzle exit shape
-
+            # Calculate width and height of the optimal nozzle exit shape to maximize area taken up by it
+            ...
             # Now calculate stator shape and dimensions. Use isentropic outlet Mach number at station 1 from Turbine1D,
             # as SupersonicStatorNozzle requires ideal value.
             stator_shape = blading.SupersonicStatorNozzle(**self.SupersonicStatorNozzle_arguments, ...)
 
             # From total throat area, calculate throat height
-
+            ...
             # Calculate height optimality factor for MOC nozzle exit
-
+            ...
             # Also calculate admission fraction residual
-
+            ...
             # Width optimality factor and thickness margin are always zero
-
+            ...
             # Calculate chord - pitch ratio residuals between meanline design and blade shapes
-
+            ...
             # Calculate trailing edge thickness residuals between meanline design and blade shapes
-
+            ...
             # Now pack all the results and return them
             residuals = ...
             coefficients = ...
@@ -300,21 +300,21 @@ class SupersonicTurbine:
         # Follow the procedure if multiple da Laval nozzles are used
         elif ...:
             # First calculate throat diameter based on total throat area and number of nozzles
-
+            ...
             # Now calculate stator shape and dimensions. Use isentropic outlet Mach number at station 1 from Turbine1D,
             # as SupersonicStatorNozzle requires ideal value.
             stator_shape = blading.SupersonicStatorNozzle(**self.SupersonicStatorNozzle_arguments, ...)
 
             # Get nozzle exit width and height from stator_shape. Use stator shape uncorrected for the boundary later
-
+            ...
             # Calculate height and width optimality factors
-
+            ...
             # Calculate trailing edge thickness margin
-
+            ...
             # Calculate chord - pitch ratio residuals between meanline design and blade shapes
-
+            ...
             # Calculate trailing edge thickness residuals between meanline design and blade shapes
-
+            ...
             # Now pack all the results and return them
             residuals = ...
             coefficients = ...
@@ -322,21 +322,21 @@ class SupersonicTurbine:
         # Now follow the procedure if a single da Laval nozzle is used
         elif ...:
             # First calculate throat diameter based on total throat area
-
+            ...
             # Now calculate stator shape and dimensions. Use isentropic outlet Mach number at station 1 from Turbine1D,
             # as SupersonicStatorNozzle requires ideal value.
             stator_shape = blading.SupersonicStatorNozzle(**self.SupersonicStatorNozzle_arguments, ...)
 
             # Calculate height optimality factor for nozzle exit
-
+            ...
             # Also calculate admission fraction residual
-
+            ...
             # Width optimality factor and thickness margin are always zero
-
+            ...
             # Calculate chord - pitch ratio residuals between meanline design and blade shapes
-
+            ...
             # Calculate trailing edge thickness residuals between meanline design and blade shapes
-
+            ...
             # Now pack all the results and return them
             residuals = ...
             coefficients = ...
