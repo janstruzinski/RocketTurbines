@@ -4,15 +4,14 @@ from TraupelLossModel import TraupelLossModel
 import SupersonicTurbineBlading as blading
 from RelaxedAitken import solve_with_relaxed_aitken
 import numpy as np
-from scipy.optimize import brentq, least_squares
+from scipy.optimize import brentq
 import warnings
 from typing import Any, cast
 
 class SupersonicTurbine:
     def __init__(self, gas: IdealGas, loss_model: TraupelLossModel, Turbine1D_arguments: dict[str, Any],
                  SupersonicStatorNozzle_arguments: dict[str, Any], SupersonicRotorBlades_arguments: dict[str, Any],
-                 separation_margin: float, *, t_min_stator: float, t_min_rotor: float,
-                 stator_nozzle_chord_scale: float = 1.) -> None:
+                 separation_margin, t_min_stator, t_min_rotor, stator_nozzle_chord_scale=1.0):
         """SupersonicTurbine is the class to represent a supersonic turbine, with consistent meanline design and blading
          shape. It ensures that chord/pitch ratios and other variables used in Turbine1D agrees with the values obtained from
          SupersonicTurbineBlading objects, which in turn also use Turbine1D meanline results. Thus, there is a coupling
@@ -20,27 +19,27 @@ class SupersonicTurbine:
            stator nozzles exit can fit optimally in the turbine annulus by producing continuous coefficients than can be
             either checked by the engineer or constrained by outer optimizer.
 
-        :param IdealGas gas: Calorically perfect working gas, shared by both design libraries.
-        :param TraupelLossModel loss_model: Meanline loss model.
-        :param dict Turbine1D_arguments: Arguments to size_turbine, including initial coupling estimates.
-         gas and loss_model are supplied by this object. For one nozzle, admission_fraction is its initial estimate
-         (default 0.1); its final value is solved from the exit geometry.
-        :param dict SupersonicStatorNozzle_arguments: Nozzle controls, including contour_method ("moc" or "conical").
-         Flow conditions, reference_length and trailing_edge_thickness are supplied by the coupling.
-        :param dict SupersonicRotorBlades_arguments: Rotor controls. Flow conditions, surface Mach numbers,
-         blade count, radius and speed are supplied by the coupling. leading_edge_thickness_over_total_pitch is
-         an optional initial LE estimate; the coupling solves LE and geometric TE thickness independently.
-        :param float separation_margin: Fraction of the separation-limited Mach interval held in reserve,
-         strictly between zero and one. A value of 0.05 reserves 5% of the Mach interval bounded by
-         Goldman and Scullin's separation limits (NASA TN D-4421, equations (36)-(40)).
+        :param IdealGas gas: Object representing calorically perfect working gas.
+        :param TraupelLossModel loss_model: Object representing meanline loss model.
+        :param dict Turbine1D_arguments: Arguments to Turbine1D.size_turbine, including initial estimates for design
+         variables calculated in this class. In case a single stator nozzle is used, admission_fraction is its initial
+          estimate; its final value is solved from the exit geometry like other design variables.
+        :param dict SupersonicStatorNozzle_arguments: Arguments for SupersonicStatorNozzle. Exit Mach number and flow
+         angle, reference_length and trailing_edge_thickness are calculated in this class.
+        :param dict SupersonicRotorBlades_arguments: Arguments for SupersonicRotorBlades. Inlet & outlet Mach numbers
+         and flow angles, surface Mach numbers, blade count, radius and speed are supplied by this.
+          leading_edge_thickness_over_total_pitch is an optional initial LE thickenss estimate.
+        :param float separation_margin: Flow separation margin, strictly between zero and one. A value of 0.05 reserves
+         5% of the Mach interval bounded by Goldman and Scullin's separation limits
+          (NASA TN D-4421, equations (36)-(40)).
         :param float t_min_stator: Minimum true stator metal thickness, m; nonnegative.
         :param float t_min_rotor: Minimum true rotor LE/TE metal thickness, m; nonnegative.
         :param float stator_nozzle_chord_scale: Positive multiplier of throat-centre to exit-centre chord,
-         to account for the upstream turning section. Default 1.
+         to account for the upstream turning section, which SupersonicStatorNozzle does not calculate. Default 1.
         :ivar numpy.ndarray solution: Converged [stator chord/pitch, rotor chord/pitch, rotor TE,
          stator TE (or single-nozzle admission), rotor LE]; thicknesses are circumferential projections in m.
-        :raises ValueError: If inputs or the local annulus/nozzle construction are outside their domains.
-        :raises RuntimeError: If coupling fails to satisfy the final normalized residual tolerance of 1e-6.
+        :raises ValueError: If inputs are invalid or the nozzle construction assumptions are violated.
+        :raises RuntimeError: If Aitken does not converge or the final normalized residual tolerance of 1e-6 is not met.
         """
 
         # Store objects
@@ -59,7 +58,9 @@ class SupersonicTurbine:
         # Store separation margin which will be used to calculate surface Mach numbers for upper and lower rotor surface
         # in relative reference frame
         self.separation_margin = separation_margin
-        # Validate manufacturing inputs and store the optional upstream chord allowance.
+
+        # Validate manufacturing inputs and store the optional upstream chord scale that accounts for flow turning
+        # upstream the throat.
         if not np.isfinite(separation_margin) or not 0 < separation_margin < 1:
             raise ValueError("separation_margin must be strictly between zero and one.")
         if not np.all(np.isfinite([t_min_stator, t_min_rotor])) or min(t_min_stator, t_min_rotor) < 0:
@@ -81,7 +82,7 @@ class SupersonicTurbine:
             raise ValueError("no_blades_stator must be a positive integer.")
         if no_nozzles == 1:
             self.Turbine1D_arguments["t_TE_stator"] = 0.
-            # A local single nozzle starts with partial admission rather than an annulus-spanning meanline chord.
+            # Initial estimate for admission fraction is 0.1.
             self.Turbine1D_arguments.setdefault("admission_fraction", 0.1)
         # Rotor and stator objects from SupersonicTurbineBlading can adjust the blading to achieve flow angles from
         # meanline design. However, in this case, they cannot adjust the blading to achieve some real Mach number after
@@ -93,20 +94,15 @@ class SupersonicTurbine:
         # should be removed here. Raise a user warning about it too.
         for arguments, option in ((self.SupersonicStatorNozzle_arguments, "match_real_outlet_absolute_flow_mach"),
                                   (self.SupersonicRotorBlades_arguments, "match_real_outlet_mach")):
-            # Remove each matching control independently; the two APIs use different names.
             if arguments.pop(option, False):
                 warnings.warn(f"{option} is disabled: matching mixed Mach would count meanline losses twice.",
                               UserWarning, stacklevel=2)
 
         # Define a function that calculates new values of design variables from evaluate_design based on assumed ones
-        self.coupling_evaluations = 0
-        # Keep NumPy vectors opaque at the SciPy callback boundary: older PyCharm versions recursively expand
-        # NumPy's generic operator types here. Scalar inputs and returned design objects retain explicit types.
         def calculate_new_solution(x_0: Any) -> tuple[Any, Turbine1D, blading.SupersonicStatorNozzle,
                                                       blading.SupersonicRotorBlade, dict[str, float]]:
             """Return the five obtained design variables and their associated design objects."""
-            # Count full meanline/blading evaluations, including fallback finite differences.
-            self.coupling_evaluations += 1
+
             # If there are multiple nozzles, one of such variables is t_TE_stator
             if no_nozzles != 1:
                 # Unpack input arguments
@@ -123,6 +119,7 @@ class SupersonicTurbine:
                     self.evaluate_design(meanline_arguments, t_LE_rotor=t_LE_rotor)
                 # Obtain new estimate of design values from residuals
                 x_1 = np.add(x_0, residuals)
+
             # If there is just one nozzle, t_TE_stator is always zero. However, admission fraction must be now
             # variable to adjust
             else:
@@ -140,10 +137,7 @@ class SupersonicTurbine:
                     self.evaluate_design(meanline_arguments, t_LE_rotor=t_LE_rotor)
                 # Obtain new estimate of design values from residuals
                 x_1 = np.add(x_0, residuals)
-            # Retain the best valid trial for a bounded least-squares fallback and final diagnostics.
-            normalized_residual = np.divide(np.subtract(x_1, x_0), solution_scales)
-            if np.linalg.norm(normalized_residual) < best_trial[0]:
-                best_trial[:] = [np.linalg.norm(normalized_residual), np.array(x_0, copy=True)]
+
             # Return new solution estimate together with remaining results
             return x_1, turbine_meanline, stator_shape, rotor_shape, coefficients
 
@@ -161,9 +155,9 @@ class SupersonicTurbine:
                                   self.Turbine1D_arguments["t_TE_rotor"],
                                   self.Turbine1D_arguments.get("admission_fraction", 1.)], dtype=float)
 
-        # Use numerical solver to that will create a consistent design, in which values assumed for sizing
-        # in Turbine1D are equivalent to those obtained from SupersonicTurbineBlading. Use Aitken's scheme.
-        # Use fixed Euler-radius pitches to bound thicknesses and normalize length and dimensionless variables.
+        # Numerical solver is used that will create a consistent design, in which values assumed for sizing
+        # in Turbine1D are equivalent to those obtained from SupersonicTurbineBlading. Aitken's scheme is used for this.
+        # First, use fixed Euler-radius pitches to bound thicknesses and normalize length and dimensionless variables.
         arguments = self.Turbine1D_arguments
         radius = np.sqrt(arguments["shaft_power"] / arguments["mdot"] / arguments["work_coefficient_tt"]) \
                  / (arguments["RPM"] * np.pi / 30.)
@@ -171,73 +165,45 @@ class SupersonicTurbine:
         # LE controls the shape scale independently of the TE thickness used by the meanline loss model.
         initial_LE = self.SupersonicRotorBlades_arguments.get(
             "leading_edge_thickness_over_total_pitch", x_initial[2] / rotor_pitch) * rotor_pitch
+        # Assemble initial solution array
         x_initial = np.append(x_initial, initial_LE)
+        # Create upper and lower bounds for the solution
         lower = np.array([1e-8, 1e-8, 0., 0. if no_nozzles > 1 else 1e-6, 0.])
         upper = np.array([np.inf, np.inf, 0.95 * rotor_pitch,
                           0.95 * arguments.get("admission_fraction", 1.) * 2 * np.pi * radius / no_nozzles
                           if no_nozzles > 1 else 1., 0.95 * rotor_pitch])
+        # Create solution scales for normalizing it.
         solution_scales = np.array([max(x_initial[0], 1.), max(x_initial[1], 1.), rotor_pitch,
                                     upper[3] if no_nozzles > 1 else max(x_initial[3], 0.01), rotor_pitch])
         if not np.all(np.isfinite(x_initial)) or np.any(x_initial < lower) or np.any(x_initial > upper):
             raise ValueError("Initial coupling estimates must be finite and within positive pitch/thickness bounds.")
-        best_trial: list[Any] = [np.inf, x_initial.copy()]
 
-        # Solve in normalized coordinates so all five equations receive the same residual tolerance.
+        # Define a function to extract new design variables from calculate_new_solution based on their assumed,
+        # normalized values. These new values are also normalized by the solution scales.
         def normalized_mapping(values: Any) -> Any:
             """Evaluate the fixed-point map using fixed component scales."""
             return np.divide(calculate_new_solution(np.multiply(values, solution_scales))[0], solution_scales)
 
-        try:
-            x_solution = np.multiply(solution_scales, solve_with_relaxed_aitken(
-                normalized_mapping, np.divide(x_initial, solution_scales), initial_relaxation=0.3,
-                min_relaxation=0.05, max_relaxation=0.8, xtol=1e-7, maxiter=15,
-                bounds=(np.divide(lower, solution_scales), np.divide(upper, solution_scales))))
-            self.coupling_solver = "relaxed_aitken"
-        except (ValueError, RuntimeError, ArithmeticError) as aitken_error:
-            # Require one valid design before fallback: an invalid initial geometry is not a convergence problem.
-            if not np.isfinite(best_trial[0]):
-                try:
-                    calculate_new_solution(x_initial)
-                except (ValueError, RuntimeError, ArithmeticError) as domain_error:
-                    raise ValueError(f"Initial supersonic design is outside the model domain: {domain_error}") from domain_error
-
-            # Keep the domain-rejection cost fixed and above the best valid starting cost.
-            rejection_cost = 10 * (1 + best_trial[0])
-            def normalized_residual(values: Any) -> Any:
-                """Return physical residuals, or a finite rejection cost for an out-of-domain trial."""
-                try:
-                    return np.subtract(normalized_mapping(values), values)
-                except (ValueError, RuntimeError, ArithmeticError):
-                    # A cost above every retained valid trial makes SciPy shrink the step at a domain boundary.
-                    # This barrier is never accepted as a converged design: final residuals are evaluated directly.
-                    return np.full(values.shape, rejection_cost)
-
-            # Restart from the best valid Aitken iterate, using bounds and the same normalization.
-            try:
-                solution = least_squares(normalized_residual, np.divide(best_trial[1], solution_scales),
-                                         bounds=(np.divide(lower, solution_scales), np.divide(upper, solution_scales)),
-                                         method="trf", jac="3-point",
-                                         xtol=1e-9, ftol=1e-9, gtol=1e-13, max_nfev=30)
-            except (ValueError, RuntimeError, ArithmeticError) as fallback_error:
-                raise RuntimeError("Supersonic coupling fallback encountered an invalid trial; revise initial "
-                                   f"estimates or design inputs. Aitken: {aitken_error}. "
-                                   f"Fallback: {fallback_error}.") from fallback_error
-            x_solution = np.multiply(solution.x, solution_scales)
-            self.coupling_solver = "least_squares"
+        # Solve the coupling with bounded relaxed Aitken. Bounds and initial solution are scaled. Since the solver
+        # calls normalized_mapping which also operates on normalized values, x_scale argument for
+        # solve_with_relaxed_aitken can be default one. However, the final solution must be scaled to obtain it in
+        # desirable dimensions.
+        x_solution = np.multiply(solution_scales, solve_with_relaxed_aitken(
+            normalized_mapping, np.divide(x_initial, solution_scales), initial_relaxation=0.3,
+            min_relaxation=0.05, max_relaxation=0.8, xtol=1e-7, maxiter=15,
+            bounds=(np.divide(lower, solution_scales), np.divide(upper, solution_scales))))
 
         # Obtain consistent design objects after solution was found
-        obtained, self.turbine_meanline, self.stator_shape, self.rotor_shape, coefficients = \
+        x_converged, self.turbine_meanline, self.stator_shape, self.rotor_shape, coefficients = \
             calculate_new_solution(x_solution)
         # Check actual residuals even if a solver reports success or stops with a small step.
-        self.coupling_residuals = np.subtract(obtained, x_solution)
-        self.normalized_coupling_residuals = np.divide(self.coupling_residuals, solution_scales)
-        if not np.all(np.isfinite(obtained)) or np.max(np.abs(self.normalized_coupling_residuals)) >= 1e-6:
-            raise RuntimeError(f"Supersonic turbine coupling did not converge: {self.normalized_coupling_residuals}.")
-        self.solution = x_solution.copy()
-        self.geometry = coefficients
-        # Expose the independent projected LE and the contour-derived TE in metres.
-        self.t_LE_rotor = coefficients["rotor_contour_LE_thickness"]
-        self.t_TE_rotor = coefficients["rotor_contour_TE_thickness"]
+        coupling_residuals = np.subtract(x_converged, x_solution)
+        normalized_coupling_residuals = np.divide(coupling_residuals, solution_scales)
+        if not np.all(np.isfinite(x_converged)) or np.max(np.abs(normalized_coupling_residuals)) >= 1e-6:
+            raise RuntimeError(f"Supersonic turbine coupling did not converge: {normalized_coupling_residuals}.")
+
+        # Store the independent projected LE thickness in Turbine1D.
+        self.turbine_meanline.t_LE_rotor = coefficients["rotor_contour_LE_thickness"]
         # Save optimality coefficients
         # Coefficient for height is valid for all nozzles
         self.height_optimality = coefficients["height_optimality"]
@@ -249,10 +215,7 @@ class SupersonicTurbine:
         # thickness is always satisfied explicitly during calculating width of the nozzle exit. Consequently, in that case
         # this coefficient will be always 0.
         self.t_TE_stator_min_margin = coefficients["t_TE_stator_min_margin"]
-        # Warn once about infeasible exit packing while retaining signed diagnostics for an outer optimizer.
-        if self.height_optimality > 1e-8 or self.t_TE_stator_min_margin < -1e-8:
-            warnings.warn("Consistent design has infeasible stator exit packing; inspect height_optimality and "
-                          "t_TE_stator_min_margin (m).", UserWarning, stacklevel=2)
+
     def evaluate_design(self, meanline_arguments: dict[str, Any], *, t_LE_rotor: float | None = None
                         ) -> tuple[Any, Turbine1D, blading.SupersonicStatorNozzle,
                                    blading.SupersonicRotorBlade, dict[str, float]]:
@@ -413,9 +376,12 @@ class SupersonicTurbine:
         # at station 2 that assumes isentropic expansion through the rotor
         # Independent evaluations use the converged LE unless an explicit trial thickness is supplied.
         if t_LE_rotor is None:
-            t_LE_rotor = getattr(self, "t_LE_rotor", self.SupersonicRotorBlades_arguments.get(
-                "leading_edge_thickness_over_total_pitch", turbine_meanline.t_TE_rotor / turbine_meanline.p_rotor)
-                * turbine_meanline.p_rotor)
+            if hasattr(self, "turbine_meanline"):
+                t_LE_rotor = self.turbine_meanline.t_LE_rotor
+            else:
+                t_LE_rotor = self.SupersonicRotorBlades_arguments.get(
+                    "leading_edge_thickness_over_total_pitch", turbine_meanline.t_LE_rotor / turbine_meanline.p_rotor
+                ) * turbine_meanline.p_rotor
         if not np.isfinite(t_LE_rotor) or not 0 <= t_LE_rotor < turbine_meanline.p_rotor:
             raise ValueError("t_LE_rotor must be finite and in [0, rotor pitch).")
         rotor_arguments = {**self.SupersonicRotorBlades_arguments,
