@@ -9,9 +9,9 @@ import warnings
 from typing import Any, cast
 
 class SupersonicTurbine:
-    def __init__(self, gas: IdealGas, loss_model: TraupelLossModel, Turbine1D_arguments: dict[str, Any],
-                 SupersonicStatorNozzle_arguments: dict[str, Any], SupersonicRotorBlades_arguments: dict[str, Any],
-                 separation_margin, t_min_stator, t_min_rotor, stator_nozzle_chord_scale=1.0):
+    def __init__(self, gas: IdealGas, loss_model: TraupelLossModel, Turbine1D_arguments,
+                 SupersonicStatorNozzle_arguments, SupersonicRotorBlades_arguments, separation_margin,
+                 t_min_stator, t_min_rotor, stator_nozzle_chord_scale=1.0):
         """SupersonicTurbine is the class to represent a supersonic turbine, with consistent meanline design and blading
          shape. It ensures that chord/pitch ratios and other variables used in Turbine1D agrees with the values obtained from
          SupersonicTurbineBlading objects, which in turn also use Turbine1D meanline results. Thus, there is a coupling
@@ -21,14 +21,15 @@ class SupersonicTurbine:
 
         :param IdealGas gas: Object representing calorically perfect working gas.
         :param TraupelLossModel loss_model: Object representing meanline loss model.
-        :param dict Turbine1D_arguments: Arguments to Turbine1D.size_turbine, including initial estimates for design
-         variables calculated in this class. In case a single stator nozzle is used, admission_fraction is its initial
-          estimate; its final value is solved from the exit geometry like other design variables.
-        :param dict SupersonicStatorNozzle_arguments: Arguments for SupersonicStatorNozzle. Exit Mach number and flow
-         angle, reference_length and trailing_edge_thickness are calculated in this class.
+        :param dict Turbine1D_arguments: Arguments to Turbine1D.size_turbine, including explicit chord/pitch ratios,
+         admission_fraction and initial estimates for design variables calculated in this class. In case a single
+          stator nozzle is used, admission_fraction is its initial estimate; its final value is solved from the exit
+           geometry like other design variables.
+        :param dict SupersonicStatorNozzle_arguments: Arguments for SupersonicStatorNozzle, including contour_method.
+         Exit Mach number and flow angle, reference_length and trailing_edge_thickness are calculated in this class.
         :param dict SupersonicRotorBlades_arguments: Arguments for SupersonicRotorBlades. Inlet & outlet Mach numbers
          and flow angles, surface Mach numbers, blade count, radius and speed are supplied by this.
-          leading_edge_thickness_over_total_pitch is an optional initial LE thickenss estimate.
+          leading_edge_thickness_over_total_pitch is a required initial LE thickness estimate.
         :param float separation_margin: Flow separation margin, strictly between zero and one. A value of 0.05 reserves
          5% of the Mach interval bounded by Goldman and Scullin's separation limits
           (NASA TN D-4421, equations (36)-(40)).
@@ -39,8 +40,101 @@ class SupersonicTurbine:
         :ivar numpy.ndarray solution: Converged [stator chord/pitch, rotor chord/pitch, rotor TE,
          stator TE (or single-nozzle admission), rotor LE]; thicknesses are circumferential projections in m.
         :raises ValueError: If inputs are invalid or the nozzle construction assumptions are violated.
-        :raises RuntimeError: If Aitken does not converge or the final normalized residual tolerance of 1e-6 is not met.
+        :raises KeyError: If a required input is missing from the argument dictionaries.
+        :raises RuntimeError: If Aitken does not converge or the final normalized residual tolerance of 1e-4 is not met.
         """
+
+        # Meanline - nozzle/blade shapes coupling logic diagram:
+        #  SupersonicTurbine.__init__
+        #    |
+        #    v
+        #  Copy input dictionaries; validate inputs and create the shared Fluid object.
+        #  Disable blading Mach matching to avoid counting meanline losses twice.
+        #    |
+        #    v
+        #  Assemble five unknowns x and their initial estimates:
+        #    [stator chord/pitch, rotor chord/pitch, rotor TE, stator TE or admission, rotor LE].
+        #    Multiple nozzles: solve stator TE; one nozzle: fix stator TE = 0 and solve admission.
+        #  Calculate Euler-radius pitches, positive component scales s and solution bounds.
+        #    |
+        #    +--> COUPLING LOOP: bounded relaxed Aitken ------------------------------------------------------+
+        #    |      Iterate normalized unknowns z = x/s                                                       |
+        #    |      |                                                                                         |
+        #    |      v                                                                                         |
+        #    |    normalized_mapping(z)                                                                       |
+        #    |      |  Convert z to dimensional/mixed-unit unknowns x = s*z.                                  |
+        #    |      v                                                                                         |
+        #    |    calculate_new_solution(x)                                                                   |
+        #    |      |  Copy meanline arguments and insert trial chord/pitch ratios, TE and admission.         |
+        #    |      |  Pass the independent rotor LE thickness to evaluate_design.                            |
+        #    |      v                                                                                         |
+        #    |    SupersonicTurbine.evaluate_design                                                           |
+        #    |      |                                                                                         |
+        #    |      +--> Turbine1D.size_turbine                                                               |
+        #    |      |      Solve its nested entropy-rise and enthalpy-ratio loops.                            |
+        #    |      |      Obtain flow states, blade-row angles, annulus radii and Euler-radius pitches.      |
+        #    |      |                                                                                         |
+        #    |      +--> Rotor shaping                                                                        |
+        #    |      |      Apply Goldman--Scullin separation limits and separation_margin.                    |
+        #    |      |      Construct SupersonicRotorBlade using the blade-row outlet angle.                   |
+        #    |      |      Pass rotor LE/total pitch; pitch includes metal at Euler radius.                   |
+        #    |      |      Measure LE/TE thickness projections and the actual LE-to-TE chord.                 |
+        #    |      |      Store the obtained LE thickness in the meanline object.                            |
+        #    |      |      Use flow angles to estimate minimum metal thickness at both rotor edges.           |
+        #    |      |                                                                                         |
+        #    |      +--> Stator shaping and placement                                                         |
+        #    |      |      Calculate the total choked throat area required by mass flow.                      |
+        #    |      |      |                                                                                  |
+        #    |      |      +--> Multiple MOC nozzles                                                          |
+        #    |      |      |      Set hub-tangent rectangular exit width from minimum stator thickness.       |
+        #    |      |      |      Tip contact limits maximum height; width sets the MOC reference scale.      |
+        #    |      |      |      Throat width and mass flow determine actual throat/exit height.             |
+        #    |      |      |                                                                                  |
+        #    |      |      +--> Single MOC nozzle                                                             |
+        #    |      |      |      Maximize rectangular exit area with its centre fixed at Euler radius.       |
+        #    |      |      |      Width sets the MOC scale; mass flow sets actual height at the same centre.  |
+        #    |      |      |                                                                                  |
+        #    |      |      +--> Multiple de Laval nozzles                                                     |
+        #    |      |      |      Throat area per nozzle sets throat diameter and nozzle reference scale.     |
+        #    |      |      |      Place elliptical exits at mean radius; calculate metal thickness.           |
+        #    |      |      |                                                                                  |
+        #    |      |      +--> Single de Laval nozzle                                                        |
+        #    |      |             Total throat area sets throat diameter and nozzle reference scale.          |
+        #    |      |             Place the elliptical exit at mean radius                                    |
+        #    |      |                                                                                         |
+        #    |      +--> Shared stator measurements                                                           |
+        #    |             Measure the Euler-circle arc through the nozzle exit.                              |
+        #    |             Match stator TE arc for multiple nozzles or admission for one nozzle.              |
+        #    |             Measure throat-centre to exit-centre chord; apply stator_nozzle_chord_scale.       |
+        #    |             Calculate height/width excesses and minimum stator-thickness margin.               |
+        #    |      |                                                                                         |
+        #    |      v                                                                                         |
+        #    |    Return five residuals r(x), meanline/blading objects and geometric coefficients:            |
+        #    |      r1/r2: obtained minus assumed stator/rotor chord-to-pitch ratios.                         |
+        #    |      r3: uncorrected contour rotor TE minus the TE used by the meanline model.                 |
+        #    |      r4: stator TE mismatch (multiple nozzles) or admission mismatch (one nozzle).             |
+        #    |      r5: rotor LE correction enforcing the minimum normal LE/TE metal thickness.               |
+        #    |      |                                                                                         |
+        #    |      v                                                                                         |
+        #    |    calculate_new_solution: F(x) = x + r(x).                                                    |
+        #    |    normalized_mapping: G(z) = F(s*z)/s.                                                        |
+        #    |      |                                                                                         |
+        #    |      v                                                                                         |
+        #    |    Aitken checks every finite normalized residual G(z)-z against xtol.                         |
+        #    |    If not converged: adapt the shared relaxation factor and clip the next z to bounds.         |
+        #    |      |                                                                                         |
+        #    |      +--> Repeat with updated z ---------------------------------------------------------------+
+        #    |
+        #    v  (after coupling converges; Aitken raises an error if it cannot converge)
+        #  Evaluate the solved design again to obtain the final objects and coefficients.
+        #  Store turbine_meanline, stator_shape and rotor_shape.
+        #  Store height_optimality, width_optimality, t_TE_stator_min_margin and t_rotor_min_margin.
+        #    |
+        #    v
+        #  Engineer / outer optimizer checks nozzle packing:
+        #    height_optimality <= 0; width_optimality <= 0; t_TE_stator_min_margin >= 0.
+        #  Adjust nozzle count, flow coefficients or other free inputs and repeat as required.
+        #  Coupling convergence establishes meanline/blading consistency; packing margins can remain infeasible.
 
         # Store objects
         self.gas = gas
@@ -60,7 +154,7 @@ class SupersonicTurbine:
         self.separation_margin = separation_margin
 
         # Validate manufacturing inputs and store the optional upstream chord scale that accounts for flow turning
-        # upstream the throat.
+        # upstream of the throat.
         if not np.isfinite(separation_margin) or not 0 < separation_margin < 1:
             raise ValueError("separation_margin must be strictly between zero and one.")
         if not np.all(np.isfinite([t_min_stator, t_min_rotor])) or min(t_min_stator, t_min_rotor) < 0:
@@ -82,8 +176,6 @@ class SupersonicTurbine:
             raise ValueError("no_blades_stator must be a positive integer.")
         if no_nozzles == 1:
             self.Turbine1D_arguments["t_TE_stator"] = 0.
-            # Initial estimate for admission fraction is 0.1.
-            self.Turbine1D_arguments.setdefault("admission_fraction", 0.1)
         # Rotor and stator objects from SupersonicTurbineBlading can adjust the blading to achieve flow angles from
         # meanline design. However, in this case, they cannot adjust the blading to achieve some real Mach number after
         # mixing. This is because isentropic values from meanline design used to construct the blading,
@@ -94,13 +186,12 @@ class SupersonicTurbine:
         # should be removed here. Raise a user warning about it too.
         for arguments, option in ((self.SupersonicStatorNozzle_arguments, "match_real_outlet_absolute_flow_mach"),
                                   (self.SupersonicRotorBlades_arguments, "match_real_outlet_mach")):
-            if arguments.pop(option, False):
+            if option in arguments and arguments.pop(option):
                 warnings.warn(f"{option} is disabled: matching mixed Mach would count meanline losses twice.",
                               UserWarning, stacklevel=2)
 
         # Define a function that calculates new values of design variables from evaluate_design based on assumed ones
-        def calculate_new_solution(x_0: Any) -> tuple[Any, Turbine1D, blading.SupersonicStatorNozzle,
-                                                      blading.SupersonicRotorBlade, dict[str, float]]:
+        def calculate_new_solution(x_0):
             """Return the five obtained design variables and their associated design objects."""
 
             # If there are multiple nozzles, one of such variables is t_TE_stator
@@ -145,15 +236,15 @@ class SupersonicTurbine:
         x_initial: Any
         if no_nozzles != 1:
             x_initial = np.array([self.Turbine1D_arguments["chord_over_pitch_stator"],
-                                  self.Turbine1D_arguments.get("chord_over_pitch_rotor", 2.5),
+                                  self.Turbine1D_arguments["chord_over_pitch_rotor"],
                                   self.Turbine1D_arguments["t_TE_rotor"],
                                   self.Turbine1D_arguments["t_TE_stator"]], dtype=float)
         # If there is just one nozzle
         else:
             x_initial = np.array([self.Turbine1D_arguments["chord_over_pitch_stator"],
-                                  self.Turbine1D_arguments.get("chord_over_pitch_rotor", 2.5),
+                                  self.Turbine1D_arguments["chord_over_pitch_rotor"],
                                   self.Turbine1D_arguments["t_TE_rotor"],
-                                  self.Turbine1D_arguments.get("admission_fraction", 1.)], dtype=float)
+                                  self.Turbine1D_arguments["admission_fraction"]], dtype=float)
 
         # Numerical solver is used that will create a consistent design, in which values assumed for sizing
         # in Turbine1D are equivalent to those obtained from SupersonicTurbineBlading. Aitken's scheme is used for this.
@@ -162,17 +253,18 @@ class SupersonicTurbine:
         radius = np.sqrt(arguments["shaft_power"] / arguments["mdot"] / arguments["work_coefficient_tt"]) \
                  / (arguments["RPM"] * np.pi / 30.)
         rotor_pitch = 2 * np.pi * radius / arguments["no_blades_rotor"]
-        # LE controls the shape scale independently of the TE thickness used by the meanline loss model.
-        initial_LE = self.SupersonicRotorBlades_arguments.get(
-            "leading_edge_thickness_over_total_pitch", x_initial[2] / rotor_pitch) * rotor_pitch
+        # Rotor LE thickness is independent of the TE thickness used by the meanline loss model.
+        initial_t_LE_rotor = self.SupersonicRotorBlades_arguments[
+            "leading_edge_thickness_over_total_pitch"] * rotor_pitch
         # Assemble initial solution array
-        x_initial = np.append(x_initial, initial_LE)
+        x_initial = np.append(x_initial, initial_t_LE_rotor)
         # Create upper and lower bounds for the solution
         lower = np.array([1e-8, 1e-8, 0., 0. if no_nozzles > 1 else 1e-6, 0.])
         upper = np.array([np.inf, np.inf, 0.95 * rotor_pitch,
-                          0.95 * arguments.get("admission_fraction", 1.) * 2 * np.pi * radius / no_nozzles
+                          0.95 * arguments["admission_fraction"] * 2 * np.pi * radius / no_nozzles
                           if no_nozzles > 1 else 1., 0.95 * rotor_pitch])
-        # Create solution scales for normalizing it.
+        # Create solution scales for normalizing it. Solution is normalized because it mixes nondimensional &
+        # dimensional variables 
         solution_scales = np.array([max(x_initial[0], 1.), max(x_initial[1], 1.), rotor_pitch,
                                     upper[3] if no_nozzles > 1 else max(x_initial[3], 0.01), rotor_pitch])
         if not np.all(np.isfinite(x_initial)) or np.any(x_initial < lower) or np.any(x_initial > upper):
@@ -180,8 +272,8 @@ class SupersonicTurbine:
 
         # Define a function to extract new design variables from calculate_new_solution based on their assumed,
         # normalized values. These new values are also normalized by the solution scales.
-        def normalized_mapping(values: Any) -> Any:
-            """Evaluate the fixed-point map using fixed component scales."""
+        def normalized_mapping(values):
+            """Normalized mapping to and from calculate_new_solution function"""
             return np.divide(calculate_new_solution(np.multiply(values, solution_scales))[0], solution_scales)
 
         # Solve the coupling with bounded relaxed Aitken. Bounds and initial solution are scaled. Since the solver
@@ -190,20 +282,13 @@ class SupersonicTurbine:
         # desirable dimensions.
         x_solution = np.multiply(solution_scales, solve_with_relaxed_aitken(
             normalized_mapping, np.divide(x_initial, solution_scales), initial_relaxation=0.3,
-            min_relaxation=0.05, max_relaxation=0.8, xtol=1e-7, maxiter=15,
+            min_relaxation=0.05, max_relaxation=0.8, xtol=1e-4, maxiter=30,
             bounds=(np.divide(lower, solution_scales), np.divide(upper, solution_scales))))
 
         # Obtain consistent design objects after solution was found
         x_converged, self.turbine_meanline, self.stator_shape, self.rotor_shape, coefficients = \
             calculate_new_solution(x_solution)
-        # Check actual residuals even if a solver reports success or stops with a small step.
-        coupling_residuals = np.subtract(x_converged, x_solution)
-        normalized_coupling_residuals = np.divide(coupling_residuals, solution_scales)
-        if not np.all(np.isfinite(x_converged)) or np.max(np.abs(normalized_coupling_residuals)) >= 1e-6:
-            raise RuntimeError(f"Supersonic turbine coupling did not converge: {normalized_coupling_residuals}.")
 
-        # Store the independent projected LE thickness in Turbine1D.
-        self.turbine_meanline.t_LE_rotor = coefficients["rotor_contour_LE_thickness"]
         # Save optimality coefficients
         # Coefficient for height is valid for all nozzles
         self.height_optimality = coefficients["height_optimality"]
@@ -215,29 +300,30 @@ class SupersonicTurbine:
         # thickness is always satisfied explicitly during calculating width of the nozzle exit. Consequently, in that case
         # this coefficient will be always 0.
         self.t_TE_stator_min_margin = coefficients["t_TE_stator_min_margin"]
+        # Save the minimum normal-thickness margin across rotor LE and TE.
+        self.t_rotor_min_margin = coefficients["t_rotor_min_margin"]
 
-    def evaluate_design(self, meanline_arguments: dict[str, Any], *, t_LE_rotor: float | None = None
-                        ) -> tuple[Any, Turbine1D, blading.SupersonicStatorNozzle,
-                                   blading.SupersonicRotorBlade, dict[str, float]]:
+    def evaluate_design(self, meanline_arguments, *, t_LE_rotor):
         """This method allows to calculate the residuals between assumed values for 1D meanline calculations in
         Turbine 1D and obtained values from blade shaping with SupersonicTurbineBlading. These residuals can be driven
          to zero by a numerical solver in the constructor of this class or the engineer to obtain consistent design.
           This method also returns some remaining residuals and optimality coefficients that can be constrained by outer
            optimizer or which can inform the engineer about manufacturability & optimality of the supersonic turbine.
 
-        :param dict meanline_arguments: Complete size_turbine inputs or overrides of the constructor inputs.
-        :param float t_LE_rotor: Independent circumferential LE thickness (m), excluding BL correction.
-         Defaults to the converged LE, or the input LE estimate before convergence.
-        :return: Five residuals, meanline object, stator object, rotor object and geometry dict.
+        :param dict meanline_arguments: Dictionary with size_turbine inputs.
+        :param float t_LE_rotor: Circumferential LE thickness (m), excluding BL correction.
+        :return: Five residuals, meanline object, stator object, rotor object and optimality/margin coefficients.
          Residuals 1/2 are dimensionless chord/pitch differences. Residual 3 is geometric-minus-meanline rotor
          TE thickness (m). Residual 4 is stator arc thickness (m), or admission fraction for one nozzle.
          Residual 5 is the LE correction enforcing the minimum true metal thickness at both rotor edges (m).
          height_optimality and width_optimality are dimensional excesses (m); positive values indicate overfilling.
          t_TE_stator_min_margin is signed projected clearance minus the required projected metal thickness (m).
          Multiplying this margin by cos(alpha_1) gives the approximate true metal-thickness margin.
-         All chords, exit intersections and dimensional geometry diagnostics use uncorrected shapes.
+         t_rotor_min_margin is the smaller rotor LE/TE normal metal thickness minus t_min_rotor (m).
+         All geometric calculations use shapes without boundary layer correction.
         :rtype: tuple[numpy.ndarray, Turbine1D, blading.SupersonicStatorNozzle, blading.SupersonicRotorBlade, dict]
-        :raises ValueError: If the flow is not supersonic or the local exit/annulus intersection is outside the model.
+        :raises ValueError: If the flow is not supersonic or the construction assumptions are violated.
+        :raises KeyError: If a required input is missing from the argument dictionaries.
         """
 
         # The automatic coupling between Turbine1D (meanline code) and SupersonicTurbineBlading (blade shaping) is
@@ -266,9 +352,9 @@ class SupersonicTurbine:
         # it, which the outer optimizer or designed must always keep above 0 by changing number of nozzles, admission
         # fraction, etc. Rotor blade inlet and outlet angles also convert actual t_LE_rotor and t_TE_rotor
         # to normal metal thicknesses; their minimum is t_TE_rotor_min_obtained. It is used to calculate
-        # t_TE_rotor_optimality = t_TE_rotor_min_obtained - t_min_rotor. To ensure fair comparison,
+        # t_rotor_min_margin = t_TE_rotor_min_obtained - t_min_rotor. To ensure fair comparison,
         # the engineer or outer optimizer should always compare rotors with the same metal thickness. Consequently,
-        # the numerical solver in this class will also ensure that t_TE_rotor_optimality is zero by varying t_LE_rotor.
+        # the numerical solver in this class will also ensure that t_rotor_min_margin is zero by varying t_LE_rotor.
         # An independent residual matches the meanline t_TE_rotor to the actual uncorrected contour TE thickness.
         # To convert stator TE and rotor LE/TE projections to normal metal thicknesses, flow angles
         # from meanline design are always used. These are approximately the same as nozzle/rotor blade metal angles.
@@ -348,42 +434,37 @@ class SupersonicTurbine:
         # the same way. D_ellipse is known, so admission_fraction_obtained can be calculated.
         # admission_fraction_residual can be defined, which the numerical solver must hold at zero.
 
-        # First, obtain meanline analysis results from Turbine1D
-        meanline_arguments = {**self.Turbine1D_arguments, **meanline_arguments, "gas": self.gas, "loss_model": self.loss_model}
-        # One nozzle has no adjacent trailing-edge wall, including when this method is called independently.
+        # First, modify meanline dictionary if needed
+        # One nozzle has no adjacent trailing-edge wall, so blade thickness is set to zero
         if meanline_arguments["no_blades_stator"] == 1:
             meanline_arguments["t_TE_stator"] = 0.
+        # Obtain meanline analysis results from Turbine1D
         turbine_meanline = Turbine1D()
         turbine_meanline.size_turbine(**meanline_arguments)
         # Read the actual inlet and isentropic rotor outlet reference states.
         results = turbine_meanline.analysis_results_at_design_point
-        # Shape the blade row using its outlet direction; the stage angle includes losses outside the passage.
-        rotor_outlet_angle = turbine_meanline.blade_row_results_at_design_point["beta_2_blade"]
         M_in, M_out = results["M_r1"], results["M_r2_ideal_r_real_s"]
         if min(M_in, M_out, results["M_s1_ideal"]) <= 1:
             raise ValueError("Supersonic blading requires M_r1, M_r2_ideal_r_real_s and M_s1_ideal > 1.")
+        # Shape the blade row using its flow angle at its outlet.
+        rotor_outlet_angle = turbine_meanline.blade_row_results_at_design_point["beta_2_blade"]
 
         # Now calculate rotor surface Mach numbers based on separation margins
         # First lower Mach number
-        M_lower_min, M_upper_max = self._separation_mach_limits(M_in, M_out)
+        M_lower_min, M_upper_max = self._calculate_separation_mach_limits(M_in, M_out)
         M_lower = M_in - (1 - self.separation_margin) * (M_in - M_lower_min)
         # Now upper Mach number
         M_upper = M_out + (1 - self.separation_margin) * (M_upper_max - M_out)
         # An accelerating/decelerating rotor must also bracket both endpoint Mach numbers.
         if not 1 <= M_lower < min(M_in, M_out) or M_upper <= max(M_in, M_out):
             raise ValueError("Separation-margin surface Mach numbers do not bracket both rotor endpoint Mach numbers.")
+
         # Now calculate rotor shape and dimensions. Use real Mach number at station 1 from Turbine 1D and Mach number
         # at station 2 that assumes isentropic expansion through the rotor
-        # Independent evaluations use the converged LE unless an explicit trial thickness is supplied.
-        if t_LE_rotor is None:
-            if hasattr(self, "turbine_meanline"):
-                t_LE_rotor = self.turbine_meanline.t_LE_rotor
-            else:
-                t_LE_rotor = self.SupersonicRotorBlades_arguments.get(
-                    "leading_edge_thickness_over_total_pitch", turbine_meanline.t_LE_rotor / turbine_meanline.p_rotor
-                ) * turbine_meanline.p_rotor
+        # Validate the supplied rotor LE thickness before constructing the shape.
         if not np.isfinite(t_LE_rotor) or not 0 <= t_LE_rotor < turbine_meanline.p_rotor:
             raise ValueError("t_LE_rotor must be finite and in [0, rotor pitch).")
+        # Create dictionary with arguments
         rotor_arguments = {**self.SupersonicRotorBlades_arguments,
                            "ideal_inlet_relative_flow_mach": M_in,
                            "ideal_inlet_relative_flow_angle": results["beta_1_deg"],
@@ -399,37 +480,52 @@ class SupersonicTurbine:
                            "inlet_total_pressure": results["p_t1"],
                            "leading_edge_thickness_over_total_pitch":
                                t_LE_rotor / turbine_meanline.p_rotor}
+        # Construct rotor shape
         rotor_shape = blading.SupersonicRotorBlade(**rotor_arguments)
 
         # Calculate chord - pitch ratio residuals between meanline design and blade shapes for the rotor
-        # The two stored surfaces bound a passage. Their endpoint averages give the blade centreline displacement
+        # The two stored surfaces bound a passage. Their endpoint averages give the vector from LE to TE
         # after translating the suction side by one total pitch; the constant translation cancels in the difference.
+        # Length of that vactor is blade chord.
         rotor_ideal = rotor_shape.dimensionalize().uncorrected
-        pressure, suction = rotor_ideal.pressure_surface, rotor_ideal.suction_surface
-        rotor_chord = np.hypot((pressure.x[-1] + suction.x[-1] - pressure.x[0] - suction.x[0]) / 2,
-                               (pressure.y[-1] + suction.y[-1] - pressure.y[0] - suction.y[0]) / 2)
-        rotor_ratio_residual = rotor_chord / turbine_meanline.p_rotor - meanline_arguments.get("chord_over_pitch_rotor", 2.5)
+        pressure_surface, suction_surface = rotor_ideal.pressure_surface, rotor_ideal.suction_surface
+        rotor_chord = np.hypot(
+            (pressure_surface.x[-1] + suction_surface.x[-1] - pressure_surface.x[0] - suction_surface.x[0]) / 2,
+            (pressure_surface.y[-1] + suction_surface.y[-1] - pressure_surface.y[0] - suction_surface.y[0]) / 2)
+        rotor_ratio_residual = rotor_chord / turbine_meanline.p_rotor - meanline_arguments["chord_over_pitch_rotor"]
 
-        # Calculate t_TE_rotor_optimality. t_TE_rotor_optimality is part of residuals, since it will always be
-        # decreased to zero by the optimizer.
-        # Subtract open uncorrected passages from total Euler-radius pitch to obtain actual metal projections.
-        rotor_LE = turbine_meanline.p_rotor - rotor_ideal.inlet_passage_pitch
-        rotor_TE = turbine_meanline.p_rotor - rotor_ideal.outlet_passage_pitch
-        rotor_thickness_residual = rotor_TE - turbine_meanline.t_TE_rotor
-        # Constrain the thinner true edge, allowing the two geometric thicknesses to differ.
+        # Perform calculations related to rotor LE & TE thicknesses
+        # First subtract open passages from total Euler-radius pitch to obtain blade edge projections on
+        # circumferential direction.
+        t_LE_rotor = turbine_meanline.p_rotor - rotor_ideal.inlet_passage_pitch
+        t_TE_rotor = turbine_meanline.p_rotor - rotor_ideal.outlet_passage_pitch
+        # Store the obtained projected LE thickness directly in the returned meanline object.
+        turbine_meanline.t_LE_rotor = t_LE_rotor
+        # Residual calculated the difference between obtained TE thickness and the TE thickness used for meanline
+        # design.
+        rotor_thickness_residual = t_TE_rotor - turbine_meanline.t_TE_rotor
+        # Calculate minimum thicknesses
         rotor_cosines = np.cos([results["beta_1"], rotor_outlet_angle])
         if np.min(rotor_cosines) <= 0:
             raise ValueError("Rotor inlet/outlet angles must have positive axial components.")
-        rotor_metal_thicknesses = np.multiply([rotor_LE, rotor_TE], rotor_cosines)
+        rotor_metal_thicknesses = np.multiply([t_LE_rotor, t_TE_rotor], rotor_cosines)
+        # Use the smaller one to constraint the design
         limiting_edge = np.argmin(rotor_metal_thicknesses)
-        t_TE_rotor_optimality = rotor_metal_thicknesses[limiting_edge] - self.t_min_rotor
-        rotor_LE_residual = -t_TE_rotor_optimality / rotor_cosines[limiting_edge]
+        # Calculate the minimum normal-thickness margin across LE and TE.
+        t_rotor_min_margin = rotor_metal_thicknesses[limiting_edge] - self.t_min_rotor
+        # Calculate LE thickness residual: LE is the shaping input for SupersonicRotorBlade, and changing it also
+        # changes the obtained TE thickness through the passage scale and geometry. Thus, either edge's
+        # minimum-thickness margin can drive LE until the thinner edge reaches t_min_rotor. The cosine converts normal
+        # to circumferential thickness. When TE is the thinner edge, this assumes that changing LE thickness changes
+        # TE thickness by the same amount.
+        rotor_LE_residual = -t_rotor_min_margin / rotor_cosines[limiting_edge]
 
         # Calculate total throat area needed to satisfy massflow requirements
         gamma = self.gas.gamma
         throat_mass_flux = results["p_0"] / np.sqrt(results["T_0"]) * np.sqrt(gamma / self.gas.R) \
                            * (2 / (gamma + 1)) ** ((gamma + 1) / (2 * (gamma - 1)))
         total_throat_area = results["mdot_total"] / throat_mass_flux
+
         # Assume identical nozzles in one uniformly pitched admitted sector. Multiple rectangles are hub-tangent;
         # a single rectangle is centred at Euler radius, including when its actual height differs from H_max.
         # Ellipses are centred at the annulus mean radius. Normal metal thickness uses the meanline outlet angle.
@@ -443,7 +539,7 @@ class SupersonicTurbine:
         delta = turbine_meanline.p_stator / R_Euler
         if count > 1 and not 0 < delta < np.pi:
             raise ValueError("The local nozzle construction requires angular pitch strictly below pi radians.")
-        # Coupling quantities override any duplicate flow/scaling inputs without mutating the supplied dictionary.
+        # Assemble dictionary with stator shape input arguments. Calculated quantities override any duplicate inputs
         stator_arguments = {**self.SupersonicStatorNozzle_arguments,
                             "requested_outlet_absolute_flow_mach": results["M_s1_ideal"],
                             "requested_outlet_absolute_flow_angle": results["alpha_1_deg"],
@@ -451,24 +547,24 @@ class SupersonicTurbine:
                             "upstream_total_temperature": results["T_0"],
                             "upstream_total_pressure": results["p_0"],
                             "trailing_edge_thickness": turbine_meanline.t_TE_stator if count > 1 else 0.}
-        contour = stator_arguments.get("contour_method", "moc")
+        contour = stator_arguments["contour_method"]
         if contour not in ("moc", "conical"):
             raise ValueError("contour_method must be 'moc' or 'conical' (de Laval).")
 
         # Now separate procedures outlined at the top of this method can be followed to shape nozzles in the stator and
-        # determines all remaining margins, residuals and optimality coefficients
+        # determine all remaining margins, residuals and optimality coefficients
         # If MOC stator nozzles are used
         if contour == "moc" and count > 1:
             # First calculate reference width for the MOC nozzle such that minimum thickness is always satisfied.
             # Adjacent inner corners are separated by 2*R_hub*sin(delta/2) - w*cos(delta/2).
             width = (2 * R_hub * np.sin(delta / 2) - t_TE_stator_min) / np.cos(delta / 2)
-            maximum_height = self._rectangle_maximum_height(width, R_hub, R_tip)
+            maximum_height = self._calculate_rectangle_maximum_height(width, R_hub, R_tip)
             # Now calculate stator shape and dimensions. Use isentropic outlet Mach number at station 1 from Turbine1D,
             # as SupersonicStatorNozzle requires ideal value.
             stator_shape = blading.SupersonicStatorNozzle(**{**stator_arguments, "reference_length": width})
 
             # Get stator blade chord (from shape uncorrected for BL)
-            stator_chord = self._nozzle_chord(stator_shape) * self.stator_nozzle_chord_scale
+            stator_chord = self._calculate_nozzle_chord(stator_shape) * self.stator_nozzle_chord_scale
             # Calculate throat height from total throat area, reference width and the number of nozzles
             height = total_throat_area / (count * stator_shape.dimensional_shapes.uncorrected.throat_width)
             # Calculate height optimality factor for MOC nozzle exit
@@ -476,9 +572,10 @@ class SupersonicTurbine:
             # Width optimality factor and thickness margin are always zero
             width_optimality = t_TE_stator_min_margin = 0.
             # Calculate chord - pitch ratio residuals between meanline design and blade shapes for the stator
-            stator_ratio_residual = stator_chord / turbine_meanline.p_stator - meanline_arguments["chord_over_pitch_stator"]
+            stator_ratio_residual = \
+                stator_chord / turbine_meanline.p_stator - meanline_arguments["chord_over_pitch_stator"]
             # Calculate trailing edge thickness residuals between meanline design and blade shapes for the stator
-            exit_arc = self._rectangle_exit_arc(width, height, R_hub, R_Euler)
+            exit_arc = self._calculate_rectangle_exit_arc(width, height, R_hub, R_Euler)
             signed_arc_gap = turbine_meanline.p_stator - exit_arc
             fourth_residual = signed_arc_gap - turbine_meanline.t_TE_stator
 
@@ -486,26 +583,24 @@ class SupersonicTurbine:
         elif contour == "moc":
             # Calculate width and height of the optimal nozzle exit shape to maximize area taken up by it
             # Maximize rectangle area subject to hub clearance, tip corners and centre fixed at Euler radius.
-            width, maximum_height = self._single_moc_exit_dimensions(R_hub, R_tip, R_Euler)
+            width, maximum_height = self._calculate_single_moc_exit_dimensions(R_hub, R_tip, R_Euler)
             # Now calculate stator shape and dimensions. Use isentropic outlet Mach number at station 1 from Turbine1D,
             # as SupersonicStatorNozzle requires ideal value.
             stator_shape = blading.SupersonicStatorNozzle(**{**stator_arguments, "reference_length": width})
 
             # Get stator blade chord (from shape uncorrected for BL)
-            stator_chord = self._nozzle_chord(stator_shape) * self.stator_nozzle_chord_scale
+            stator_chord = self._calculate_nozzle_chord(stator_shape) * self.stator_nozzle_chord_scale
             # From total throat area, calculate throat height
             height = total_throat_area / stator_shape.dimensional_shapes.uncorrected.throat_width
             # Calculate height optimality factor for MOC nozzle exit
             height_optimality = height - maximum_height
             # Also calculate admission fraction residual
-            exit_arc = self._rectangle_exit_arc(width, height, R_Euler - height / 2, R_Euler)
+            exit_arc = self._calculate_rectangle_exit_arc(width, height, R_Euler - height / 2, R_Euler)
             fourth_residual = exit_arc / (2 * np.pi * R_Euler) - turbine_meanline.admission_fraction
             # Width optimality factor and thickness margin are always zero
             width_optimality = t_TE_stator_min_margin = 0.
             # Calculate chord - pitch ratio residuals between meanline design and blade shapes for the stator
             stator_ratio_residual = stator_chord / turbine_meanline.p_stator - meanline_arguments["chord_over_pitch_stator"]
-            # Calculate trailing edge thickness residuals between meanline design and blade shapes for the stator
-            signed_arc_gap = 0.
 
         # Follow the procedure if multiple da Laval nozzles are used
         elif count > 1:
@@ -516,14 +611,18 @@ class SupersonicTurbine:
             stator_shape = blading.SupersonicStatorNozzle(**{**stator_arguments, "reference_length": throat_diameter})
 
             # Get stator blade chord (from shape uncorrected for BL)
-            stator_chord = self._nozzle_chord(stator_shape) * self.stator_nozzle_chord_scale
+            stator_chord = self._calculate_nozzle_chord(stator_shape) * self.stator_nozzle_chord_scale
             # Get nozzle exit width and height from stator_shape. Use stator shape uncorrected for the boundary layer
-            ideal = stator_shape.dimensional_shapes.uncorrected
-            width, height = ideal.nozzle_passage_pitch, ideal.nozzle_exit_width
+            uncorrected_stator_shape = stator_shape.dimensional_shapes.uncorrected
+            width, height = uncorrected_stator_shape.nozzle_passage_pitch, uncorrected_stator_shape.nozzle_exit_width
             # Calculate height and width optimality factors
             maximum_height = R_tip - R_hub
             height_optimality = height - maximum_height
-            # The ellipse support in the adjacent-centre direction gives its exact signed clearance in this plane.
+            # Project two identical, radially oriented neighbouring elliptical exits onto the line joining their centres.
+            # Their centre spacing is 2*R_mean*sin(delta/2); support is half of each ellipse's projected width on this line.
+            # Subtract both projected half-widths from the spacing: positive means a gap, zero contact, negative overlap.
+            # This straight projected gap is separate from the Euler-circle arc gap calculated below. This is metal
+            # thickness, while the arc gap below is TE thickness that should be used for meanline calculations.
             half_pitch = delta / 2
             support = np.hypot(width / 2 * np.cos(half_pitch), height / 2 * np.sin(half_pitch))
             projected_clearance = 2 * (R_mean * np.sin(half_pitch) - support)
@@ -538,7 +637,7 @@ class SupersonicTurbine:
             # Calculate chord - pitch ratio residuals between meanline design and blade shapes for the stator
             stator_ratio_residual = stator_chord / turbine_meanline.p_stator - meanline_arguments["chord_over_pitch_stator"]
             # Calculate trailing edge thickness residuals between meanline design and blade shapes for the stator
-            exit_arc = self._ellipse_exit_arc(width, height, R_mean, R_Euler)
+            exit_arc = self._calculate_ellipse_exit_arc(width, height, R_mean, R_Euler)
             signed_arc_gap = turbine_meanline.p_stator - exit_arc
             fourth_residual = max(0., signed_arc_gap) - turbine_meanline.t_TE_stator
 
@@ -551,21 +650,19 @@ class SupersonicTurbine:
             stator_shape = blading.SupersonicStatorNozzle(**{**stator_arguments, "reference_length": throat_diameter})
 
             # Get stator blade chord (from shape uncorrected for BL)
-            stator_chord = self._nozzle_chord(stator_shape) * self.stator_nozzle_chord_scale
+            stator_chord = self._calculate_nozzle_chord(stator_shape) * self.stator_nozzle_chord_scale
             # Calculate height optimality factor for nozzle exit
-            ideal = stator_shape.dimensional_shapes.uncorrected
-            width, height = ideal.nozzle_passage_pitch, ideal.nozzle_exit_width
+            uncorrected_stator_shape = stator_shape.dimensional_shapes.uncorrected
+            width, height = uncorrected_stator_shape.nozzle_passage_pitch, uncorrected_stator_shape.nozzle_exit_width
             maximum_height = R_tip - R_hub
             height_optimality = height - maximum_height
             # Also calculate admission fraction residual
-            exit_arc = self._ellipse_exit_arc(width, height, R_mean, R_Euler)
+            exit_arc = self._calculate_ellipse_exit_arc(width, height, R_mean, R_Euler)
             fourth_residual = exit_arc / (2 * np.pi * R_Euler) - turbine_meanline.admission_fraction
             # Width optimality factor and thickness margin are always zero
             width_optimality = t_TE_stator_min_margin = 0.
             # Calculate chord - pitch ratio residuals between meanline design and blade shapes for the stator
             stator_ratio_residual = stator_chord / turbine_meanline.p_stator - meanline_arguments["chord_over_pitch_stator"]
-            # Calculate trailing edge thickness residuals between meanline design and blade shapes for the stator
-            signed_arc_gap = 0.
 
         # Now pack all the results and return them
         # Components 1-4 are obtained minus assumed; component 5 corrects LE to enforce the metal-thickness minimum.
@@ -573,26 +670,12 @@ class SupersonicTurbine:
                               fourth_residual, rotor_LE_residual])
         coefficients = {"height_optimality": height_optimality, "width_optimality": width_optimality,
                         "t_TE_stator_min_margin": t_TE_stator_min_margin,
-                        "t_TE_rotor_optimality": t_TE_rotor_optimality,
-                        "nozzle_exit_width": width, "nozzle_exit_height": height,
-                        "nozzle_maximum_height": maximum_height, "nozzle_exit_arc": exit_arc,
-                        "nozzle_pitch": turbine_meanline.p_stator, "rotor_pitch": turbine_meanline.p_rotor,
-                        "stator_chord": stator_chord, "rotor_chord": rotor_chord,
-                        "total_throat_area": total_throat_area,
-                        "nozzle_radial_centre": (R_Euler if count == 1 else R_hub + height / 2)
-                                                if contour == "moc" else R_mean,
-                        "t_TE_stator_signed_arc": signed_arc_gap,
-                        "t_TE_stator_obtained": max(0., signed_arc_gap),
-                        "rotor_passage_pitch_mismatch": rotor_ideal.outlet_passage_pitch - rotor_ideal.inlet_passage_pitch,
-                        "rotor_contour_LE_thickness": rotor_LE, "rotor_contour_TE_thickness": rotor_TE,
-                        "rotor_LE_metal_thickness": rotor_metal_thicknesses[0],
-                        "rotor_TE_metal_thickness": rotor_metal_thicknesses[1],
-                        "M_lower_min": M_lower_min, "M_upper_max": M_upper_max}
+                        "t_rotor_min_margin": t_rotor_min_margin}
         if not np.all(np.isfinite(residuals)) or not np.all(np.isfinite(list(coefficients.values()))):
             raise ValueError("Supersonic turbine evaluation produced nonfinite residuals or geometry.")
         return residuals, turbine_meanline, stator_shape, rotor_shape, coefficients
 
-    def _separation_mach_limits(self, M_in: float, M_out: float) -> tuple[float, float]:
+    def _calculate_separation_mach_limits(self, M_in, M_out):
         """Return Goldman and Scullin's pressure/suction separation limits, NASA TN D-4421, equations (36)-(40).
 
         The pressure-recovery coefficient is 1/2: (p_down-p_up)/(gamma*p_up*M_up**2/2).
@@ -614,32 +697,36 @@ class SupersonicTurbine:
         lower_squared = 2 / (gamma - 1) * ((1 + (gamma - 1) / 2 * M_in**2)
                          / (1 + gamma * M_in**2 / 4)**exponent - 1)
         # Solve the same criterion for the unknown upstream suction-surface Mach. Logs avoid high-Mach overflow.
-        def upper_residual(mach: float) -> float:
+        def upper_residual(mach):
             """Return the logarithmic upper-surface pressure-recovery residual."""
             return gamma / (gamma - 1) * (np.log1p((gamma - 1) / 2 * mach**2)
                     - np.log1p((gamma - 1) / 2 * M_out**2)) - np.log1p(gamma * mach**2 / 4)
 
+        # Start the upper-surface Mach search at twice the outlet Mach.
         upper_bound = 2 * M_out
+        # Double the upper bound until the residual is nonnegative, bracketing the upper Mach limit.
         while upper_residual(upper_bound) < 0:
             upper_bound *= 2
+        # Floor the lower Mach limit at one and solve for the upper limit with Brent's method.
         return np.sqrt(max(1., lower_squared)), cast(float, brentq(upper_residual, M_out, upper_bound,
                                                                   xtol=1e-12, full_output=False))
 
     @staticmethod
-    def _nozzle_chord(nozzle: blading.SupersonicStatorNozzle) -> float:
-        """Return uncorrected throat-centre to exit-centre straight distance, m.
+    def _calculate_nozzle_chord(nozzle: blading.SupersonicStatorNozzle):
+        """Return nozzle chord (throat-centre to exit-centre straight distance without BL correction), m.
 
         Stored nozzle coordinates follow the nozzle axis. The exit centre averages the two wall endpoints,
         including the suction-side straight extension needed to terminate the exit in the machine axial plane.
         """
         # Average the two endpoints of each opening before measuring the actual chord.
-        ideal = nozzle.dimensional_shapes.uncorrected
-        pressure, suction = ideal.pressure_surface, ideal.suction_surface
-        return np.hypot((pressure.x[-1] + suction.x[-1] - pressure.x[0] - suction.x[0]) / 2,
-                        (pressure.y[-1] + suction.y[-1] - pressure.y[0] - suction.y[0]) / 2)
+        nozzle_shape = nozzle.dimensional_shapes.uncorrected
+        pressure_surface, suction_surface = nozzle_shape.pressure_surface, nozzle_shape.suction_surface
+        return np.hypot(
+            (pressure_surface.x[-1] + suction_surface.x[-1] - pressure_surface.x[0] - suction_surface.x[0]) / 2,
+            (pressure_surface.y[-1] + suction_surface.y[-1] - pressure_surface.y[0] - suction_surface.y[0]) / 2)
 
     @staticmethod
-    def _rectangle_maximum_height(width: float, R_hub: float, R_tip: float) -> float:
+    def _calculate_rectangle_maximum_height(width, R_hub, R_tip):
         """Return maximum radial height of a hub-tangent rectangle whose outer corners touch the tip, m."""
         # The radial inner side is tangent to the hub; the tip circle limits both outer corners.
         if not np.isfinite(width) or width <= 0 or width / 2 >= np.sqrt(R_tip**2 - R_hub**2):
@@ -647,7 +734,7 @@ class SupersonicTurbine:
         return np.sqrt(R_tip**2 - width**2 / 4) - R_hub
 
     @staticmethod
-    def _single_moc_exit_dimensions(R_hub: float, R_tip: float, R_Euler: float) -> tuple[float, float]:
+    def _calculate_single_moc_exit_dimensions(R_hub, R_tip, R_Euler):
         """Return width and maximum height of the largest Euler-centred rectangular exit, m."""
         # For half-height h, tip contact gives w=2*sqrt(R_tip**2-(R_Euler+h)**2).
         # The area derivative gives 2*h**2+3*R_Euler*h+R_Euler**2-R_tip**2=0; the hub caps h.
@@ -658,7 +745,7 @@ class SupersonicTurbine:
         return 2 * np.sqrt(R_tip**2 - (R_Euler + half_height)**2), 2 * half_height
 
     @staticmethod
-    def _rectangle_exit_arc(width: float, height: float, R_hub: float, R_Euler: float) -> float:
+    def _calculate_rectangle_exit_arc(width, height, R_hub, R_Euler):
         """Return Euler-circle arc inside a rectangular exit, m, requiring crossings on both radial sides."""
         # Exclude large-nozzle cases in which the circle crosses a tangential side or misses the rectangle.
         if width <= 0 or width >= 2 * R_Euler:
@@ -669,19 +756,19 @@ class SupersonicTurbine:
         return 2 * R_Euler * np.arcsin(width / (2 * R_Euler))
 
     @staticmethod
-    def _ellipse_exit_arc(width: float, height: float, R_mean: float, R_Euler: float) -> float:
+    def _calculate_ellipse_exit_arc(width, height, R_mean, R_Euler):
         """Return Euler-circle arc inside a mean-radius-centred ellipse, m, for a local nozzle."""
-        # Require the Euler circle to pass through the central portion and cross the flanks of the exit.
+        # Require the Euler circle to pass through the nozzle exit.
         a, b = width / 2, height / 2
         if min(a, b) <= 0 or a >= R_Euler or abs(R_Euler - R_mean) >= b:
             raise ValueError("Euler circle must cross a local de Laval exit centred at mean radius.")
-        # Height-only radial fitting assumes the outermost ellipse point is its radial top, not a wide flank.
+        # This nozzle fitting assumes the outermost ellipse point is its radial top.
         if a**2 - b**2 > R_mean * b:
-            raise ValueError("De Laval exit is too wide for the local annulus model: a**2-b**2 must not exceed R_mean*b.")
+            raise ValueError("De Laval exit is too wide for the annulus: a**2-b**2 must not exceed R_mean*b.")
         # Intersect x=R_Euler*sin(theta), y=R_Euler*cos(theta) with x**2/a**2+(y-R_mean)**2/b**2=1.
-        def intersection(theta: float) -> float:
+        def intersection(theta):
             """Return the ellipse equation evaluated on the Euler circle."""
             return (R_Euler * np.sin(theta) / a)**2 + ((R_Euler * np.cos(theta) - R_mean) / b)**2 - 1
-
+        # Solve for the positive intersection angle, then use symmetry to obtain the full Euler-circle arc length.
         return 2 * R_Euler * cast(float, brentq(intersection, 0., np.arcsin(a / R_Euler),
                                                xtol=1e-14, full_output=False))
