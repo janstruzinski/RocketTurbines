@@ -148,6 +148,7 @@ class Turbine1D:
         # meridional axis
         self.p_rotor = None # Rotor pitch at Euler radius, m
         self.t_TE_stator = None # Stator trailing edge thickness at Euler radius, m.
+        self.t_LE_rotor = None # Circumferential rotor leading edge thickness, m.
         self.t_TE_rotor = None # Rotor trailing edge thickness, m.
         self.no_blades_rotor = None # Number of blades in the rotor, -
         self.no_blades_stator = None # Number of nozzles/blades in the stator, -
@@ -501,6 +502,8 @@ class Turbine1D:
 
         # Assign remaining geometry that is already known
         self.t_TE_rotor = t_TE_rotor  # m
+        # Assume equal rotor LE/TE thicknesses. This can be overwritten by SupersonicTurbine class.
+        self.t_LE_rotor = t_TE_rotor  # m
         self.t_TE_stator = t_TE_stator  # m
         self.admission_fraction = admission_fraction  # -
         self.s_r = radial_clearance  # m
@@ -840,6 +843,7 @@ class Turbine1D:
                             "c_rotor": self.c_rotor,  # m
                             "p_rotor": self.p_rotor,  # m
                             "t_TE_stator": self.t_TE_stator,  # m
+                            "t_LE_rotor": self.t_LE_rotor,  # m
                             "t_TE_rotor": self.t_TE_rotor,  # m
                             "no_blades_rotor": self.no_blades_rotor,  # -
                             "no_blades_stator": self.no_blades_stator,  # -
