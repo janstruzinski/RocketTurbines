@@ -37,8 +37,8 @@ class SupersonicTurbine:
         :param float t_min_rotor: Minimum true rotor LE/TE metal thickness, m; nonnegative.
         :param float stator_nozzle_chord_scale: Positive multiplier of throat-centre to exit-centre chord,
          to account for the upstream turning section, which SupersonicStatorNozzle does not calculate. Default 1.
-        :ivar numpy.ndarray solution: Converged [stator chord/pitch, rotor chord/pitch, rotor TE,
-         stator TE (or single-nozzle admission), rotor LE]; thicknesses are circumferential projections in m.
+        :ivar numpy.ndarray solution: Converged [stator chord/pitch, rotor chord/pitch, rotor TE thickness,
+         stator TE thickness (or single-nozzle admission), rotor LE thickness]; thicknesses are circumferential projections in m.
         :raises ValueError: If inputs are invalid or the nozzle construction assumptions are violated.
         :raises KeyError: If a required input is missing from the argument dictionaries.
         :raises RuntimeError: If Aitken does not converge or the final normalized residual tolerance of 1e-4 is not met.
@@ -53,8 +53,8 @@ class SupersonicTurbine:
         #    |
         #    v
         #  Assemble five unknowns x and their initial estimates:
-        #    [stator chord/pitch, rotor chord/pitch, rotor TE, stator TE or admission, rotor LE].
-        #    Multiple nozzles: solve stator TE; one nozzle: fix stator TE = 0 and solve admission.
+        #    [stator chord/pitch, rotor chord/pitch, rotor TE thickness, stator TE thickness or admission, rotor LE thickness].
+        #    Multiple nozzles: solve stator TE thickness; one nozzle: fix stator TE thickness = 0 and solve admission.
         #  Calculate Euler-radius pitches, positive component scales s and solution bounds.
         #    |
         #    +--> COUPLING LOOP: bounded relaxed Aitken ------------------------------------------------------+
@@ -65,7 +65,7 @@ class SupersonicTurbine:
         #    |      |  Convert z to dimensional/mixed-unit unknowns x = s*z.                                  |
         #    |      v                                                                                         |
         #    |    calculate_new_solution(x)                                                                   |
-        #    |      |  Copy meanline arguments and insert trial chord/pitch ratios, TE and admission.         |
+        #    |      |  Copy meanline arguments and insert chord/pitch ratios, TE thicknesses and admission.   |
         #    |      |  Pass the independent rotor LE thickness to evaluate_design.                            |
         #    |      v                                                                                         |
         #    |    SupersonicTurbine.evaluate_design                                                           |
@@ -77,7 +77,7 @@ class SupersonicTurbine:
         #    |      +--> Rotor shaping                                                                        |
         #    |      |      Apply Goldman--Scullin separation limits and separation_margin.                    |
         #    |      |      Construct SupersonicRotorBlade using the blade-row outlet angle.                   |
-        #    |      |      Pass rotor LE/total pitch; pitch includes metal at Euler radius.                   |
+        #    |      |      Pass rotor LE thickness/total pitch; pitch includes metal at Euler radius.         |
         #    |      |      Measure LE/TE thickness projections and the actual LE-to-TE chord.                 |
         #    |      |      Store the obtained LE thickness in the meanline object.                            |
         #    |      |      Use flow angles to estimate minimum metal thickness at both rotor edges.           |
@@ -104,16 +104,16 @@ class SupersonicTurbine:
         #    |      |                                                                                         |
         #    |      +--> Shared stator measurements                                                           |
         #    |             Measure the Euler-circle arc through the nozzle exit.                              |
-        #    |             Match stator TE arc for multiple nozzles or admission for one nozzle.              |
+        #    |             Match stator TE thickness arc for multiple nozzles or admission for one nozzle.    |
         #    |             Measure throat-centre to exit-centre chord; apply stator_nozzle_chord_scale.       |
         #    |             Calculate height/width excesses and minimum stator-thickness margin.               |
         #    |      |                                                                                         |
         #    |      v                                                                                         |
         #    |    Return five residuals r(x), meanline/blading objects and geometric coefficients:            |
         #    |      r1/r2: obtained minus assumed stator/rotor chord-to-pitch ratios.                         |
-        #    |      r3: uncorrected contour rotor TE minus the TE used by the meanline model.                 |
-        #    |      r4: stator TE mismatch (multiple nozzles) or admission mismatch (one nozzle).             |
-        #    |      r5: rotor LE correction enforcing the minimum normal LE/TE metal thickness.               |
+        #    |      r3: uncorrected contour rotor TE thickness minus meanline TE thickness.                   |
+        #    |      r4: stator TE thickness mismatch (multiple nozzles) or admission mismatch (one nozzle).   |
+        #    |      r5: rotor LE thickness correction enforcing the minimum normal LE/TE metal thickness.     |
         #    |      |                                                                                         |
         #    |      v                                                                                         |
         #    |    calculate_new_solution: F(x) = x + r(x).                                                    |
@@ -315,7 +315,7 @@ class SupersonicTurbine:
         :return: Five residuals, meanline object, stator object, rotor object and optimality/margin coefficients.
          Residuals 1/2 are dimensionless chord/pitch differences. Residual 3 is geometric-minus-meanline rotor
          TE thickness (m). Residual 4 is stator arc thickness (m), or admission fraction for one nozzle.
-         Residual 5 is the LE correction enforcing the minimum true metal thickness at both rotor edges (m).
+         Residual 5 is the LE thickness correction enforcing the minimum true metal thickness at both rotor edges (m).
          height_optimality and width_optimality are dimensional excesses (m); positive values indicate overfilling.
          t_TE_stator_min_margin is signed projected clearance minus the required projected metal thickness (m).
          Multiplying this margin by cos(alpha_1) gives the approximate true metal-thickness margin.
@@ -356,14 +356,14 @@ class SupersonicTurbine:
         # the engineer or outer optimizer should always compare rotors with the same metal thickness. Consequently,
         # the numerical solver in this class will also ensure that t_rotor_min_margin is zero by varying t_LE_rotor.
         # An independent residual matches the meanline t_TE_rotor to the actual uncorrected contour TE thickness.
-        # To convert stator TE and rotor LE/TE projections to normal metal thicknesses, flow angles
+        # To convert stator TE thickness and rotor LE/TE thickness projections to normal metal thicknesses, flow angles
         # from meanline design are always used. These are approximately the same as nozzle/rotor blade metal angles.
         # Blade metal angles can be a few degrees different if the user specifies in input arguments to
         # SupersonicTurbineBlading objects that they should be adjusted to obtain flow angles equal to those from
         # meanline design, however this has a negligible influence. Finally, boundary layer correction for stator and
         # rotor shapes can lead to blade thickness for BL corrected shapes to be different from t_TE_stator_min_obtained
         # or t_TE_rotor_min_obtained. SupersonicRotorBlading takes an LE thickness input; prescribed endpoint
-        # states need not close the inviscid passage pitch, so the actual contour TE is measured independently.
+        # states need not close the inviscid passage pitch, so the actual contour TE thickness is measured independently.
 
         # Shaping of nozzles will be now discussed.
         # The optimal placement of nozzles means that:
@@ -515,9 +515,9 @@ class SupersonicTurbine:
         limiting_edge = np.argmin(rotor_metal_thicknesses)
         # Calculate the minimum normal-thickness margin across LE and TE.
         t_rotor_min_margin = rotor_metal_thicknesses[limiting_edge] - self.t_min_rotor
-        # Calculate LE thickness residual: LE is the shaping input for SupersonicRotorBlade, and changing it also
+        # Calculate LE thickness residual: LE thickness is the shaping input for SupersonicRotorBlade, and changing it also
         # changes the obtained TE thickness through the passage scale and geometry. Thus, either edge's
-        # minimum-thickness margin can drive LE until the thinner edge reaches t_min_rotor. The cosine converts normal
+        # minimum-thickness margin can drive LE thickness until the thinner edge reaches t_min_rotor. The cosine converts normal
         # to circumferential thickness. When TE is the thinner edge, this assumes that changing LE thickness changes
         # TE thickness by the same amount.
         rotor_LE_residual = -t_rotor_min_margin / rotor_cosines[limiting_edge]
@@ -668,7 +668,7 @@ class SupersonicTurbine:
             stator_ratio_residual = stator_chord / turbine_meanline.p_stator - meanline_arguments["chord_over_pitch_stator"]
 
         # Now pack all the results and return them
-        # Components 1-4 are obtained minus assumed; component 5 corrects LE to enforce the metal-thickness minimum.
+        # Components 1-4 are obtained minus assumed; component 5 corrects LE thickness to enforce the metal-thickness minimum.
         residuals = np.array([stator_ratio_residual, rotor_ratio_residual, rotor_thickness_residual,
                               fourth_residual, rotor_LE_residual])
         coefficients = {"height_optimality": height_optimality, "width_optimality": width_optimality,
