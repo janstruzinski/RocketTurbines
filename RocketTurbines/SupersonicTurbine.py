@@ -282,7 +282,7 @@ class SupersonicTurbine:
         # desirable dimensions.
         x_solution = np.multiply(solution_scales, solve_with_relaxed_aitken(
             normalized_mapping, np.divide(x_initial, solution_scales), initial_relaxation=0.3,
-            min_relaxation=0.05, max_relaxation=0.8, xtol=1e-4, maxiter=30,
+            min_relaxation=0.05, max_relaxation=1.5, xtol=1e-4, maxiter=60,
             bounds=(np.divide(lower, solution_scales), np.divide(upper, solution_scales))))
 
         # Obtain consistent design objects after solution was found
@@ -409,9 +409,11 @@ class SupersonicTurbine:
         # This satisfies point 4. From throat diameter D_throat and required expansion ratio (settled by stator
         # isentropic exit Mach number), exit diameter D_nozzle can be calculated. It is s the same as nozzle exit
         # ellipse minor diameter, which preferentially matches annulus height, H_annulus. This is the first condition to
-        # satisfy point 1. Thus, height_optimality factor for da Laval nozzle is D_nozzle - H_annulus. Its positive,
-        # zero and negative values have the same meaning as height_optimality for MOC nozzle. Elliptical shape of the
-        # nozzle exit is just a cross-section of a cylinder with diameter D_nozzle with the annulus plane at the stator
+        # satisfy point 1. The ellipse can reach furthest from the turbine axis on a flank rather than at its radial top.
+        # Thus, height_optimality is the difference between the maximum radius that bounds the ellipse and tip radius,
+        # R_max - R_tip. Its positive, zero and negative values
+        # have the same meaning as height_optimality for MOC nozzle. Elliptical shape of the nozzle exit is just a
+        # cross-section of a cylinder with diameter D_nozzle with the annulus plane at the stator
         # nozzle angle. Therefore, major diameter of the nozzle exit ellipse, D_ellipse, is also set by D_nozzle
         # (D_ellipse be also obtained from da Laval nozzle shape from SupersonicStatorNozzle scaled with throat diameter).
         # Ellipse centre is placed at mean diameter of the annulus, thus the arc distance between edges of adjacent
@@ -615,9 +617,9 @@ class SupersonicTurbine:
             # Get nozzle exit width and height from stator_shape. Use stator shape uncorrected for the boundary layer
             uncorrected_stator_shape = stator_shape.dimensional_shapes.uncorrected
             width, height = uncorrected_stator_shape.nozzle_passage_pitch, uncorrected_stator_shape.nozzle_exit_width
-            # Calculate height and width optimality factors
-            maximum_height = R_tip - R_hub
-            height_optimality = height - maximum_height
+            # Calculate height optimality from the outermost ellipse point,.
+            R_max = self._calculate_ellipse_maximum_radius(width, height, R_mean)
+            height_optimality = R_max - R_tip
             # Project two identical, radially oriented neighbouring elliptical exits onto the line joining their centres.
             # Their centre spacing is 2*R_mean*sin(delta/2); support is half of each ellipse's projected width on this line.
             # Subtract both projected half-widths from the spacing: positive means a gap, zero contact, negative overlap.
@@ -654,8 +656,9 @@ class SupersonicTurbine:
             # Calculate height optimality factor for nozzle exit
             uncorrected_stator_shape = stator_shape.dimensional_shapes.uncorrected
             width, height = uncorrected_stator_shape.nozzle_passage_pitch, uncorrected_stator_shape.nozzle_exit_width
-            maximum_height = R_tip - R_hub
-            height_optimality = height - maximum_height
+            # Include the flanks when measuring how far the exit extends beyond the tip circle.
+            R_max = self._calculate_ellipse_maximum_radius(width, height, R_mean)
+            height_optimality = R_max - R_tip
             # Also calculate admission fraction residual
             exit_arc = self._calculate_ellipse_exit_arc(width, height, R_mean, R_Euler)
             fourth_residual = exit_arc / (2 * np.pi * R_Euler) - turbine_meanline.admission_fraction
@@ -756,15 +759,27 @@ class SupersonicTurbine:
         return 2 * R_Euler * np.arcsin(width / (2 * R_Euler))
 
     @staticmethod
+    def _calculate_ellipse_maximum_radius(width, height, R_mean):
+        """Return the maximum distance from the turbine axis to the outermost edge of a mean-radius-centred ellipse, m."""
+        # Require a finite ellipse with positive dimensions and centre radius.
+        if not np.all(np.isfinite([width, height, R_mean])) or min(width, height, R_mean) <= 0:
+            raise ValueError("Ellipse dimensions and centre radius must be finite and positive.")
+        a, b = width / 2, height / 2
+        # The radial top is outermost unless the tangential semi-axis of the ellipse is sufficiently large.
+        if a**2 - b**2 <= R_mean * b:
+            return R_mean + b
+        # Maximize r**2=a**2+R_mean**2+2*R_mean*b*c+(b**2-a**2)*c**2 over c=cos(phi).
+        # The point farthest from the turbine axis lies on the ellipse's side at
+        # c=cos(phi)=R_mean*b/(a**2-b**2), with 0<c<1 in this branch.
+        return np.sqrt(a**2 + R_mean**2 + (R_mean * b)**2 / (a**2 - b**2))
+
+    @staticmethod
     def _calculate_ellipse_exit_arc(width, height, R_mean, R_Euler):
         """Return Euler-circle arc inside a mean-radius-centred ellipse, m, for a local nozzle."""
         # Require the Euler circle to pass through the nozzle exit.
         a, b = width / 2, height / 2
         if min(a, b) <= 0 or a >= R_Euler or abs(R_Euler - R_mean) >= b:
             raise ValueError("Euler circle must cross a local de Laval exit centred at mean radius.")
-        # This nozzle fitting assumes the outermost ellipse point is its radial top.
-        if a**2 - b**2 > R_mean * b:
-            raise ValueError("De Laval exit is too wide for the annulus: a**2-b**2 must not exceed R_mean*b.")
         # Intersect x=R_Euler*sin(theta), y=R_Euler*cos(theta) with x**2/a**2+(y-R_mean)**2/b**2=1.
         def intersection(theta):
             """Return the ellipse equation evaluated on the Euler circle."""
