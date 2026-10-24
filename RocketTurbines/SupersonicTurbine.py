@@ -11,7 +11,7 @@ from typing import Any, cast
 class SupersonicTurbine:
     def __init__(self, gas: IdealGas, loss_model: TraupelLossModel, Turbine1D_arguments,
                  SupersonicStatorNozzle_arguments, SupersonicRotorBlades_arguments, separation_margin,
-                 t_min_stator, t_min_rotor, stator_nozzle_chord_scale=1.0):
+                 t_min_stator, t_min_rotor, stator_nozzle_chord_scale=1.0, print_user_warnings=True):
         """SupersonicTurbine is the class to represent a supersonic turbine, with consistent meanline design and blading
          shape. It ensures that chord/pitch ratios and other variables used in Turbine1D agrees with the values obtained from
          SupersonicTurbineBlading objects, which in turn also use Turbine1D meanline results. Thus, there is a coupling
@@ -37,6 +37,8 @@ class SupersonicTurbine:
         :param float t_min_rotor: Minimum true rotor LE/TE metal thickness, m; nonnegative.
         :param float stator_nozzle_chord_scale: Positive multiplier of throat-centre to exit-centre chord,
          to account for the upstream turning section, which SupersonicStatorNozzle does not calculate. Default 1.
+        :param bool print_user_warnings: Whether to emit this object's user warnings. Default True.
+         Traupel extrapolation warnings are controlled separately by loss_model.warn_on_extrapolation.
         :ivar numpy.ndarray solution: Converged [stator chord/pitch, rotor chord/pitch, rotor TE thickness,
          stator TE thickness (or single-nozzle admission), rotor LE thickness]; thicknesses are circumferential projections in m.
         :raises ValueError: If inputs are invalid or the nozzle construction assumptions are violated.
@@ -141,6 +143,7 @@ class SupersonicTurbine:
         # Store objects
         self.gas = gas
         self.loss_model = loss_model
+        self.print_user_warnings = print_user_warnings
 
         # Store dictionaries with Turbine1D, SupersonicRotorBlade and SupersonicStatorNozzle
         # (both from SupersonicTurbineBlading library) input arguments as dictionaries. These can be used to call
@@ -189,8 +192,9 @@ class SupersonicTurbine:
         for arguments, option in ((self.SupersonicStatorNozzle_arguments, "match_real_outlet_absolute_flow_mach"),
                                   (self.SupersonicRotorBlades_arguments, "match_real_outlet_mach")):
             if option in arguments and arguments.pop(option):
-                warnings.warn(f"{option} is disabled: matching mixed Mach would count meanline losses twice.",
-                              UserWarning, stacklevel=2)
+                if self.print_user_warnings:
+                    warnings.warn(f"{option} is disabled: matching mixed Mach would count meanline losses twice.",
+                                  UserWarning, stacklevel=2)
 
         # Define a function that calculates new values of design variables from evaluate_design based on assumed ones
         def calculate_new_solution(x_0):
@@ -277,8 +281,9 @@ class SupersonicTurbine:
         # the user.
         invalid_initial = ~np.isfinite(x_initial) | (x_initial < lower) | (x_initial > upper)
         if np.any(invalid_initial):
-            warnings.warn("Nonfinite or out-of-bound initial coupling estimates were replaced by their solution scales.",
-                          UserWarning, stacklevel=2)
+            if self.print_user_warnings:
+                warnings.warn("Nonfinite or out-of-bound initial coupling estimates were replaced by their"
+                              " solution scales.", UserWarning, stacklevel=2)
             x_initial[invalid_initial] = solution_scales[invalid_initial]
 
         # Define a function to extract new design variables from calculate_new_solution based on their assumed,
