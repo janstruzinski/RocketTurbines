@@ -129,6 +129,8 @@ class Turbine1D:
         self.R_Euler = None # Euler radius, m
         self.l_stator = None  # Stator blade/nozzle radial length, m
         self.l_rotor = None # Rotor blade radial length, m
+        self.A_throat_stator = None # Total stator throat area, m^2; supplied by SupersonicTurbine.
+        self.A_throat_rotor = None # Total admitted rotor throat area, m^2; supplied by SupersonicTurbine.
         self.s_ax = None    # Axial distance between stator blade/nozzles and rotor blades, m
         self.s_r = None     # Radial distance between rotor blades / shroud and the casing, m
         self.shrouded_rotor = None # Boolean whether rotor is shrouded
