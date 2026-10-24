@@ -374,10 +374,10 @@ class Turbine1D:
         :param list delta_s_estimate: List of initial estimates of the entropy rises (J/kg/K) due to stator, rotor and
          additional rotor losses. Additional rotor losses represent clearance, partial admission or disk friction
           losses. The default [0, 0, 0] uses the loss-model result evaluated at zero entropy rises instead.
+          Each nonfinite or negative loss-model estimate is replaced by half its corresponding input estimate.
         :raises TypeError: If gas is not an IdealGas instance or loss_model is not a TraupelLossModel instance.
         :raises ValueError: If the specified shaft work and outlet axial kinetic energy leave no positive outlet
-            static enthalpy, the loss model returns nonfinite or negative entropy estimates at delta_s_estimate,
-             or the prescribed blade-row state is infeasible.
+            static enthalpy, or the prescribed blade-row state is infeasible.
         :raises RuntimeError: If the entropy-rise solve does not converge, returns nonfinite or negative entropy
             rises, or has a nonfinite or excessive entropy residual (absolute value must be below 1e-3 J/(kg K)),
              or the h_2/h_t0 solve fails its convergence, solution value or residual checks.
@@ -563,16 +563,18 @@ class Turbine1D:
         # way, is because delta_s_estimate can be a list of zeros, which is a poor initial solution for a real turbine
         # flow, and it is also non-feasible scales for normalizing the variables.
         calculated_delta_s_estimate = np.array(get_entropy_residual(delta_s_estimate)) + np.array(delta_s_estimate)
-        # Raise an error if these entropy estimates are negative or not finite
-        if not np.all(np.isfinite(calculated_delta_s_estimate)) or np.any(calculated_delta_s_estimate < 0):
-            raise ValueError("Loss-model entropy estimates at delta_s_estimate must be finite and nonnegative.")
+        # Replace each negative or nonfinite estimate with half its supplied initial estimate. Half of supplied initial
+        # estimate is used, so that negative / nonfinite entropy change is not obtained again. In a way, this works as
+        # underrelaxed fixed point iteration.
+        invalid_estimate = ~np.isfinite(calculated_delta_s_estimate) | (calculated_delta_s_estimate < 0)
+        calculated_delta_s_estimate = np.where(invalid_estimate, 0.5 * np.asarray(delta_s_estimate),
+                                               calculated_delta_s_estimate)
         # First, use calculated entropy estimates as scales to normalise variables and speed up convergence.
         # To avoid division by zero, ensure minimum scale is 1. That floor value is rarely crossed for designs with
         # losses, so it is deemed a good choice.
         entropy_scales = np.maximum(calculated_delta_s_estimate, 1.)  # J/(kg K)
-        # If nonzero entropy estimates were given as input, use these as initial solution. Otherwise, use
-        # calculated entropy estimate.
-        initial_entropy = np.array(delta_s_estimate) if np.any(delta_s_estimate) else calculated_delta_s_estimate
+        # Set initial solution to calculated estimates
+        initial_entropy = calculated_delta_s_estimate
         # Try vector Aitken first, using the same initial entropy, scales and bounds as the least_squares fallback.
         try:
             entropy = solve_with_relaxed_aitken(

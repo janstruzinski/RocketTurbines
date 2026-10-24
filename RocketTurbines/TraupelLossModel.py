@@ -4,7 +4,7 @@ from scipy.interpolate import PchipInterpolator, RegularGridInterpolator
 
 class TraupelLossModel:
     def __init__(self, extrapolation_method, warn_on_extrapolation=True, incidence_loss="medium",
-                 stator="regular", rotor="regular"):
+                 stator="regular", rotor="regular", loss_coefficient_error=False):
         """A class to calculate turbine losses with Traupel meanline loss model presented in
          "Thermische Turbomaschinen", which is very suitable for steam, supersonic turbines. All graphs are digitalized
           as ready to use interpolators in class properties. Class methods allow to calculate specific loss
@@ -24,6 +24,8 @@ class TraupelLossModel:
         :param str stator: Stator Mach-correction curve, either "regular" or "near_sonic_outlet". By default, "regular".
         :param str rotor: Rotor Mach-correction curve, either "regular", "near_sonic_outlet", "impulse_low_M" or
             "impulse_high_M". By default, "regular".
+        :param bool loss_coefficient_error: Whether to raise ValueError for aerodynamic loss coefficients >= 1,
+            including rotor incidence. By default, False.
         """
 
         # Use linear interpolation throughout and check the selected extrapolation option.
@@ -46,6 +48,7 @@ class TraupelLossModel:
         self.incidence_loss = incidence_loss.lower()
         self.stator = stator
         self.rotor = rotor
+        self.loss_coefficient_error = loss_coefficient_error
 
         # AERODYNAMIC LOSS: PROFILE LOSS DATA
         # Data for chi_R
@@ -1043,7 +1046,7 @@ class TraupelLossModel:
                                                       axial_clearance_over_blade_length=s_ax_over_l_stator)  # -
         # Calculate incidence loss. For the stator, it is assumed to be zero.
         zeta_incidence_stator = 0  # -
-        if zeta_aerodynamic_stator >= 1:
+        if self.loss_coefficient_error and zeta_aerodynamic_stator >= 1:
             raise ValueError("Stator aerodynamic loss coefficient is too large; it must be less than 1.")
         # Calculate dissipated enthalpy in the stator
         eta_stator = 1 - (zeta_aerodynamic_stator + zeta_incidence_stator)  # -
@@ -1097,7 +1100,7 @@ class TraupelLossModel:
         incidence = analysis_results["incidence"]  # rad
         M_r1_blade = blade_row_results["M_r1_blade"]  # -
         zeta_incidence_rotor = self.calculate_incidence_losses(incidence, velocity_ratio_rotor, M_r1_blade)  # -
-        if zeta_aerodynamic_rotor + zeta_incidence_rotor >= 1:
+        if self.loss_coefficient_error and zeta_aerodynamic_rotor + zeta_incidence_rotor >= 1:
             raise ValueError("Rotor aerodynamic loss coefficient including incidence is too large; "
                              "it must be less than 1.")
         # Calculate dissipated enthalpy in the rotor for the blade row alone
