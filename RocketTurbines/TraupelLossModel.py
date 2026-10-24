@@ -1043,6 +1043,8 @@ class TraupelLossModel:
                                                       axial_clearance_over_blade_length=s_ax_over_l_stator)  # -
         # Calculate incidence loss. For the stator, it is assumed to be zero.
         zeta_incidence_stator = 0  # -
+        if zeta_aerodynamic_stator >= 1:
+            raise ValueError("Stator aerodynamic loss coefficient is too large; it must be less than 1.")
         # Calculate dissipated enthalpy in the stator
         eta_stator = 1 - (zeta_aerodynamic_stator + zeta_incidence_stator)  # -
         v_1 = analysis_results["v_1"]  # m/s
@@ -1095,6 +1097,9 @@ class TraupelLossModel:
         incidence = analysis_results["incidence"]  # rad
         M_r1_blade = blade_row_results["M_r1_blade"]  # -
         zeta_incidence_rotor = self.calculate_incidence_losses(incidence, velocity_ratio_rotor, M_r1_blade)  # -
+        if zeta_aerodynamic_rotor + zeta_incidence_rotor >= 1:
+            raise ValueError("Rotor aerodynamic loss coefficient including incidence is too large; "
+                             "it must be less than 1.")
         # Calculate dissipated enthalpy in the rotor for the blade row alone
         eta_rotor = 1 - (zeta_aerodynamic_rotor + zeta_incidence_rotor)  # -
         delta_h_loss_rotor = ((1 - eta_rotor) / eta_rotor) * w_2_blade**2 / 2  # J/kg
