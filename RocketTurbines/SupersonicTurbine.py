@@ -827,8 +827,8 @@ class SupersonicTurbine:
     def _calculate_rectangle_maximum_height(width, R_hub, R_tip):
         """Return maximum height of a hub-tangent rectangle within the tip circle, m, or zero if its width cannot fit."""
         # Reject invalid dimensions, while retaining finite positive widths that overfill the annulus.
-        if not np.all(np.isfinite([width, R_hub, R_tip])) or width <= 0 or not 0 < R_hub < R_tip:
-            raise ValueError("MOC width must be positive and finite, with finite radii satisfying 0 < R_hub < R_tip.")
+        if not np.isfinite(width) or width <= 0:
+            raise ValueError("MOC width must be positive and finite.")
         # The inner side is hub-tangent, while the outer corners touch the tip circle at maximum height.
         # If width of the rectangle does not fit in the annulus, return zero height.
         return max(0., np.sqrt(max(0., R_tip**2 - width**2 / 4)) - R_hub)
@@ -838,8 +838,6 @@ class SupersonicTurbine:
         """Return width and height of the largest Euler-centred rectangle inside the tip circle, m."""
         # For half-height h, tip contact gives w=2*sqrt(R_tip**2-(R_Euler+h)**2).
         # The area derivative gives 2*h**2+3*R_Euler*h+R_Euler**2-R_tip**2=0.
-        if not np.all(np.isfinite([R_hub, R_tip, R_Euler])) or not 0 < R_hub < R_Euler < R_tip:
-            raise ValueError("Single-MOC radii must satisfy 0 < R_hub < R_Euler < R_tip.")
         half_height = 2 * (R_tip**2 - R_Euler**2) / (np.sqrt(R_Euler**2 + 8 * R_tip**2) + 3 * R_Euler)
         return 2 * np.sqrt(R_tip**2 - (R_Euler + half_height)**2), 2 * half_height
 
@@ -847,8 +845,6 @@ class SupersonicTurbine:
     def _calculate_rectangle_exit_arc(width, height, R_hub, R_Euler):
         """Return total Euler-circle arc inside a rectangular exit, m, including tangential-side crossings."""
         # The inner-side coordinate R_hub locates the actual bottom of either a single or multiple MOC exit.
-        if not np.all(np.isfinite([width, height, R_hub, R_Euler])) or min(width, height, R_Euler) <= 0:
-            raise ValueError("MOC exit dimensions and Euler radius must be positive and finite; inner side must be finite.")
         # On the right semicircle, x=R_Euler*sin(theta) and y=R_Euler*cos(theta), with 0 <= theta <= pi.
         # The two tangential sides bound one angular interval; clipping also handles no intersection.
         first_angle = np.arccos(np.clip((R_hub + height) / R_Euler, -1., 1.))
@@ -863,9 +859,6 @@ class SupersonicTurbine:
     @staticmethod
     def _calculate_ellipse_maximum_radius(width, height, R_mean):
         """Return the maximum distance from the turbine axis to the outermost edge of a mean-radius-centred ellipse, m."""
-        # Require a finite ellipse with positive dimensions and centre radius.
-        if not np.all(np.isfinite([width, height, R_mean])) or min(width, height, R_mean) <= 0:
-            raise ValueError("Ellipse dimensions and centre radius must be finite and positive.")
         a, b = width / 2, height / 2
         # The radial top is outermost unless the tangential semi-axis of the ellipse is sufficiently large.
         if a**2 - b**2 <= R_mean * b:
@@ -880,7 +873,7 @@ class SupersonicTurbine:
         """Return Euler-circle arc inside a mean-radius-centred ellipse, m, for a local nozzle."""
         # Require the Euler circle to pass through the nozzle exit.
         a, b = width / 2, height / 2
-        if min(a, b) <= 0 or a >= R_Euler or abs(R_Euler - R_mean) >= b:
+        if a >= R_Euler or abs(R_Euler - R_mean) >= b:
             raise ValueError("Euler circle must cross a local de Laval exit centred at mean radius.")
         # Intersect x=R_Euler*sin(theta), y=R_Euler*cos(theta) with x**2/a**2+(y-R_mean)**2/b**2=1.
         def intersection(theta):
