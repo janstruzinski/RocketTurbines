@@ -157,6 +157,13 @@ The stator and rotor have the same radial blade length. A shrouded rotor additio
 `h_shroud_over_blade_length`, `s_ax_shroud_over_h_shroud` and `seal_teeth_number`; the seal requires an integer count
 greater than two. Tooth spacing is $c_r/(n_{\mathrm{teeth}}-1)$. `t_shroud` stores an optional supplied shroud thickness.
 
+`A_throat_stator` and `A_throat_rotor` are initialized to `None` and are not calculated by `size_turbine`.
+`SupersonicTurbine` supplies these total throat areas within the admitted sector, in m², from its throat sizing and
+blading geometry without BL correction.
+
+`R_nozzle` is also initialized to `None` and left unset by `size_turbine`. `SupersonicTurbine` supplies the actual
+stator nozzle exit-centre radius in m.
+
 #### Sizing logic and numerical solution
 
 The following diagram explains turbine sizing & flow calculations procedure in `Turbine1D` and `TraupelLossModel`:
@@ -751,6 +758,7 @@ The following symbols refer to the axial view of a nozzle exit, looking along th
 | $R_h$, $R_t$ | Hub and tip radii, `R_hub` and `R_tip`. |
 | $R_E$ | Euler radius, `R_Euler`; pitches and admission arcs are measured on this circle. |
 | $R_m=(R_h+R_t)/2$ | Annulus mean radius, `R_mean`; generally different from $R_E$. |
+| $R_c$ | Actual nozzle exit-centre radius, `turbine_meanline.R_nozzle`. |
 | $H_a=R_t-R_h$ | Radial annulus height. |
 | $p_s=2\pi R_E\varepsilon/n$, $p_r=2\pi R_E/n_r$ | Total stator and rotor pitches, including metal blockage. |
 | $\delta=p_s/R_E$ | Angular pitch between neighbouring nozzle centre lines. |
@@ -782,9 +790,9 @@ inter-nozzle metal-thickness constraint is applied.
 The shaded regions are open exits. Blue dashed curves are Euler circles; the orange highlighted arc is $L_e$.
 For multiple nozzles, the Euler-circle arc $p_s-L_e$ is TE thickness that should be used for meanline calculations,
 whereas $g$ is a straight spacing between nozzles. This is minimum thickness projected on circumferential direction
-between nozzle edges. The single MOC panel shows an actual exit shorter than its maximum-area reference rectangle,
-with the same centre. These diagrams illustrate the construction rules rather than a particular converged turbine
-design.
+between nozzle edges. Both MOC diagrams show actual exits shifted inward from $R_E$ to keep their outer corners
+at the tip. Their dashed maximum-height references are hub-tangent. These diagrams illustrate the construction rules
+rather than a particular converged turbine design.
 
 #### Constructor inputs and design setup
 
@@ -880,13 +888,14 @@ The following shows the coupling logic between meanline design from `Turbine1D` 
    |      |      Calculate the total choked throat area required by mass flow.                      |
    |      |      |                                                                                  |
    |      |      +--> Multiple MOC nozzles                                                          |
-   |      |      |      Set hub-tangent rectangular exit width from minimum stator thickness.       |
-   |      |      |      Tip contact limits maximum height; width sets the MOC reference scale.      |
-   |      |      |      Throat width and mass flow determine actual throat/exit height.             |
+   |      |      |      Determine nozzle placement.                                                 |
+   |      |      |      Calculate MOC nozzle exit width based on minimum thickness.                 |
+   |      |      |      Mass flow sets nozzle height.                                               |
    |      |      |                                                                                  |
    |      |      +--> Single MOC nozzle                                                             |
-   |      |      |      Maximize rectangular exit area with its centre fixed at Euler radius.       |
-   |      |      |      Width sets the MOC scale; mass flow sets actual height at the same centre.  |
+   |      |      |      Determine nozzle placement.                                                 |
+   |      |      |      Calculate MOC nozzle exit width to maximize area.                           |
+   |      |      |      Mass flow sets nozzle height.                                               |
    |      |      |                                                                                  |
    |      |      +--> Multiple de Laval nozzles                                                     |
    |      |      |      Throat area per nozzle sets throat diameter and nozzle reference scale.     |
@@ -901,6 +910,7 @@ The following shows the coupling logic between meanline design from `Turbine1D` 
    |             Match stator TE thickness arc for multiple nozzles or admission for one nozzle.    |
    |             Measure throat-centre to exit-centre chord; apply stator_nozzle_chord_scale.       |
    |             Calculate height/width excesses and minimum stator-thickness margin.               |
+   |             Store the actual exit-centre radius as turbine_meanline.R_nozzle.                 |
    |      |                                                                                         |
    |      v                                                                                         |
    |    Return five residuals r(x), meanline/blading objects and geometric coefficients:            |
@@ -943,13 +953,16 @@ normal thickness. Thus the fixed-point map is $F(\mathbf{x})=\mathbf{x}+\mathbf{
 
 Because this vector mixes ratios, lengths and possibly admission, the constructor solves for normalized variables
 $\mathbf{z}=\mathbf{x}/\mathbf{s}$. Chord/pitch scales are the larger of the initial ratio and 1; rotor thicknesses
-use $p_r$. The fourth scale is $0.95p_s$ for multiple nozzles, or the larger of initial admission and 0.01 for one
-nozzle. The relaxed Aitken solver starts at relaxation 0.3, adapts within 0.05 to 0.8, allows 30 updates and requires
+use $0.12p_r$. The fourth scale is $0.12p_s$ for multiple nozzles, or initial admission clipped to $[0.01,1]$ for one
+nozzle. The relaxed Aitken solver starts at relaxation 0.3, adapts within 0.05 to 1.5, allows 60 updates and requires
 every normalized fixed-point residual to be below $10^{-4}$ in absolute value.
 
-Bounds keep chord/pitch ratios at least $10^{-8}$, rotor LE/TE thickness projections between zero and $0.95p_r$, and stator TE thickness
-between zero and $0.95p_s$. For a single nozzle, admission is bounded by $10^{-6}$ and 1. These bounds constrain the
-coupling variables; nozzle-packing inequalities remain separate design checks.
+Bounds keep chord/pitch ratios at least $10^{-8}$, rotor LE/TE thickness projections between zero and $0.24p_r$,
+and stator TE thickness between zero and $0.24p_s$. For a single nozzle, admission is bounded by $10^{-6}$ and 1.
+These bounds constrain the coupling variables; nozzle-packing inequalities remain separate design checks.
+Nonfinite initial estimates or estimates outside these bounds trigger a `UserWarning` and are replaced by their
+corresponding solution scales. Finite initial estimates already within bounds are retained. Finite substitutes are
+used when constructing scales from nonfinite dimensionless estimates.
 
 #### Rotor shaping, separation limits and edge thicknesses
 
@@ -1001,6 +1014,18 @@ G^*=\frac{p_0}{\sqrt{T_0}}\sqrt{\frac{\gamma}{R}}
 A^*_{\mathrm{total}}=\frac{\dot m_{\mathrm{total}}}{G^*}.
 $$
 
+This area is stored as `turbine_meanline.A_throat_stator`. The rotor throat calculation follows it, measuring the
+minimum gap $w_E$ between the pressure- and suction-side passage contours at Euler radius.
+The measurement includes the straight segments joining the contour nodes. Assuming geometrically similar sections
+with $w(r)=w_Er/R_E$ and one passage per rotor blade, the admitted rotor throat area is
+
+$$
+\texttt{A\_throat\_rotor}=\varepsilon n_r\int_{R_h}^{R_t}w_E\frac{r}{R_E}\,dr
+=\varepsilon n_r w_E\frac{R_t^2-R_h^2}{2R_E}.
+$$
+
+This is stored as `turbine_meanline.A_throat_rotor`.
+
 Each of $n$ identical nozzles carries throat area $A^*_{\mathrm{total}}/n$. MOC nozzles have rectangular throats and
 exits with a common radial height; their circumferential scale remains free until packing considerations fix it.
 Conical de Laval nozzles have circular throats, so mass flow fixes their throat diameter and hence the dimensional
@@ -1024,8 +1049,9 @@ conditions as follows.
 
 ##### Multiple MOC nozzles
 
-Select `contour_method="moc"` and $n>1$. Each rectangular exit has its inner side tangent to the hub. For angular
-pitch $\delta$, the straight gap between adjacent inner corners is
+Select `contour_method="moc"` and $n>1$. Start each rectangular exit centre at Euler radius $R_E$ and shift it
+radially when necessary to fit them in the annulus. Determine its width such that when the nozzle is tangent to the hub,
+minimum thickness is achieved. For angular pitch $\delta$, the straight gap between adjacent reference inner corners is:
 
 $$
 g=2R_h\sin(\delta/2)-w\cos(\delta/2).
@@ -1033,42 +1059,89 @@ $$
 
 1. Set $g=t_{s,\min}^{\mathrm{proj}}$, giving
    $w=[2R_h\sin(\delta/2)-t_{s,\min}^{\mathrm{proj}}]/\cos(\delta/2)$.
-2. Limit the outer corners to the tip circle:
-   $H_{\max}=\sqrt{R_t^2-w^2/4}-R_h$.
+2. Calculate the maximum height with the inner side tangent to the hub and outer corners at the tip:
+   $H_{\max}=\max(0,\sqrt{\max(0,R_t^2-w^2/4)}-R_h)$. For the fixed width, this also maximizes exit area.
+   If no positive height fits, $H_{\max}=0$ and the positive actual height produces a positive `height_optimality`.
 3. Pass $w$ as the MOC `reference_length`. The scaled contour supplies the uncorrected throat width $b^*$.
 4. Enforce mass flow with $H=A^*_{\mathrm{total}}/(n b^*)$. This is both throat and exit radial height.
 5. Calculate `height_optimality` as $H-H_{\max}$. Positive means the rectangle exceeds the available annulus;
-   zero means its outer corners touch the tip; negative leaves unused radial space.
-6. Intersect the exit with the Euler circle to obtain $L_e=2R_E\arcsin[w/(2R_E)]$. The fourth residual is
+   zero means the inner side touches the hub and outer corners touch the tip; negative means a shorter exit can fit.
+6. Place the actual exit with inner-side coordinate
+   $y_0=\max[R_h,\min(R_E-H/2,\;R_h+H_{\max}-H)]$ and centre radius $R_c=y_0+H/2$.
+   Sum all Euler-circle arcs inside this exit to obtain $L_e$. If the circle crosses both radial sides and no tangential
+   side, this reduces to $L_e=2R_E\arcsin[w/(2R_E)]$. The fourth residual is
    $r_4=(p_s-L_e)-t_{TE,s}$, matching the meanline stator TE thickness arc to the geometry.
 
-Width and minimum metal spacing are imposed directly, so `width_optimality` and `t_TE_stator_min_margin` are both
-zero. A geometrically valid rectangle must also have positive width and height, and the Euler circle must cross its
-two radial sides. The actual rectangle stays hub-tangent even when $H<H_{\max}$.
+This placement has three regimes. While the Euler-centred exit fits, $R_c=R_E$. Once its outer corners reach the
+tip, shift the centre inward as height grows, keeping those corners at the tip and retaining a positive hub clearance.
+At $H=H_{\max}$ the inner side becomes hub-tangent. For $H>H_{\max}$ keep that side at $R_h$; the centre then moves
+outward and the outer corners exceed the tip. The height coefficient is negative before maximum height, zero at it
+and positive afterwards.
+
+Width is imposed by the reference construction, so `width_optimality` is zero. Calculate the obtained minimum
+spacing between the actual adjacent inner corners at $y_0\ge R_h$. The obtained spacing and margin are
+
+$$
+t_{TE,s,\min}^{\mathrm{obtained}}
+=2y_0\sin(\delta/2)-w\cos(\delta/2)
+=t_{s,\min}^{\mathrm{proj}}+2(y_0-R_h)\sin(\delta/2),
+$$
+
+$$
+\texttt{t\_TE\_stator\_min\_margin}
+=t_{TE,s,\min}^{\mathrm{obtained}}-t_{s,\min}^{\mathrm{proj}}\ge0.
+$$
+
+Shorter exits whose inner side lies above the hub tangent line have a positive thickness margin. The margin becomes
+zero at maximum height and remains zero for taller exits as nozzle remains hub tangent. Such construction method ensures
+that Euler circle always crosses through the nozzles. 
 
 ##### Single MOC nozzle
 
-Select `contour_method="moc"` and $n=1$. There is no adjacent-nozzle gap to set the width. Instead, find the
-maximum-area rectangle whose centre is fixed at $R_E$, whose inner side clears the hub and whose outer corners
-touch the tip. Writing $h=H_{\max}/2$, the implementation uses
+Select `contour_method="moc"` and $n=1$. There is no adjacent-nozzle that allows to calculate nozzle width based on
+minimum thickness. Instead, find the maximum-area rectangle within the tip circle whose centre is fixed at $R_E$.
+Its height $H_E=2h$ determines the reference width $w$, with
 
 $$
-h=\min\left(R_E-R_h,\;
-\frac{2(R_t^2-R_E^2)}{\sqrt{R_E^2+8R_t^2}+3R_E}\right),\qquad
-H_{\max}=2h,\qquad w=2\sqrt{R_t^2-(R_E+h)^2}.
+h=\frac{2(R_t^2-R_E^2)}{\sqrt{R_E^2+8R_t^2}+3R_E},\qquad
+H_E=2h,\qquad w=2\sqrt{R_t^2-(R_E+h)^2}.
 $$
 
-1. Use this $w$ as the MOC reference length to obtain $b^*$.
-2. Set the actual height from mass flow, $H=A^*_{\mathrm{total}}/b^*$, and report $H-H_{\max}$.
-3. Keep the actual rectangle centred at $R_E$, so its inner-side radius is $R_E-H/2$ even when its height differs
-   from the maximum-area reference height.
+1. Keep this $w$ and calculate $H_{\max}=\sqrt{R_t^2-w^2/4}-R_h$. This is the maximum fitting height when the
+   centre may move: the inner side is hub-tangent and the outer corners touch the tip. It differs from $H_E$.
+2. Use $w$ as the MOC reference length to obtain $b^*$. Set the actual height from mass flow,
+   $H=A^*_{\mathrm{total}}/b^*$, and report $H-H_{\max}$.
+3. Apply the same placement rule as for multiple MOC nozzles:
+   $y_0=\max[R_h,\min(R_E-H/2,\;R_h+H_{\max}-H)]$ and $R_c=y_0+H/2$.
+   The centre remains at $R_E$ until the tip limits height, then shifts inward to maintain tip contact.
+   At $H_{\max}$ the inner side reaches the hub; for greater heights, retain hub tangency and allow tip overfill.
 4. Calculate $L_e$ from the Euler-circle intersections and obtain admission
    $\varepsilon_{\mathrm{geom}}=L_e/(2\pi R_E)$.
 5. Solve $r_4=\varepsilon_{\mathrm{geom}}-\varepsilon_{\mathrm{assumed}}=0$ in place of a stator TE thickness residual.
 
 The meanline stator TE thickness is zero. `width_optimality` and `t_TE_stator_min_margin` are zero because no neighbouring
-nozzle is present. A negative height coefficient means less area than the chosen maximum-area reference; a positive
-coefficient fails this construction's height criterion. The Euler-circle side-crossing requirement still applies.
+nozzle is present. A negative height coefficient means the actual height can fit at the selected width; a positive
+coefficient means it is not possible to fit the nozzle and the stator must be adjusted. 
+
+The calculation used for $L_e$ use the actual shifted exit, includes crossings through any side of the rectangle exit 
+and retains a positive values.
+
+For either MOC construction method, parameterize the right semicircle as $x=R_E\sin\theta$, $y=R_E\cos\theta$,
+$0\le\theta\le\pi$. Use the placement rule above for $y_0$ with either single or multiple MOC nozzles. Define
+
+$$
+\theta_0=\arccos\!\left(\operatorname{clip}\!\left(\frac{y_0+H}{R_E},-1,1\right)\right),\quad
+\theta_1=\arccos\!\left(\operatorname{clip}\!\left(\frac{y_0}{R_E},-1,1\right)\right),\quad
+\phi=\arcsin\!\left(\min\!\left(1,\frac{w}{2R_E}\right)\right).
+$$
+
+The tangential sides admit $[\theta_0,\theta_1]$, while the radial sides admit
+$[0,\phi]\cup[\pi-\phi,\pi]$. Their intersections give the total Euler diameter arc in the open nozzle passage:
+
+$$
+L_e=2R_E\left[\max(0,\min(\theta_1,\phi)-\theta_0)
++\max(0,\theta_1-\max(\theta_0,\pi-\phi))\right].
+$$
 
 ##### Multiple de Laval nozzles
 
@@ -1153,12 +1226,12 @@ After construction, the public result attributes are:
 
 | Attribute | Contents |
 | --- | --- |
-| `turbine_meanline` | Coupled `Turbine1D` object, with geometry and all three design-point result dictionaries. Its `t_LE_rotor` stores the measured uncorrected LE thickness projection. |
+| `turbine_meanline` | Coupled `Turbine1D` object, with geometry and all three design-point result dictionaries. Its `t_LE_rotor` stores the measured uncorrected LE thickness projection; `R_nozzle` stores the actual nozzle exit-centre radius. |
 | `stator_shape` | `SupersonicStatorNozzle` object; uncorrected dimensional geometry is in `dimensional_shapes.uncorrected`. |
 | `rotor_shape` | `SupersonicRotorBlade` object; call `dimensionalize().uncorrected` for the geometry used by the coupling. |
 | `height_optimality` | $H-H_{\max}$ for MOC; $R_{\max}-R_t$ for de Laval, in m. Require $\le0$; zero fills the permitted radial extent for the selected construction. |
 | `width_optimality` | $w-w_{\mathrm{available}}$ in m for multiple de Laval nozzles; require $\le0$. Zero by construction for MOC and single-nozzle cases. |
-| `t_TE_stator_min_margin` | $g-t_{s,\min}^{\mathrm{proj}}$ in m for multiple de Laval nozzles; require $\ge0$. Zero by construction for MOC and single-nozzle cases. |
+| `t_TE_stator_min_margin` | Obtained minus required projected spacing, in m. Multiple MOC exits stay above or tangent to the hub and give $\ge0$; multiple de Laval exits retain signed spacing deficits. Zero for single-nozzle cases. |
 | `t_rotor_min_margin` | Smaller normal rotor LE/TE thickness minus `t_min_rotor`, in m. The coupling drives this to zero within its residual tolerance. |
 
 The input dictionary copies retain the constructor's setup and initial estimates; use `turbine_meanline` to read
@@ -1191,12 +1264,7 @@ The stator isentropic exit Mach, actual rotor relative inlet Mach and isentropic
 exceed one. Rotor inlet/outlet angles must have positive axial components, and the stator outlet angle must be
 strictly between zero and 90 degrees from axial. Multiple-nozzle angular pitch must satisfy $0<\delta<\pi$.
 
-The rectangular construction requires $0<w<2R_E$ and Euler-circle crossings on its radial sides. The elliptical
-construction uses semi-axes $a=w/2$, $b=H/2$ and requires positive dimensions, $a<R_E$ and $|R_E-R_m|<b$.
-The height check uses the actual maximum radius, whether attained at the radial top or on an ellipse flank.
-Ellipse/Euler-circle intersections are solved numerically.
-
 Invalid inputs or violated construction assumptions raise `ValueError`; missing dictionary inputs raise `KeyError`.
-The bounded Aitken solver raises `RuntimeError` for nonfinite iterates, stagnation or failure to converge within its
+The bounded Aitken solver raises `RuntimeError` for nonfinite values, stagnation or failure to converge within its
 iteration limit. Positive packing excesses or negative spacing margins can remain as reported coefficients after a
 successful solve and must still be addressed by the engineer or outer optimizer when selecting the design.

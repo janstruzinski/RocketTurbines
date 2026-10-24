@@ -86,13 +86,14 @@ class SupersonicTurbine:
         #    |      |      Calculate the total choked throat area required by mass flow.                      |
         #    |      |      |                                                                                  |
         #    |      |      +--> Multiple MOC nozzles                                                          |
-        #    |      |      |      Set hub-tangent rectangular exit width from minimum stator thickness.       |
-        #    |      |      |      Tip contact limits maximum height; width sets the MOC reference scale.      |
-        #    |      |      |      Throat width and mass flow determine actual throat/exit height.             |
+        #    |      |      |      Determine nozzle placement.                                                 |
+        #    |      |      |      Calculate MOC nozzle exit width based on minimum thickness.                 |
+        #    |      |      |      Mass flow sets nozzle height.                                               |
         #    |      |      |                                                                                  |
         #    |      |      +--> Single MOC nozzle                                                             |
-        #    |      |      |      Maximize rectangular exit area with its centre fixed at Euler radius.       |
-        #    |      |      |      Width sets the MOC scale; mass flow sets actual height at the same centre.  |
+        #    |      |      |      Determine nozzle placement.                                                 |
+        #    |      |      |      Calculate MOC nozzle exit width to maximize area.                           |
+        #    |      |      |      Mass flow sets nozzle height.                                               |
         #    |      |      |                                                                                  |
         #    |      |      +--> Multiple de Laval nozzles                                                     |
         #    |      |      |      Throat area per nozzle sets throat diameter and nozzle reference scale.     |
@@ -107,6 +108,7 @@ class SupersonicTurbine:
         #    |             Match stator TE thickness arc for multiple nozzles or admission for one nozzle.    |
         #    |             Measure throat-centre to exit-centre chord; apply stator_nozzle_chord_scale.       |
         #    |             Calculate height/width excesses and minimum stator-thickness margin.               |
+        #    |             Store the actual exit-centre radius as turbine_meanline.R_nozzle.                 |
         #    |      |                                                                                         |
         #    |      v                                                                                         |
         #    |    Return five residuals r(x), meanline/blading objects and geometric coefficients:            |
@@ -253,22 +255,31 @@ class SupersonicTurbine:
         radius = np.sqrt(arguments["shaft_power"] / arguments["mdot"] / arguments["work_coefficient_tt"]) \
                  / (arguments["RPM"] * np.pi / 30.)
         rotor_pitch = 2 * np.pi * radius / arguments["no_blades_rotor"]
+        # Stator thickness uses the total pitch within the prescribed admitted sector at Euler radius.
+        stator_pitch = arguments["admission_fraction"] * 2 * np.pi * radius / no_nozzles
         # Rotor LE thickness is independent of the TE thickness used by the meanline loss model.
         initial_t_LE_rotor = self.SupersonicRotorBlades_arguments[
             "leading_edge_thickness_over_total_pitch"] * rotor_pitch
         # Assemble initial solution array
         x_initial = np.append(x_initial, initial_t_LE_rotor)
-        # Create upper and lower bounds for the solution
+        # Create upper and lower bounds for the solution; thicknesses cannot exceed 24% of their total pitch.
         lower = np.array([1e-8, 1e-8, 0., 0. if no_nozzles > 1 else 1e-6, 0.])
-        upper = np.array([np.inf, np.inf, 0.95 * rotor_pitch,
-                          0.95 * arguments["admission_fraction"] * 2 * np.pi * radius / no_nozzles
-                          if no_nozzles > 1 else 1., 0.95 * rotor_pitch])
+        upper = np.array([np.inf, np.inf, 0.24 * rotor_pitch,
+                          0.24 * stator_pitch if no_nozzles > 1 else 1., 0.24 * rotor_pitch])
         # Create solution scales for normalizing it. Solution is normalized because it mixes nondimensional &
-        # dimensional variables 
-        solution_scales = np.array([max(x_initial[0], 1.), max(x_initial[1], 1.), rotor_pitch,
-                                    upper[3] if no_nozzles > 1 else max(x_initial[3], 0.01), rotor_pitch])
-        if not np.all(np.isfinite(x_initial)) or np.any(x_initial < lower) or np.any(x_initial > upper):
-            raise ValueError("Initial coupling estimates must be finite and within positive pitch/thickness bounds.")
+        # dimensional variables. Use 12% of total pitch for each thickness scale.
+        # Use finite substitutes when a dimensionless initial estimate is needed to construct its scale.
+        scale_estimates = np.nan_to_num(x_initial, nan=1., posinf=1., neginf=0.)
+        solution_scales = np.array([max(scale_estimates[0], 1.), max(scale_estimates[1], 1.), 0.12 * rotor_pitch,
+                                    0.12 * stator_pitch if no_nozzles > 1 else np.clip(scale_estimates[3], 0.01, 1.),
+                                    0.12 * rotor_pitch])
+        # Replace nonfinite or out-of-bound initial estimates with their corresponding solution scales and notify
+        # the user.
+        invalid_initial = ~np.isfinite(x_initial) | (x_initial < lower) | (x_initial > upper)
+        if np.any(invalid_initial):
+            warnings.warn("Nonfinite or out-of-bound initial coupling estimates were replaced by their solution scales.",
+                          UserWarning, stacklevel=2)
+            x_initial[invalid_initial] = solution_scales[invalid_initial]
 
         # Define a function to extract new design variables from calculate_new_solution based on their assumed,
         # normalized values. These new values are also normalized by the solution scales.
@@ -296,9 +307,9 @@ class SupersonicTurbine:
         # match the assigned nozzle space. For MOC nozzle, it is consequently always 0, which means it is always
         # optimal.
         self.width_optimality = coefficients["width_optimality"]
-        # Margin on the minimum thickness for the stator is valid only for da Laval nozzle. For MOC nozzle, minimum
-        # thickness is always satisfied explicitly during calculating width of the nozzle exit. Consequently, in that case
-        # this coefficient will be always 0.
+        # Store the stator minimum-thickness margin. Multiple MOC exits remain above or tangent to the hub,
+        # giving a nonnegative thickness margin. Singular nozzles have always the most optimal, zero thickness margin,
+        # because there is no adjacent nozzle
         self.t_TE_stator_min_margin = coefficients["t_TE_stator_min_margin"]
         # Save the minimum normal-thickness margin across rotor LE and TE.
         self.t_rotor_min_margin = coefficients["t_rotor_min_margin"]
@@ -378,8 +389,10 @@ class SupersonicTurbine:
         # require slightly different treatment of conditions above.
 
         # Starting with MOC nozzles. First, width of the rectangular exit, w_nozzle, can be calculated such that point 3 is
-        # satisfied for given annulus dimensions, admission fraction, number of nozzles and t_TE_stator_min. Then,
-        # maximum possible height, H_max, for the rectangular nozzle can be calculated. w_nozzle dimensionalizes MOC shape in
+        # satisfied for given annulus dimensions, admission fraction, number of nozzles and t_TE_stator_min when the
+        # exit is tangent to the hub. Actual exit centres start at Euler radius. Then, maximum possible nozzle height,
+        # H_max, places the inner side tangent to the hub and outer corners at the tip.
+        # If no positive height fits this width, H_max is zero. w_nozzle dimensionalizes MOC shape in
         # SupersonicStatorNozzle, which in turn settles throat width. Throat area can be calculated such that point 4 is
         # satisfied. Throat area and width are known, so its height can be calculated too. It is the same as height of
         # the nozzle exit. This height, H_nozzle, must be smaller or equal to already calculated H_max - otherwise the
@@ -387,7 +400,11 @@ class SupersonicTurbine:
         # height_optimality is H_nozzle - H_max. If it is positive, geometry is not feasible. If it is zero,
         # the geometry is optimal as nozzle exit has the largest possible area and matches annulus well. This satisfies
         # point 1. If it is negative, the geometry is feasible, but may be not optimal, especially for large negative
-        # values. Finally, the arc length at Euler diameter between edges of adjacent nozzles, t_TE_stator_obtained,
+        # values. If the Euler-centred exit exceeds the tip, shift its centre inward until the corners touch the tip.
+        # At H_max, the inner side also touches the hub. For greater heights, retain hub tangency and allow the exit to
+        # cross tip radius. In such case height_optimality is positive and the engineer or outer optimizer need to adjust the design.
+        # Minimum spacing uses the actual inner corners and is at least t_TE_stator_min, with zero margin at H_max.
+        # Finally, the arc length at Euler diameter between edges of adjacent nozzles, t_TE_stator_obtained,
         # can be calculated. It must be equal to the arc length t_TE_stator assumed during meanline calculations.
         # Their difference is t_TE_stator_residual and the numerical solver must hold it at zero - it means that assumed
         # and obtained trailing edge thicknesses are consistent, and that meanline code and nozzle shapes agree with
@@ -396,8 +413,9 @@ class SupersonicTurbine:
         # This was a procedure when multiple MOC nozzles are used. If there is a single MOC nozzle, a few things change.
         # Firstly, points 2 and 3 go away, as t_TE_stator for the meanline code is always zero and there is no adjecent
         # nozzle for the engineer to worry about metal thickness. Point 1 sets the dimensions of the rectangle with
-        # greatest area for given annulus dimensions, with its centre constrained to Euler radius.
-        # Its width and height are w_nozzle and H_max; the actual exit retains the same centre.
+        # greatest area within the tip circle, with its centre constrained to Euler radius, to determine w_nozzle.
+        # Keeping that width, calculate H_max for a hub-tangent rectangle with its outer corners touching the tip.
+        # The actual exit starts centred at Euler radius and shifts by the same rule as for multiple MOC exits.
         # w_nozzle can be used to calculate throat width and height that satisfy point 4, and which also settles
         # H_nozzle. Consequently, height_optimality can be again calculated, while t_TE_stator_residual is always
         # zero. However, a single nozzle also constraints admission fraction of the stator. admission_fraction_obtained
@@ -524,13 +542,25 @@ class SupersonicTurbine:
 
         # Calculate total throat area needed to satisfy massflow requirements
         gamma = self.gas.gamma
-        throat_mass_flux = results["p_0"] / np.sqrt(results["T_0"]) * np.sqrt(gamma / self.gas.R) \
+        stator_throat_mass_flux = results["p_0"] / np.sqrt(results["T_0"]) * np.sqrt(gamma / self.gas.R) \
                            * (2 / (gamma + 1)) ** ((gamma + 1) / (2 * (gamma - 1)))
-        total_throat_area = results["mdot_total"] / throat_mass_flux
+        A_throat_stator = results["mdot_total"] / stator_throat_mass_flux
+        # Store the total stator throat area required to pass the admitted mass flow.
+        turbine_meanline.A_throat_stator = A_throat_stator
 
-        # Assume identical nozzles in one uniformly pitched admitted sector. Multiple rectangles are hub-tangent;
-        # a single rectangle is centred at Euler radius, including when its actual height differs from H_max.
-        # Ellipses are centred at the annulus mean radius. Normal metal thickness uses the meanline outlet angle.
+        # Measure the narrowest gap between the uncorrected rotor passage walls at Euler radius.
+        rotor_throat_width = self._calculate_rotor_throat_width(rotor_ideal)
+        # Assume geometrically similar sections, with throat width proportional to radius: w(r)=w_Euler*r/R_Euler.
+        # Integrate this width from hub to tip, then include one passage per blade and the admitted fraction.
+        turbine_meanline.A_throat_rotor = (rotor_throat_width * turbine_meanline.no_blades_rotor
+                                           * turbine_meanline.admission_fraction
+                                           * (turbine_meanline.R_tip**2 - turbine_meanline.R_hub**2)
+                                           / (2 * turbine_meanline.R_Euler))
+
+        # Assume identical nozzles in one uniformly pitched admitted sector. Rectangles start at Euler radius
+        # and shift radially when required to fit the nozzle in the turbine annulus.
+        # Ellipses are centred at the annulus mean radius. Normal metal thickness uses the meanline flow outlet angle,
+        # which can be assumed to be equal to the outlet blade angle.
         count = turbine_meanline.no_blades_stator
         R_hub, R_tip, R_Euler = turbine_meanline.R_hub, turbine_meanline.R_tip, turbine_meanline.R_Euler
         R_mean = turbine_meanline.R_mean
@@ -557,8 +587,8 @@ class SupersonicTurbine:
         # determine all remaining margins, residuals and optimality coefficients
         # If MOC stator nozzles are used
         if contour == "moc" and count > 1:
-            # First calculate reference width for the MOC nozzle such that minimum thickness is always satisfied.
-            # Adjacent inner corners are separated by 2*R_hub*sin(delta/2) - w*cos(delta/2).
+            # Set width so an inward extension to the hub tangent line has exactly the required minimum thickness.
+            # Adjacent reference inner corners are separated by 2*R_hub*sin(delta/2) - w*cos(delta/2).
             width = (2 * R_hub * np.sin(delta / 2) - t_TE_stator_min) / np.cos(delta / 2)
             maximum_height = self._calculate_rectangle_maximum_height(width, R_hub, R_tip)
             # Now calculate stator shape and dimensions. Use isentropic outlet Mach number at station 1 from Turbine1D,
@@ -568,24 +598,34 @@ class SupersonicTurbine:
             # Get stator blade chord (from shape uncorrected for BL)
             stator_chord = self._calculate_nozzle_chord(stator_shape) * self.stator_nozzle_chord_scale
             # Calculate throat height from total throat area, reference width and the number of nozzles
-            height = total_throat_area / (count * stator_shape.dimensional_shapes.uncorrected.throat_width)
+            height = A_throat_stator / (count * stator_shape.dimensional_shapes.uncorrected.throat_width)
             # Calculate height optimality factor for MOC nozzle exit
             height_optimality = height - maximum_height
-            # Width optimality factor and thickness margin are always zero
-            width_optimality = t_TE_stator_min_margin = 0.
+            # Place the nozzle at Euler radius first. If for calculated height it crosses the tip radius,
+            # shift nozzles inward instead. When H is even greater and exceeds H_max, retain hub tangency and allow the
+            # nozzle exit to cross the tip radius.
+            inner_side_radius = max(R_hub, min(R_Euler - height / 2, R_hub + maximum_height - height))
+            # Moving the inner side outward from the reference adds 2*(inner_side_radius-R_hub)*sin(delta/2) to its gap.
+            # This equivalent gap formula avoids cancellation at the prescribed minimum thickness.
+            t_TE_stator_min_obtained = t_TE_stator_min + 2 * (inner_side_radius - R_hub) * np.sin(delta / 2)
+            t_TE_stator_min_margin = t_TE_stator_min_obtained - t_TE_stator_min
+            # Width remains fixed by the hub-tangent reference construction.
+            width_optimality = 0.
             # Calculate chord - pitch ratio residuals between meanline design and blade shapes for the stator
             stator_ratio_residual = \
                 stator_chord / turbine_meanline.p_stator - meanline_arguments["chord_over_pitch_stator"]
             # Calculate trailing edge thickness residuals between meanline design and blade shapes for the stator
-            exit_arc = self._calculate_rectangle_exit_arc(width, height, R_hub, R_Euler)
+            exit_arc = self._calculate_rectangle_exit_arc(width, height, inner_side_radius, R_Euler)
             signed_arc_gap = turbine_meanline.p_stator - exit_arc
             fourth_residual = signed_arc_gap - turbine_meanline.t_TE_stator
 
         # Follow the procedure if a single MOC stator nozzle is used
         elif contour == "moc":
             # Calculate width and height of the optimal nozzle exit shape to maximize area taken up by it
-            # Maximize rectangle area subject to hub clearance, tip corners and centre fixed at Euler radius.
-            width, maximum_height = self._calculate_single_moc_exit_dimensions(R_hub, R_tip, R_Euler)
+            # Choose width by maximizing rectangle area inside the tip circle with its centre fixed at Euler radius.
+            width, _ = self._calculate_single_moc_exit_dimensions(R_hub, R_tip, R_Euler)
+            # At this width, the largest fitting height places the inner side at the hub and outer corners at the tip.
+            maximum_height = self._calculate_rectangle_maximum_height(width, R_hub, R_tip)
             # Now calculate stator shape and dimensions. Use isentropic outlet Mach number at station 1 from Turbine1D,
             # as SupersonicStatorNozzle requires ideal value.
             stator_shape = blading.SupersonicStatorNozzle(**{**stator_arguments, "reference_length": width})
@@ -593,11 +633,15 @@ class SupersonicTurbine:
             # Get stator blade chord (from shape uncorrected for BL)
             stator_chord = self._calculate_nozzle_chord(stator_shape) * self.stator_nozzle_chord_scale
             # From total throat area, calculate throat height
-            height = total_throat_area / stator_shape.dimensional_shapes.uncorrected.throat_width
+            height = A_throat_stator / stator_shape.dimensional_shapes.uncorrected.throat_width
             # Calculate height optimality factor for MOC nozzle exit
             height_optimality = height - maximum_height
+            # Place the nozzle at Euler radius first. If for calculated height it crosses the tip radius,
+            # shift nozzles inward instead. When H is even greater and exceeds H_max, retain hub tangency and allow the
+            # nozzle exit to cross the tip radius.
+            inner_side_radius = max(R_hub, min(R_Euler - height / 2, R_hub + maximum_height - height))
             # Also calculate admission fraction residual
-            exit_arc = self._calculate_rectangle_exit_arc(width, height, R_Euler - height / 2, R_Euler)
+            exit_arc = self._calculate_rectangle_exit_arc(width, height, inner_side_radius, R_Euler)
             fourth_residual = exit_arc / (2 * np.pi * R_Euler) - turbine_meanline.admission_fraction
             # Width optimality factor and thickness margin are always zero
             width_optimality = t_TE_stator_min_margin = 0.
@@ -607,7 +651,7 @@ class SupersonicTurbine:
         # Follow the procedure if multiple da Laval nozzles are used
         elif count > 1:
             # First calculate throat diameter based on total throat area and number of nozzles
-            throat_diameter = np.sqrt(4 * total_throat_area / (count * np.pi))
+            throat_diameter = np.sqrt(4 * A_throat_stator / (count * np.pi))
             # Now calculate stator shape and dimensions. Use isentropic outlet Mach number at station 1 from Turbine1D,
             # as SupersonicStatorNozzle requires ideal value.
             stator_shape = blading.SupersonicStatorNozzle(**{**stator_arguments, "reference_length": throat_diameter})
@@ -646,7 +690,7 @@ class SupersonicTurbine:
         # Now follow the procedure if a single da Laval nozzle is used
         else:
             # First calculate throat diameter based on total throat area
-            throat_diameter = np.sqrt(4 * total_throat_area / np.pi)
+            throat_diameter = np.sqrt(4 * A_throat_stator / np.pi)
             # Now calculate stator shape and dimensions. Use isentropic outlet Mach number at station 1 from Turbine1D,
             # as SupersonicStatorNozzle requires ideal value.
             stator_shape = blading.SupersonicStatorNozzle(**{**stator_arguments, "reference_length": throat_diameter})
@@ -666,6 +710,9 @@ class SupersonicTurbine:
             width_optimality = t_TE_stator_min_margin = 0.
             # Calculate chord - pitch ratio residuals between meanline design and blade shapes for the stator
             stator_ratio_residual = stator_chord / turbine_meanline.p_stator - meanline_arguments["chord_over_pitch_stator"]
+
+        # Store the actual exit-centre radius for MOC or de Laval nozzle exits.
+        turbine_meanline.R_nozzle = inner_side_radius + height / 2 if contour == "moc" else R_mean
 
         # Now pack all the results and return them
         # Components 1-4 are obtained minus assumed; component 5 corrects LE thickness to enforce the metal-thickness minimum.
@@ -715,6 +762,54 @@ class SupersonicTurbine:
                                                                   xtol=1e-12, full_output=False))
 
     @staticmethod
+    def _calculate_rotor_throat_width(rotor_geometry):
+        """Return the minimum gap between rotor passage walls, m.
+
+        The stored pressure and suction surfaces bound one open passage, so no pitch translation is required.
+        Represent each wall by straight line segments joining consecutive coordinate points.
+        """
+        # Read both passage walls in the axial/circumferential plane.
+        pressure_surface, suction_surface = rotor_geometry.pressure_surface, rotor_geometry.suction_surface
+        pressure = np.column_stack((pressure_surface.x, pressure_surface.y))
+        suction = np.column_stack((suction_surface.x, suction_surface.y))
+        # Require at least two points per wall, with x/y coordinates that contain neither NaN nor infinity.
+        if any(len(wall) < 2 or not np.all(np.isfinite(wall)) for wall in (pressure, suction)):
+            raise ValueError("Rotor throat measurement requires at least two points per wall, with finite x/y coordinates.")
+        # Each wall is approximated by straight line segments connecting their nodes.
+        # If two segments do not intersect, their closest points include an endpoint of at least one segment.
+        # Check the points of each wall against the segments of the other wall, in both directions.
+        # Process one segment at a time.
+        minimum_squared = np.inf
+        for points, wall in ((pressure, suction), (suction, pressure)):
+            point_segments = np.diff(points, axis=0)
+            for start, vector in zip(wall[:-1], np.diff(wall, axis=0)):
+                length_squared = np.dot(vector, vector)
+                # Skip repeated consecutive wall points: their identical coordinates give a segment of zero length.
+                if length_squared == 0:
+                    continue
+                # Find the nearest position on this segment to each point on the other wall.
+                # Limit the position to the segment's endpoints if its perpendicular projection falls beyond them.
+                offsets = points - start
+                fractions = np.clip(offsets @ vector / length_squared, 0., 1.)
+                distances = offsets - fractions[:, None] * vector
+                minimum_squared = min(minimum_squared, np.min(np.sum(distances**2, axis=1)))
+                # Determine which side of this segment's infinite straight line each point of the other wall lies on.
+                sides = offsets[:, 0] * vector[1] - offsets[:, 1] * vector[0]
+                differences = sides[:-1] - sides[1:]
+                # Interpolate between consecutive points of the other wall to find crossings of that straight line.
+                crossings = np.divide(sides[:-1], differences, out=np.full_like(differences, -1.),
+                                      where=differences != 0)
+                along_segment = (offsets[:-1] + crossings[:, None] * point_segments) @ vector / length_squared
+                # A crossing between the endpoints of both wall segments means the passage gap is zero.
+                if np.any((crossings >= 0) & (crossings <= 1) & (along_segment >= 0) & (along_segment <= 1)):
+                    return 0.
+        # Reject an undefined distance, for example when all consecutive wall points have identical coordinates.
+        if not np.isfinite(minimum_squared):
+            raise ValueError("Rotor throat measurement requires a wall segment with distinct endpoints and a finite distance.")
+        # Convert the smallest squared distance to the throat width in metres.
+        return np.sqrt(minimum_squared)
+
+    @staticmethod
     def _calculate_nozzle_chord(nozzle: blading.SupersonicStatorNozzle):
         """Return nozzle chord (throat-centre to exit-centre straight distance without BL correction), m.
 
@@ -730,33 +825,40 @@ class SupersonicTurbine:
 
     @staticmethod
     def _calculate_rectangle_maximum_height(width, R_hub, R_tip):
-        """Return maximum radial height of a hub-tangent rectangle whose outer corners touch the tip, m."""
-        # The radial inner side is tangent to the hub; the tip circle limits both outer corners.
-        if not np.isfinite(width) or width <= 0 or width / 2 >= np.sqrt(R_tip**2 - R_hub**2):
-            raise ValueError("No positive hub-tangent MOC exit fits this width; reduce nozzle pitch or metal thickness.")
-        return np.sqrt(R_tip**2 - width**2 / 4) - R_hub
+        """Return maximum height of a hub-tangent rectangle within the tip circle, m, or zero if its width cannot fit."""
+        # Reject invalid dimensions, while retaining finite positive widths that overfill the annulus.
+        if not np.all(np.isfinite([width, R_hub, R_tip])) or width <= 0 or not 0 < R_hub < R_tip:
+            raise ValueError("MOC width must be positive and finite, with finite radii satisfying 0 < R_hub < R_tip.")
+        # The inner side is hub-tangent, while the outer corners touch the tip circle at maximum height.
+        # If width of the rectangle does not fit in the annulus, return zero height.
+        return max(0., np.sqrt(max(0., R_tip**2 - width**2 / 4)) - R_hub)
 
     @staticmethod
     def _calculate_single_moc_exit_dimensions(R_hub, R_tip, R_Euler):
-        """Return width and maximum height of the largest Euler-centred rectangular exit, m."""
+        """Return width and height of the largest Euler-centred rectangle inside the tip circle, m."""
         # For half-height h, tip contact gives w=2*sqrt(R_tip**2-(R_Euler+h)**2).
-        # The area derivative gives 2*h**2+3*R_Euler*h+R_Euler**2-R_tip**2=0; the hub caps h.
+        # The area derivative gives 2*h**2+3*R_Euler*h+R_Euler**2-R_tip**2=0.
         if not np.all(np.isfinite([R_hub, R_tip, R_Euler])) or not 0 < R_hub < R_Euler < R_tip:
             raise ValueError("Single-MOC radii must satisfy 0 < R_hub < R_Euler < R_tip.")
-        half_height = min(R_Euler - R_hub, 2 * (R_tip**2 - R_Euler**2)
-                          / (np.sqrt(R_Euler**2 + 8 * R_tip**2) + 3 * R_Euler))
+        half_height = 2 * (R_tip**2 - R_Euler**2) / (np.sqrt(R_Euler**2 + 8 * R_tip**2) + 3 * R_Euler)
         return 2 * np.sqrt(R_tip**2 - (R_Euler + half_height)**2), 2 * half_height
 
     @staticmethod
     def _calculate_rectangle_exit_arc(width, height, R_hub, R_Euler):
-        """Return Euler-circle arc inside a rectangular exit, m, requiring crossings on both radial sides."""
-        # Exclude large-nozzle cases in which the circle crosses a tangential side or misses the rectangle.
-        if width <= 0 or width >= 2 * R_Euler:
-            raise ValueError("MOC exit width must be positive and smaller than the Euler diameter.")
-        intersection_radius = np.sqrt(R_Euler**2 - width**2 / 4)
-        if not R_hub < intersection_radius < R_hub + height:
-            raise ValueError("Euler circle must cross the radial sides of the MOC exit; adjust admission or nozzle count.")
-        return 2 * R_Euler * np.arcsin(width / (2 * R_Euler))
+        """Return total Euler-circle arc inside a rectangular exit, m, including tangential-side crossings."""
+        # The inner-side coordinate R_hub locates the actual bottom of either a single or multiple MOC exit.
+        if not np.all(np.isfinite([width, height, R_hub, R_Euler])) or min(width, height, R_Euler) <= 0:
+            raise ValueError("MOC exit dimensions and Euler radius must be positive and finite; inner side must be finite.")
+        # On the right semicircle, x=R_Euler*sin(theta) and y=R_Euler*cos(theta), with 0 <= theta <= pi.
+        # The two tangential sides bound one angular interval; clipping also handles no intersection.
+        first_angle = np.arccos(np.clip((R_hub + height) / R_Euler, -1., 1.))
+        last_angle = np.arccos(np.clip(R_hub / R_Euler, -1., 1.))
+        # The radial sides admit intervals near theta=0 and theta=pi, meeting when width >= 2*R_Euler.
+        side_angle = np.arcsin(min(1., width / (2 * R_Euler)))
+        upper_angle = max(0., min(last_angle, side_angle) - first_angle)
+        lower_angle = max(0., last_angle - max(first_angle, np.pi - side_angle))
+        # Sum both intervals and reflect across the rectangle centreline to include the left semicircle.
+        return 2 * R_Euler * (upper_angle + lower_angle)
 
     @staticmethod
     def _calculate_ellipse_maximum_radius(width, height, R_mean):

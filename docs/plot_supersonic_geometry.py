@@ -100,47 +100,54 @@ def packing_figure():
     annulus(ax, hub, tip, euler, "(a) Multiple MOC nozzles")
     delta, gap = .4, .025
     width = (2 * hub * np.sin(delta / 2) - gap) / np.cos(delta / 2)
+    # Show the intermediate regime: tip contact while the actual inner side still clears the hub.
     maximum = np.sqrt(tip**2 - width**2 / 4) - hub
-    height = .82 * maximum
+    height = .94 * maximum
+    inner = max(hub, min(euler - height / 2, hub + maximum - height))
     for angle in (-delta / 2, delta / 2):
         rectangle(ax, width, maximum, hub, angle, ghost=True)
-        rectangle(ax, width, height, hub, angle)
+        extension = np.array([point(x, y, angle) for x, y in
+                              [(-width / 2, inner), (-width / 2, hub),
+                               (width / 2, hub), (width / 2, inner)]])
+        ax.plot(extension[:, 0], extension[:, 1], color=GREY, ls=":", lw=1.)
+        rectangle(ax, width, height, inner, angle)
+        ax.plot(*point(0, inner + height / 2, angle), "+", color=INK, ms=8)
     angle = delta / 2
     dimension(ax, point(-width / 2, hub - .035, angle), point(width / 2, hub - .035, angle),
               "$w$", offset=(0, -.023))
-    dimension(ax, point(width / 2 + .025, hub, angle), point(width / 2 + .025, hub + height, angle),
+    dimension(ax, point(width / 2 + .025, inner, angle), point(width / 2 + .025, inner + height, angle),
               "$H$", offset=(.028, 0))
     theta = np.arcsin(width / (2 * euler))
     arc(ax, euler, angle - theta, angle + theta, color=ORANGE, lw=4)
     leader(ax, "$L_e$", point(0, euler, angle), (.26, 1.20), ORANGE)
-    leader(ax, "$H_{max}$ (dashed limit)", point(width / 2, hub + maximum, angle), (.36, 1.11))
-    left_inner = point(width / 2, hub, -angle)
-    right_inner = point(-width / 2, hub, angle)
+    leader(ax, "$H_{max}$ (dashed limit)", point(-width / 2, hub, -angle), (-.33, .80), align="center")
+    left_inner = point(width / 2, inner, -angle)
+    right_inner = point(-width / 2, inner, angle)
     dimension(ax, left_inner, right_inner, "$g$", offset=(0, -.036))
     arc(ax, tip + .065, -angle, angle, color=GREY, lw=1)
     ax.text(0, tip + .083, "$\\delta=p_s/R_E$", ha="center", color=INK)
-    ax.text(.02, hub - .155, "Inner sides tangent to hub", ha="center", color=INK, fontsize=10)
+    ax.text(.02, hub - .155, "Start at $R_E$; shift inward to fit tip", ha="center", color=INK, fontsize=10)
 
     ax = axes[0, 1]
-    # A wider annulus makes the free maximum-area rectangle easy to see.
+    # Choose width at Euler radius, then show a taller exit shifted inward to retain tip contact.
     shub, stip = .65, 1.25
     seuler = np.sqrt((shub**2 + stip**2) / 2)
     annulus(ax, shub, stip, seuler, "(b) Single MOC nozzle")
-    half = min(seuler - shub, 2 * (stip**2 - seuler**2) /
-               (np.sqrt(seuler**2 + 8 * stip**2) + 3 * seuler))
-    width, maximum = 2 * np.sqrt(stip**2 - (seuler + half)**2), 2 * half
-    height = .72 * maximum
-    rectangle(ax, width, maximum, seuler - maximum / 2, ghost=True)
-    rectangle(ax, width, height, seuler - height / 2)
-    ax.plot(0, seuler, "+", color=INK, ms=10)
+    half = 2 * (stip**2 - seuler**2) / (np.sqrt(seuler**2 + 8 * stip**2) + 3 * seuler)
+    width = 2 * np.sqrt(stip**2 - (seuler + half)**2)
+    maximum = np.sqrt(stip**2 - width**2 / 4) - shub
+    height = .86 * maximum
+    inner = max(shub, min(seuler - height / 2, shub + maximum - height))
+    rectangle(ax, width, maximum, shub, ghost=True)
+    rectangle(ax, width, height, inner)
+    ax.plot(0, inner + height / 2, "+", color=INK, ms=10)
     theta = np.arcsin(width / (2 * seuler))
     arc(ax, seuler, -theta, theta, color=ORANGE, lw=4)
-    dimension(ax, (-width / 2, seuler - maximum / 2 - .055),
-              (width / 2, seuler - maximum / 2 - .055), "$w$", offset=(0, -.03))
-    dimension(ax, (width / 2 + .025, seuler - height / 2),
-              (width / 2 + .025, seuler + height / 2), "$H$", offset=(.025, 0))
-    leader(ax, "$H_{max}$ reference", (width / 2, seuler + maximum / 2), (.18, 1.36))
-    leader(ax, "Centre fixed at $R_E$", (0, seuler), (-.14, .63), align="center")
+    dimension(ax, (-width / 2, shub - .055), (width / 2, shub - .055), "$w$", offset=(0, -.03))
+    dimension(ax, (width / 2 + .025, inner),
+              (width / 2 + .025, inner + height), "$H$", offset=(.025, 0))
+    leader(ax, "$H_{max}$ reference", (width / 2, shub), (.62, .60), align="center")
+    leader(ax, "Centre shifted from $R_E$", (0, inner + height / 2), (-.32, 1.36), align="center")
     ax.text(0, seuler + .095, "$L_e$", color=ORANGE, ha="center")
     ax.set(xlim=(-.8, .8), ylim=(.51, 1.45))
 
