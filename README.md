@@ -731,7 +731,9 @@ Density, sound-velocity, viscosity and thermal-conductivity methods cache up to 
 ### SupersonicTurbine
 
 `SupersonicTurbine` in `RocketTurbines/SupersonicTurbine.py` constructs a supersonic stage whose meanline geometry
-agrees with its stator nozzle and rotor blade contours. Constructing the object runs the coupled design calculation.
+agrees with its stator nozzle and rotor blade contours. Constructing the object prepares inputs and leaves 
+some properties as `None`. Call `couple_meanline_and_blading()` to run the coupled design calculation and set these
+properties to converged objects representing Turbine1D and SupersonicTurbineBlading library objects.
 The meanline solver supplies flow states and annulus dimensions to `SupersonicTurbineBlading`; the resulting contours
 supply chord-to-pitch ratios and edge thicknesses back to the meanline solver.
 
@@ -739,9 +741,10 @@ Its principal workflow is:
 
 1. Construct an `IdealGas` mixture and a `TraupelLossModel` object.
 2. Supply dictionaries for `Turbine1D.size_turbine`, `SupersonicStatorNozzle` and `SupersonicRotorBlade`.
-3. Construct `SupersonicTurbine` with a separation margin and minimum stator/rotor metal thicknesses.
-4. Read `turbine_meanline`, `stator_shape`, `rotor_shape` and the geometry coefficients described below.
-5. Check nozzle packing; adjust the free design inputs and repeat if the exits overfill the annulus or overlap.
+3. Construct `SupersonicTurbine` with a flow separation margin and minimum stator/rotor metal thicknesses.
+4. Call `turbine.couple_meanline_and_blading()`, or use `evaluate_design(...)` to evaluate trial designs manually.
+5. Read `turbine_meanline`, `stator_shape`, `rotor_shape` and `coefficients` after coupling converges.
+6. Check nozzle packing; adjust the free design inputs and repeat if the stator nozzles do not fit in the turbine annulus.
 
 #### Assumptions and nomenclature
 
@@ -810,6 +813,8 @@ turbine = SupersonicTurbine(
     t_min_rotor=0.1e-3,
     stator_nozzle_chord_scale=1.0,
 )
+turbine.couple_meanline_and_blading()
+turbine.print_coefficients()
 ```
 
 The three argument dictionaries are copied during construction. They have the following roles:
@@ -852,6 +857,10 @@ The following shows the coupling logic between meanline design from `Turbine1D` 
    v
  Copy input dictionaries; validate inputs and create the shared Fluid object.
  Disable blading Mach matching to avoid counting meanline losses twice.
+ Initialize design results to None; return without solving.
+   |
+   v  (when the user calls couple_meanline_and_blading())
+ SupersonicTurbine.couple_meanline_and_blading
    |
    v
  Assemble five unknowns x and their initial estimates:
@@ -932,7 +941,7 @@ The following shows the coupling logic between meanline design from `Turbine1D` 
    v  (after coupling converges; Aitken raises an error if it cannot converge)
  Evaluate the solved design again to obtain the final objects and coefficients.
  Store turbine_meanline, stator_shape and rotor_shape.
- Store height_optimality, width_optimality, t_TE_stator_min_margin and t_rotor_min_margin.
+ Store x_solution and the coefficients dictionary with optimality coefficients and thickness margins.
    |
    v
  Engineer / outer optimizer checks nozzle packing:
@@ -951,11 +960,11 @@ For a single nozzle, the fourth unknown is $\varepsilon$, and $t_{TE,s}=0$. The 
 obtained minus assumed quantities; the fifth is an LE thickness correction that brings the thinner rotor edge to its minimum
 normal thickness. Thus the fixed-point map is $F(\mathbf{x})=\mathbf{x}+\mathbf{r}(\mathbf{x})$.
 
-Because this vector mixes ratios, lengths and possibly admission, the constructor solves for normalized variables
+Because this vector mixes ratios, lengths and possibly admission, `couple_meanline_and_blading()` solves for normalized variables
 $\mathbf{z}=\mathbf{x}/\mathbf{s}$. Chord/pitch scales are the larger of the initial ratio and 1; rotor thicknesses
 use $0.12p_r$. The fourth scale is $0.12p_s$ for multiple nozzles, or initial admission clipped to $[0.01,1]$ for one
 nozzle. The relaxed Aitken solver starts at relaxation 0.3, adapts within 0.05 to 1.5, allows 60 updates and requires
-every normalized fixed-point residual to be below $10^{-4}$ in absolute value.
+every normalized fixed-point residual to be below $10^{-3}$ in absolute value.
 
 Bounds keep chord/pitch ratios at least $10^{-8}$, rotor LE/TE thickness projections between zero and $0.24p_r$,
 and stator TE thickness between zero and $0.24p_s$. For a single nozzle, admission is bounded by $10^{-6}$ and 1.
@@ -1222,13 +1231,21 @@ requirements; zero width coefficient does not remove those requirements.
 
 #### Stored results, residuals and feasibility checks
 
-After construction, the public result attributes are:
+`x_solution`, `turbine_meanline`, `stator_shape`, `rotor_shape` and `coefficients` are `None` after construction.
+After `couple_meanline_and_blading()` converges, the public result attributes are:
 
 | Attribute | Contents |
 | --- | --- |
 | `turbine_meanline` | Coupled `Turbine1D` object, with geometry and all three design-point result dictionaries. Its `t_LE_rotor` stores the measured uncorrected LE thickness projection; `R_nozzle` stores the actual nozzle exit-centre radius. |
 | `stator_shape` | `SupersonicStatorNozzle` object; uncorrected dimensional geometry is in `dimensional_shapes.uncorrected`. |
 | `rotor_shape` | `SupersonicRotorBlade` object; call `dimensionalize().uncorrected` for the geometry used by the coupling. |
+| `x_solution` | Converged design-variable vector described above. |
+| `coefficients` | Dictionary of optimality coefficients and thickness margins listed below. |
+
+The entries of `coefficients` are:
+
+| Key | Meaning |
+| --- | --- |
 | `height_optimality` | $H-H_{\max}$ for MOC; $R_{\max}-R_t$ for de Laval, in m. Require $\le0$; zero fills the permitted radial extent for the selected construction. |
 | `width_optimality` | $w-w_{\mathrm{available}}$ in m for multiple de Laval nozzles; require $\le0$. Zero by construction for MOC and single-nozzle cases. |
 | `t_TE_stator_min_margin` | Obtained minus required projected spacing, in m. Multiple MOC exits stay above or tangent to the hub and give $\ge0$; multiple de Laval exits retain signed spacing deficits. Zero for single-nozzle cases. |
@@ -1242,8 +1259,8 @@ stage = turbine.turbine_meanline
 eta_ts = stage.analysis_results_at_design_point["eta_ts"]
 nozzle_exit = turbine.stator_shape.dimensional_shapes.uncorrected
 rotor_contour = turbine.rotor_shape.dimensionalize().uncorrected
-packing = (turbine.height_optimality, turbine.width_optimality,
-           turbine.t_TE_stator_min_margin, turbine.t_rotor_min_margin)
+packing = turbine.coefficients
+turbine.print_coefficients()
 ```
 
 `evaluate_design(meanline_arguments, t_LE_rotor=...)` evaluates a trial design and returns
@@ -1251,6 +1268,22 @@ packing = (turbine.height_optimality, turbine.width_optimality,
 chord/pitch, rotor chord/pitch, rotor TE thickness projection, stator TE thickness arc or single-nozzle admission, and
 rotor LE thickness correction. The first two are dimensionless; the third and fifth are in m; the fourth is in m for
 multiple nozzles and dimensionless for a single nozzle.
+
+Manual evaluations return trial objects and coefficients without changing the five stored result attributes or
+running the outer coupling loop. The meanline and blading calculations still include their own internal numerical solves.
+For example, after constructing the object, evaluate a trial design and print the coefficients describing all the packing
+with
+
+```python
+residuals, meanline, stator, rotor, coefficients = turbine.evaluate_design(
+    turbine.Turbine1D_arguments, t_LE_rotor=0.5e-3,
+)
+turbine.print_coefficients(coefficients)
+```
+
+`print_coefficients(coefficients=None)` prints each key and value and describes what sign represent feasible design:
+packing excesses must be nonpositive and thickness margins nonnegative. Omitting the dictionary uses
+`turbine.coefficients`; if that is still `None`, it prints `SupersonicTurbine.coefficients is None`.
 
 Successful coupling establishes agreement between the meanline model and the generated shapes. The engineer or
 outer optimizer must separately check the packing optimality coefficients and thickness margins. Negative height

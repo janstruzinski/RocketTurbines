@@ -15,7 +15,8 @@ class SupersonicTurbine:
         """SupersonicTurbine is the class to represent a supersonic turbine, with consistent meanline design and blading
          shape. It ensures that chord/pitch ratios and other variables used in Turbine1D agrees with the values obtained from
          SupersonicTurbineBlading objects, which in turn also use Turbine1D meanline results. Thus, there is a coupling
-          between meanline and blading design, which this class solves numerically. This object also checks if the
+          between meanline and blading design, which couple_meanline_and_blading solves numerically when called.
+           Construction only prepares inputs and leaves the design results as None. This object also checks if the
            stator nozzles exit can fit optimally in the turbine annulus by producing continuous coefficients than can be
             either checked by the engineer or constrained by outer optimizer.
 
@@ -39,11 +40,11 @@ class SupersonicTurbine:
          to account for the upstream turning section, which SupersonicStatorNozzle does not calculate. Default 1.
         :param bool print_user_warnings: Whether to emit this object's user warnings. Default True.
          Traupel extrapolation warnings are controlled separately by loss_model.warn_on_extrapolation.
-        :ivar numpy.ndarray solution: Converged [stator chord/pitch, rotor chord/pitch, rotor TE thickness,
+        :ivar numpy.ndarray x_solution: None until coupling converges; then [stator chord/pitch, rotor chord/pitch, rotor TE thickness,
          stator TE thickness (or single-nozzle admission), rotor LE thickness]; thicknesses are circumferential projections in m.
-        :raises ValueError: If inputs are invalid or the nozzle construction assumptions are violated.
+        :ivar dict coefficients: None until coupling converges; then the optimality coefficients and thickness margins.
+        :raises ValueError: If construction inputs are invalid.
         :raises KeyError: If a required input is missing from the argument dictionaries.
-        :raises RuntimeError: If Aitken does not converge or the final normalized residual tolerance of 1e-3 is not met.
         """
 
         # Meanline - nozzle/blade shapes coupling logic diagram:
@@ -52,6 +53,10 @@ class SupersonicTurbine:
         #    v
         #  Copy input dictionaries; validate inputs and create the shared Fluid object.
         #  Disable blading Mach matching to avoid counting meanline losses twice.
+        #  Initialize design results to None; return without solving.
+        #    |
+        #    v  (when the user calls couple_meanline_and_blading())
+        #  SupersonicTurbine.couple_meanline_and_blading
         #    |
         #    v
         #  Assemble five unknowns x and their initial estimates:
@@ -132,7 +137,7 @@ class SupersonicTurbine:
         #    v  (after coupling converges; Aitken raises an error if it cannot converge)
         #  Evaluate the solved design again to obtain the final objects and coefficients.
         #  Store turbine_meanline, stator_shape and rotor_shape.
-        #  Store height_optimality, width_optimality, t_TE_stator_min_margin and t_rotor_min_margin.
+        #  Store x_solution and the coefficients dictionary with optimality coefficients and thickness margins.
         #    |
         #    v
         #  Engineer / outer optimizer checks nozzle packing:
@@ -195,6 +200,28 @@ class SupersonicTurbine:
                 if self.print_user_warnings:
                     warnings.warn(f"{option} is disabled: matching mixed Mach would count meanline losses twice.",
                                   UserWarning, stacklevel=2)
+
+        # Initialize results that will be assigned after the meanline and blading coupling converges.
+        self.x_solution = None
+        self.turbine_meanline = None
+        self.stator_shape = None
+        self.rotor_shape = None
+        self.coefficients = None
+
+    def couple_meanline_and_blading(self):
+        """Solve the meanline/blading coupling and store the converged design objects and coefficients.
+
+        Use the stored input dictionaries for the initial estimates. Results remain unset until the solve succeeds;
+        if a later solve fails, the previously stored results are retained.
+
+        :raises ValueError: If an evaluated design violates the flow or construction assumptions.
+        :raises KeyError: If a required input is missing from the argument dictionaries.
+        :raises RuntimeError: If the bounded Aitken solver does not converge to its normalized tolerance of 1e-3.
+        """
+
+        # Determine which stator variable is coupled (trailing edge thickness for multiple nozzles, admission for one)
+        # based on the number of stator nozzles
+        no_nozzles = self.Turbine1D_arguments["no_blades_stator"]
 
         # Define a function that calculates new values of design variables from evaluate_design based on assumed ones
         def calculate_new_solution(x_0):
@@ -305,26 +332,36 @@ class SupersonicTurbine:
         x_converged, self.turbine_meanline, self.stator_shape, self.rotor_shape, coefficients = \
             calculate_new_solution(x_solution)
 
-        # Save optimality coefficients
-        # Coefficient for height is valid for all nozzles
-        self.height_optimality = coefficients["height_optimality"]
-        # Coefficient for width is valid only for da Laval nozzle, as for MOC nozzle width of the exit will always
-        # match the assigned nozzle space. For MOC nozzle, it is consequently always 0, which means it is always
-        # optimal.
-        self.width_optimality = coefficients["width_optimality"]
-        # Store the stator minimum-thickness margin. Multiple MOC exits remain above or tangent to the hub,
-        # giving a nonnegative thickness margin. Singular nozzles have always the most optimal, zero thickness margin,
-        # because there is no adjacent nozzle
-        self.t_TE_stator_min_margin = coefficients["t_TE_stator_min_margin"]
-        # Save the minimum normal-thickness margin across rotor LE and TE.
-        self.t_rotor_min_margin = coefficients["t_rotor_min_margin"]
+        # Save solution vector
+        self.x_solution = x_converged
+        # Save optimality coefficients & thickness margins
+        self.coefficients = coefficients
 
-    def evaluate_design(self, meanline_arguments, *, t_LE_rotor):
+    def print_coefficients(self, coefficients=None):
+        """Print optimality coefficients and thickness margins with their feasible sign conditions.
+
+        :param dict coefficients: Coefficients returned by evaluate_design; use self.coefficients when omitted.
+        """
+        # Use converged coefficients unless a dictionary from a manual design evaluation was supplied.
+        if coefficients is None:
+            coefficients = self.coefficients
+        # Report that no coupled result has been stored yet.
+        if coefficients is None:
+            print("SupersonicTurbine.coefficients is None")
+            return
+        # Packing excesses must be nonpositive; obtained-minus-required thickness margins must be nonnegative.
+        conditions = {"height_optimality": "<= 0 (nonpositive)", "width_optimality": "<= 0 (nonpositive)",
+                      "t_TE_stator_min_margin": ">= 0 (nonnegative)", "t_rotor_min_margin": ">= 0 (nonnegative)"}
+        # Print each supplied coefficient and the sign condition for a feasible design.
+        for name, value in coefficients.items():
+            print(f"{name}: {value}; feasible: {conditions[name]}")
+
+    def evaluate_design(self, meanline_arguments, t_LE_rotor):
         """This method allows to calculate the residuals between assumed values for 1D meanline calculations in
         Turbine 1D and obtained values from blade shaping with SupersonicTurbineBlading. These residuals can be driven
-         to zero by a numerical solver in the constructor of this class or the engineer to obtain consistent design.
-          This method also returns some remaining residuals and optimality coefficients that can be constrained by outer
-           optimizer or which can inform the engineer about manufacturability & optimality of the supersonic turbine.
+         to zero by couple_meanline_and_blading or the engineer to obtain consistent design. This method also returns
+          some remaining residuals and optimality coefficients that can be constrained by outer optimizer or which can
+           inform the engineer about manufacturability & optimality of the supersonic turbine.
 
         :param dict meanline_arguments: Dictionary with size_turbine inputs.
         :param float t_LE_rotor: Circumferential LE thickness (m), excluding BL correction.
