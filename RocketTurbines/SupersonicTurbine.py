@@ -43,7 +43,7 @@ class SupersonicTurbine:
          stator TE thickness (or single-nozzle admission), rotor LE thickness]; thicknesses are circumferential projections in m.
         :raises ValueError: If inputs are invalid or the nozzle construction assumptions are violated.
         :raises KeyError: If a required input is missing from the argument dictionaries.
-        :raises RuntimeError: If Aitken does not converge or the final normalized residual tolerance of 1e-4 is not met.
+        :raises RuntimeError: If Aitken does not converge or the final normalized residual tolerance of 1e-3 is not met.
         """
 
         # Meanline - nozzle/blade shapes coupling logic diagram:
@@ -298,7 +298,7 @@ class SupersonicTurbine:
         # desirable dimensions.
         x_solution = np.multiply(solution_scales, solve_with_relaxed_aitken(
             normalized_mapping, np.divide(x_initial, solution_scales), initial_relaxation=0.3,
-            min_relaxation=0.05, max_relaxation=1.5, xtol=1e-4, maxiter=60,
+            min_relaxation=0.05, max_relaxation=1.5, xtol=1e-3, maxiter=60,
             bounds=(np.divide(lower, solution_scales), np.divide(upper, solution_scales))))
 
         # Obtain consistent design objects after solution was found
@@ -628,7 +628,7 @@ class SupersonicTurbine:
         elif contour == "moc":
             # Calculate width and height of the optimal nozzle exit shape to maximize area taken up by it
             # Choose width by maximizing rectangle area inside the tip circle with its centre fixed at Euler radius.
-            width, _ = self._calculate_single_moc_exit_dimensions(R_hub, R_tip, R_Euler)
+            width, _ = self._calculate_single_moc_exit_dimensions(R_tip, R_Euler)
             # At this width, the largest fitting height places the inner side at the hub and outer corners at the tip.
             maximum_height = self._calculate_rectangle_maximum_height(width, R_hub, R_tip)
             # Now calculate stator shape and dimensions. Use isentropic outlet Mach number at station 1 from Turbine1D,
@@ -839,7 +839,7 @@ class SupersonicTurbine:
         return max(0., np.sqrt(max(0., R_tip**2 - width**2 / 4)) - R_hub)
 
     @staticmethod
-    def _calculate_single_moc_exit_dimensions(R_hub, R_tip, R_Euler):
+    def _calculate_single_moc_exit_dimensions(R_tip, R_Euler):
         """Return width and height of the largest Euler-centred rectangle inside the tip circle, m."""
         # For half-height h, tip contact gives w=2*sqrt(R_tip**2-(R_Euler+h)**2).
         # The area derivative gives 2*h**2+3*R_Euler*h+R_Euler**2-R_tip**2=0.

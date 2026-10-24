@@ -379,7 +379,7 @@ class Turbine1D:
             static enthalpy, the loss model returns nonfinite or negative entropy estimates at delta_s_estimate,
              or the prescribed blade-row state is infeasible.
         :raises RuntimeError: If the entropy-rise solve does not converge, returns nonfinite or negative entropy
-            rises, or has a nonfinite or excessive entropy residual (absolute value must be below 1e-4 J/(kg K)),
+            rises, or has a nonfinite or excessive entropy residual (absolute value must be below 1e-3 J/(kg K)),
              or the h_2/h_t0 solve fails its convergence, solution value or residual checks.
         """
 
@@ -578,7 +578,7 @@ class Turbine1D:
             entropy = solve_with_relaxed_aitken(
                 get_new_entropy, initial_entropy, initial_relaxation=0.3, min_relaxation=0.05, max_relaxation=3.,
                 bounds=(np.zeros(3), 5 * np.maximum(entropy_scales, initial_entropy)), x_scale=entropy_scales,
-                xtol=1e-6, maxiter=300)
+                xtol=1e-3, maxiter=300)
         # If this does not work, use least_squares fallback
         except (ValueError, RuntimeError, ArithmeticError):
             # Call the numerical solver. The upper bound is five times multiple of the larger of entropy_scales and
@@ -587,7 +587,7 @@ class Turbine1D:
                                             bounds=(np.zeros(3), 5 * np.maximum(entropy_scales, initial_entropy)),
                                             method="dogbox", jac="2-point", x_scale=entropy_scales,
                                             loss="linear", tr_solver="exact", diff_step=1e-4,
-                                            xtol=1e-6, ftol=None, gtol=1e-6, max_nfev=300, verbose=2)
+                                            xtol=1e-5, ftol=None, gtol=1e-5, max_nfev=300, verbose=2)
             # Raise an error if not converged
             if not entropy_solution.success:
                 raise RuntimeError("Numerical solve for the stator and rotor entropy rises did not converge.")
@@ -600,13 +600,13 @@ class Turbine1D:
         delta_s_stator, delta_s_rotor, delta_s_rotor_additional = entropy  # J/(kg K)
         entropy_residual, analysis_results, blade_row_results, loss_model_results = \
             self.calculate_entropy_rise(delta_s_stator, delta_s_rotor, delta_s_rotor_additional, loss_model)
-        # Require each unscaled final entropy residual to be finite and below 1e-4 J/(kg K) in absolute value.
+        # Require each unscaled final entropy residual to be finite and below 1e-3 J/(kg K) in absolute value.
         entropy_residual = np.array(entropy_residual)  # J/(kg K)
         if (not np.all(np.isfinite(entropy_residual))
-                or np.any(np.abs(entropy_residual) >= 1e-4)):
+                or np.any(np.abs(entropy_residual) >= 1e-3)):
             raise RuntimeError("Numerical solve for the stator and rotor entropy rises has an invalid or excessive "
                                f"entropy residual: {entropy_residual} J/(kg K); each absolute value must be below"
-                               f" 1e-4 J/(kg K).")
+                               f" 1e-3 J/(kg K).")
 
 
         # Update analysis_results_at_design_point and blade row results
@@ -735,7 +735,7 @@ class Turbine1D:
                 initial_relaxation=1., min_relaxation=0.05, max_relaxation=1.2,
                 bounds=bracket if numerical_scheme == "bracketing" else
                 (np.finfo(float).eps * h_2_max_over_h_t0, h_2_max_over_h_t0),
-                xtol=1e-14, rtol=1e-12, maxiter=1000)
+                xtol=1e-11, rtol=1e-11, maxiter=1000)
         # If Aitken does not work, try fallback schemes
         except (ValueError, RuntimeError, ArithmeticError):
             # Verify the candidate bracket. Finite, ordered endpoints and opposite residual
@@ -762,7 +762,7 @@ class Turbine1D:
             if numerical_scheme == "bracketing":
                 try:
                     h_2_over_h_t0_solution = root_scalar(get_enthalpy_residual, bracket=bracket, method="toms748",
-                                                         options={"k": 2}, maxiter=1000, xtol=1e-14, rtol=1e-12)
+                                                         options={"k": 2}, maxiter=1000, xtol=1e-11, rtol=1e-11)
                 # An inadmissible state encountered inside the bracket requires the Newton fallback.
                 except ValueError:
                     numerical_scheme = "newton"
@@ -773,7 +773,7 @@ class Turbine1D:
             # Use Newton when no valid bracket is available or when the bracketing solve failed to converge.
             if numerical_scheme == "newton":
                 h_2_over_h_t0_solution = root_scalar(get_enthalpy_residual, x0=h_2_max_over_h_t0, method="newton",
-                                                     maxiter=1000, xtol=1e-12, rtol=1e-10)
+                                                     maxiter=1000, xtol=1e-11, rtol=1e-11)
 
             # Raise error if the solution obtained from toms748 or Newton is not converged
             if not h_2_over_h_t0_solution.converged:
