@@ -161,6 +161,12 @@ greater than two. Tooth spacing is $c_r/(n_{\mathrm{teeth}}-1)$. `t_shroud` stor
 `SupersonicTurbine` supplies these total throat areas within the admitted sector, in m², from its throat sizing and
 blading geometry without BL correction.
 
+`analysis_results_at_design_point["M_r2_ideal_r_real_s_construction"]` is initialized to `None` and remains `None`
+after `size_turbine`, including when resizing a previously constructed design. `SupersonicTurbine.evaluate_design`
+sets it only after rotor blade construction to the `SupersonicRotorBlade.ideal_outlet_relative_flow_mach`.
+For symmetric blades this equals `M_r2_ideal_r_real_s`; for nonsymmetric blades it records the outlet Mach obtained
+by LE & TE thickness matching.
+
 `R_nozzle` is also initialized to `None` and left unset by `size_turbine`. `SupersonicTurbine` supplies the actual
 stator nozzle exit-centre radius in m.
 

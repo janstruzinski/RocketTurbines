@@ -630,6 +630,9 @@ class SupersonicTurbine:
                                t_LE_rotor / turbine_meanline.p_rotor}
         # Construct rotor shape
         rotor_shape = blading.SupersonicRotorBlade(**rotor_arguments)
+        # Record the outlet Mach actually used for rotor blade construction. In case of nonsymmetric blades, it can be
+        # different than the one obtained from Turbine1D
+        results["M_r2_ideal_r_real_s_construction"] = rotor_shape.ideal_outlet_relative_flow_mach
 
         # Calculate chord - pitch ratio residuals between meanline design and blade shapes for the rotor
         # The two stored surfaces bound a passage. Their endpoint averages give the vector from LE to TE

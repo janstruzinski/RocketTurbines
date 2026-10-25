@@ -248,6 +248,9 @@ class Turbine1D:
                                                  "M_r2": None, # Mach number in rotary reference frame at station 2, -
                                                  "M_r2_ideal_r_real_s": None, # Mach number in rotary reference
                                                  # frame assuming ideal expansion at station 2, -
+                                                 "M_r2_ideal_r_real_s_construction": None, # Mach number used for rotor
+                                                 # blade construction. It is in rotary reference frame and assumes ideal
+                                                 # expansion at station 2, -; set by SupersonicTurbine, -
                                                  "Re_s1": None, # Reynolds number at station 1 in stationary reference
                                                  # frame, -
                                                  "Re_r2": None, # Reynolds number based on relative velocity at
