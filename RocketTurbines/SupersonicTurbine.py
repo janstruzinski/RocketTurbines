@@ -408,7 +408,7 @@ class SupersonicTurbine:
         # t_rotor_min_margin = t_TE_rotor_min_obtained - t_min_rotor. To ensure fair comparison,
         # the engineer or outer optimizer should always compare rotors with the same metal thickness. Consequently,
         # the numerical solver in this class will also ensure that t_rotor_min_margin is zero by varying t_LE_rotor.
-        # An independent residual matches the meanline t_TE_rotor to the actual uncorrected contour TE thickness.
+        # An independent residual, t_TE_rotor_residula matches the meanline t_TE_rotor to the actual contour TE thickness.
         # To convert stator TE thickness and rotor LE/TE thickness projections to normal metal thicknesses, flow angles
         # from meanline design are always used. These are approximately the same as nozzle/rotor blade metal angles.
         # Blade metal angles can be a few degrees different if the user specifies in input arguments to
@@ -565,7 +565,7 @@ class SupersonicTurbine:
         turbine_meanline.t_LE_rotor = t_LE_rotor
         # Residual calculated the difference between obtained TE thickness and the TE thickness used for meanline
         # design.
-        rotor_thickness_residual = t_TE_rotor - turbine_meanline.t_TE_rotor
+        t_TE_rotor_residual = t_TE_rotor - turbine_meanline.t_TE_rotor
         # Calculate minimum thicknesses
         rotor_cosines = np.cos([results["beta_1"], rotor_outlet_angle])
         if np.min(rotor_cosines) <= 0:
@@ -659,7 +659,7 @@ class SupersonicTurbine:
             # Calculate trailing edge thickness residuals between meanline design and blade shapes for the stator
             exit_arc = self._calculate_rectangle_exit_arc(width, height, inner_side_radius, R_Euler)
             signed_arc_gap = turbine_meanline.p_stator - exit_arc
-            fourth_residual = signed_arc_gap - turbine_meanline.t_TE_stator
+            t_TE_stator_residual = signed_arc_gap - turbine_meanline.t_TE_stator
 
         # Follow the procedure if a single MOC stator nozzle is used
         elif contour == "moc":
@@ -684,7 +684,7 @@ class SupersonicTurbine:
             inner_side_radius = max(R_hub, min(R_Euler - height / 2, R_hub + maximum_height - height))
             # Also calculate admission fraction residual
             exit_arc = self._calculate_rectangle_exit_arc(width, height, inner_side_radius, R_Euler)
-            fourth_residual = exit_arc / (2 * np.pi * R_Euler) - turbine_meanline.admission_fraction
+            admission_fraction_residual = exit_arc / (2 * np.pi * R_Euler) - turbine_meanline.admission_fraction
             # Width optimality factor and thickness margin are always zero
             width_optimality = t_TE_stator_min_margin = 0.
             # Calculate chord - pitch ratio residuals between meanline design and blade shapes for the stator
@@ -727,7 +727,7 @@ class SupersonicTurbine:
             # Calculate trailing edge thickness residuals between meanline design and blade shapes for the stator
             exit_arc = self._calculate_ellipse_exit_arc(width, height, R_mean, R_Euler)
             signed_arc_gap = turbine_meanline.p_stator - exit_arc
-            fourth_residual = max(0., signed_arc_gap) - turbine_meanline.t_TE_stator
+            t_TE_stator_residual = max(0., signed_arc_gap) - turbine_meanline.t_TE_stator
 
         # Now follow the procedure if a single da Laval nozzle is used
         else:
@@ -747,7 +747,7 @@ class SupersonicTurbine:
             height_optimality = R_max - R_tip
             # Also calculate admission fraction residual
             exit_arc = self._calculate_ellipse_exit_arc(width, height, R_mean, R_Euler)
-            fourth_residual = exit_arc / (2 * np.pi * R_Euler) - turbine_meanline.admission_fraction
+            admission_fraction_residual = exit_arc / (2 * np.pi * R_Euler) - turbine_meanline.admission_fraction
             # Width optimality factor and thickness margin are always zero
             width_optimality = t_TE_stator_min_margin = 0.
             # Calculate chord - pitch ratio residuals between meanline design and blade shapes for the stator
@@ -757,8 +757,10 @@ class SupersonicTurbine:
         turbine_meanline.R_nozzle = inner_side_radius + height / 2 if contour == "moc" else R_mean
 
         # Now pack all the results and return them
+        # Use the stator TE thickness residual for multiple nozzles and the admission fraction residual for one nozzle.
+        fourth_residual = t_TE_stator_residual if count > 1 else admission_fraction_residual
         # Components 1-4 are obtained minus assumed; component 5 corrects LE thickness to enforce the metal-thickness minimum.
-        residuals = np.array([stator_ratio_residual, rotor_ratio_residual, rotor_thickness_residual,
+        residuals = np.array([stator_ratio_residual, rotor_ratio_residual, t_TE_rotor_residual,
                               fourth_residual, rotor_LE_residual])
         coefficients = {"height_optimality": height_optimality, "width_optimality": width_optimality,
                         "t_TE_stator_min_margin": t_TE_stator_min_margin,
