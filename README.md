@@ -1356,7 +1356,7 @@ deficits. For a single nozzle, admission is an outcome of the coupled geometry r
 
 The stator isentropic exit Mach, actual rotor relative inlet Mach and isentropic rotor relative outlet Mach must all
 exceed one. Rotor inlet/outlet angles must have positive axial components, and the stator outlet angle must be
-strictly between zero and 90 degrees from axial. Multiple-nozzle angular pitch must satisfy $0<\delta<\pi$.
+strictly between zero and 90 degrees from axial.
 
 Invalid inputs or violated construction assumptions raise `ValueError`; missing dictionary inputs raise `KeyError`.
 The bounded Aitken solver raises `RuntimeError` for nonfinite values, stagnation or failure to converge within its

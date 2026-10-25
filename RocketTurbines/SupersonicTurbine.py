@@ -681,12 +681,8 @@ class SupersonicTurbine:
         R_hub, R_tip, R_Euler = turbine_meanline.R_hub, turbine_meanline.R_tip, turbine_meanline.R_Euler
         R_mean = turbine_meanline.R_mean
         angle = results["alpha_1"]
-        if not 0 < angle < np.pi / 2:
-            raise ValueError("Stator outlet angle must be between zero and 90 degrees from the axial direction.")
         t_TE_stator_min = self.t_min_stator / np.cos(angle)
         delta = turbine_meanline.p_stator / R_Euler
-        if count > 1 and not 0 < delta < np.pi:
-            raise ValueError("The local nozzle construction requires angular pitch strictly below pi radians.")
         # Assemble dictionary with stator shape input arguments. Calculated quantities override any duplicate inputs
         stator_arguments = {**self.SupersonicStatorNozzle_arguments,
                             "requested_outlet_absolute_flow_mach": results["M_s1_ideal"],
