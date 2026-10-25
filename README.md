@@ -783,10 +783,8 @@ $$
 t_{s,\min}^{\mathrm{proj}}=\frac{t_{\min,s}}{\cos\alpha_1}.
 $$
 
-The model uses flow angles as approximations to metal angles for this conversion. If flow angle matching changes
-the metal angle, or boundary-layer corrections change the contour, the final metal thickness may differ from this
-estimate. A single nozzle has no neighbouring nozzle wall: its meanline `t_TE_stator` is fixed at zero, and no
-inter-nozzle metal-thickness constraint is applied.
+BL calculations are disabled for both rows. A single nozzle has no neighbouring nozzle wall: its meanline `t_TE_stator`
+is fixed at zero, and no inter-nozzle metal-thickness constraint is applied.
 
 ![Axial-view packing of multiple and single MOC and de Laval nozzles, with exit dimensions, radii, pitch, open arc and spacing](docs/figures/supersonic_nozzle_packing.png)
 
@@ -812,21 +810,23 @@ turbine = SupersonicTurbine(
     t_min_stator=0.1e-3,
     t_min_rotor=0.1e-3,
     stator_nozzle_chord_scale=1.0,
+    symmetric_blades=False,  # True uses outlet angle = -inlet angle for rotor shaping
 )
 turbine.couple_meanline_and_blading()
-turbine.print_coefficients()
+turbine.print_design_coupling_results()
 ```
 
 The three argument dictionaries are copied during construction. They have the following roles:
 
-| Argument | Required information and treatment                                                                                                                                                                                                                                                                                                      |
-| --- |-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `Turbine1D_arguments` | Inputs for `size_turbine`, including explicit `chord_over_pitch_stator`, `chord_over_pitch_rotor`, `t_TE_rotor` and `admission_fraction`. For multiple nozzles, also supply `t_TE_stator`. These geometry values initialize the coupling solve. Admission is prescribed for multiple nozzles and is an initial estimate for one nozzle. |
-| `SupersonicStatorNozzle_arguments` | Include `contour_method="moc"` or `"conical"` (de Laval), plus the chosen shaping options, such as `number_of_nodes` and, for a conical nozzle, `half_cone_metal_angle`. The class supplies exit Mach and angle, fluid, inlet total state, reference length and TE thickness.                                                           |
-| `SupersonicRotorBlades_arguments` | Include the required initial estimate of `leading_edge_thickness_over_total_pitch`, plus chosen shaping options. The class supplies inlet/outlet Mach and angles, surface Mach numbers, fluid, inlet total state, blade count, Euler radius and RPM.                                                                                    |
-| `separation_margin` | A finite number strictly between 0 and 1, determining a fraction of the Mach interval bounded by the rotor separation limits.                                                                                                                                                                                                           |
-| `t_min_stator`, `t_min_rotor` | Finite, nonnegative minimum true metal thicknesses in m. The rotor constraint applies to both LE and TE thicknesses.                                                                                                                                                                                                                                |
-| `stator_nozzle_chord_scale` | Finite positive multiplier of the measured stator chord; default 1. It can account for an upstream turning section omitted by the nozzle generator.                                                                                                                                                                                     |
+| Argument | Required information and treatment                                                                                                                                                                                                                                                                                                                                                 |
+| --- |------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `Turbine1D_arguments` | Inputs for `size_turbine`, including explicit `chord_over_pitch_stator`, `chord_over_pitch_rotor`, `t_TE_rotor` and `admission_fraction`. For multiple nozzles, also supply `t_TE_stator`. These geometry values initialize the coupling solve. Admission is prescribed for multiple nozzles and is an initial estimate for one nozzle.                                            |
+| `SupersonicStatorNozzle_arguments` | Include `contour_method="moc"` or `"conical"` (de Laval), plus the chosen shaping options, such as `number_of_nodes` and, for a conical nozzle, `half_cone_metal_angle`. The class supplies exit Mach and angle, fluid, inlet total state, reference length and TE thickness.                                                                                                      |
+| `SupersonicRotorBlades_arguments` | Chosen rotor shaping options. The class calculates `leading_edge_thickness_over_total_pitch` from `t_min_rotor` and the inlet angle, overriding any supplied value. It also supplies inlet/outlet Mach and angles, surface Mach numbers, fluid, inlet total state, blade count, Euler radius and RPM.                                                                              |
+| `separation_margin` | A finite number strictly between 0 and 1, determining a fraction of the Mach interval bounded by the rotor separation limits.                                                                                                                                                                                                                                                      |
+| `t_min_stator`, `t_min_rotor` | Finite, nonnegative normal metal thicknesses in m. Stator shaping and packing use `t_min_stator`. The rotor LE is prescribed from `t_min_rotor`; each rotor edge's flow angle converts this minimum to the required circumferential projection for its informational margin.                                                                                                       |
+| `stator_nozzle_chord_scale` | Finite positive multiplier of the measured stator chord; default 1. It can account for an upstream turning section omitted by the nozzle generator.                                                                                                                                                                                                                                |
+| `symmetric_blades` | Boolean, default `False`. When `True`, the rotor outlet angle is the negative inlet angle. When `False`, the blade-row outlet angle is used and LE/TE circumferential thickness matching varies ideal outlet Mach number used for blade construction at fixed angle. The meanline calculation is unchanged; its outlet Mach is an initial estimate for nonsymmetric rotor shaping. |
 
 For example, the shaping dictionaries can start with
 
@@ -834,7 +834,6 @@ For example, the shaping dictionaries can start with
 stator_arguments = dict(contour_method="moc", number_of_nodes=101)
 rotor_arguments = dict(
     number_of_nodes=101,
-    leading_edge_thickness_over_total_pitch=0.1,  # initial projected LE thickness / total rotor pitch
 )
 # For a de Laval nozzle instead:
 # stator_arguments = dict(contour_method="conical", half_cone_metal_angle=15.0,
@@ -846,6 +845,24 @@ Computed blading arguments override duplicate values in the input dictionaries. 
 was requested. The meanline isentropic reference Mach numbers already account for the losses needed to reach the
 actual flow state; matching the mixed Mach again in the blading calculation would count those losses twice.
 
+`calculate_boundary_layer=False` is enforced for both the stator nozzle and rotor blade, overriding supplied values.
+Only geometry without BL correction is used by the coupling, so disabling BL calculations improves speed and robustness.
+The constructor emits a `UserWarning` for each row whose explicit or default BL setting is switched off.
+
+For `symmetric_blades=False`, the constructor also enforces these rotor options:
+
+```python
+match_LE_and_TE_thickness = True
+match_thickness_with_mach = True
+match_thickness_with_angle = False
+```
+
+This matches the LE/TE circumferential thicknesses by varying idela outlet Mach number used for the blade construction,
+helping prevent excessive TE thickness when the prescribed inlet and outlet angles differ. The outlet angle is held
+fixed; the meanline outlet ideal Mach initializes the matching solve. With `symmetric_blades=True`, these
+thickness-matching options are left as supplied by the user. `print_user_warnings=False` suppresses the warnings
+emitted by `SupersonicTurbine`.
+
 #### Coupling logic and numerical solution
 
 The following shows the coupling logic between meanline design from `Turbine1D` and blade design from 
@@ -856,15 +873,17 @@ The following shows the coupling logic between meanline design from `Turbine1D` 
    |
    v
  Copy input dictionaries; validate inputs and create the shared Fluid object.
- Disable blading Mach matching to avoid counting meanline losses twice.
+ Disable mixed-flow Mach matching and BL calculations; match nonsymmetric rotor LE/TE thicknesses using outlet Mach.
  Initialize design results to None; return without solving.
+ Loss-model assumption: evaluate_design caps each TE thickness/pitch input to Turbine1D.size_turbine at 0.24.
+ Retain full assumed TE thicknesses for shaping and residual matching; flag any limited losses.
    |
    v  (when the user calls couple_meanline_and_blading())
  SupersonicTurbine.couple_meanline_and_blading
    |
    v
- Assemble five unknowns x and their initial estimates:
-   [stator chord/pitch, rotor chord/pitch, rotor TE thickness, stator TE thickness or admission, rotor LE thickness].
+ Assemble four unknowns x and their initial estimates:
+   [stator chord/pitch, rotor chord/pitch, rotor TE thickness, stator TE thickness or admission].
    Multiple nozzles: solve stator TE thickness; one nozzle: fix stator TE thickness = 0 and solve admission.
  Calculate Euler-radius pitches, positive component scales s and solution bounds.
    |
@@ -877,21 +896,22 @@ The following shows the coupling logic between meanline design from `Turbine1D` 
    |      v                                                                                         |
    |    calculate_new_solution(x)                                                                   |
    |      |  Copy meanline arguments and insert chord/pitch ratios, TE thicknesses and admission.   |
-   |      |  Pass the independent rotor LE thickness to evaluate_design.                            |
    |      v                                                                                         |
    |    SupersonicTurbine.evaluate_design                                                           |
    |      |                                                                                         |
-   |      +--> Turbine1D.size_turbine                                                               |
-   |      |      Solve its nested entropy-rise and enthalpy-ratio loops.                            |
+   |      +--> Cap TE thickness inputs to Turbine1D.size_turbine at 0.24 of each row's pitch.       |
+   |      |      Run nested loops; use uncapped TE thicknesses for shaping and residuals.           |
    |      |      Obtain flow states, blade-row angles, annulus radii and Euler-radius pitches.      |
    |      |                                                                                         |
    |      +--> Rotor shaping                                                                        |
    |      |      Apply Goldman--Scullin separation limits and separation_margin.                    |
-   |      |      Construct SupersonicRotorBlade using the blade-row outlet angle.                   |
+   |      |      Select the blade-row outlet angle, or negative inlet angle for symmetric_blades.   |
+   |      |      Calculate LE thickness projection = t_min_rotor/cos(inlet angle); construct rotor. |
+   |      |      For nonsymmetric blades, match LE/TE thickness projections via outlet Mach.        |
    |      |      Pass rotor LE thickness/total pitch; pitch includes metal at Euler radius.         |
-   |      |      Measure LE/TE thickness projections and the actual LE-to-TE chord.                 |
+   |      |      Measure TE thickness projection and chord between blade edges.                     |
    |      |      Store the obtained LE thickness in the meanline object.                            |
-   |      |      Use flow angles to estimate minimum metal thickness at both rotor edges.           |
+   |      |      Report circumferential LE/TE thickness margins                                     |
    |      |                                                                                         |
    |      +--> Stator shaping and placement                                                         |
    |      |      Calculate the total choked throat area required by mass flow.                      |
@@ -919,14 +939,13 @@ The following shows the coupling logic between meanline design from `Turbine1D` 
    |             Match stator TE thickness arc for multiple nozzles or admission for one nozzle.    |
    |             Measure throat-centre to exit-centre chord; apply stator_nozzle_chord_scale.       |
    |             Calculate height/width excesses and minimum stator-thickness margin.               |
-   |             Store the actual exit-centre radius as turbine_meanline.R_nozzle.                 |
+   |             Store the actual exit-centre radius as turbine_meanline.R_nozzle.                  |
    |      |                                                                                         |
    |      v                                                                                         |
-   |    Return five residuals r(x), meanline/blading objects and geometric coefficients:            |
+   |    Return four residuals r(x), meanline/blading objects and geometric coefficients:            |
    |      r1/r2: obtained minus assumed stator/rotor chord-to-pitch ratios.                         |
-   |      r3: uncorrected contour rotor TE thickness minus meanline TE thickness.                   |
+   |      r3:  obtained minus assumed rotor TE thickness.                                           |
    |      r4: stator TE thickness mismatch (multiple nozzles) or admission mismatch (one nozzle).   |
-   |      r5: rotor LE thickness correction enforcing the minimum normal LE/TE metal thickness.     |
    |      |                                                                                         |
    |      v                                                                                         |
    |    calculate_new_solution: F(x) = x + r(x).                                                    |
@@ -941,7 +960,7 @@ The following shows the coupling logic between meanline design from `Turbine1D` 
    v  (after coupling converges; Aitken raises an error if it cannot converge)
  Evaluate the solved design again to obtain the final objects and coefficients.
  Store turbine_meanline, stator_shape and rotor_shape.
- Store x_solution and the coefficients dictionary with optimality coefficients and thickness margins.
+ Store x_solution, optimality coefficients, thickness margins and flags for capped TE thickness Turbine1D inputs.
    |
    v
  Engineer / outer optimizer checks nozzle packing:
@@ -950,34 +969,59 @@ The following shows the coupling logic between meanline design from `Turbine1D` 
  Coupling convergence establishes meanline/blading consistency; packing margins can remain infeasible.
 ```
 
-For multiple nozzles, the five unknowns are
+For multiple nozzles, the four unknowns are
 
 $$
-\mathbf{x}=[(c/p)_s,\;(c/p)_r,\;t_{TE,r},\;t_{TE,s},\;t_{LE,r}].
+\mathbf{x}=[(c/p)_s,\;(c/p)_r,\;t_{TE,r},\;t_{TE,s}].
 $$
 
-For a single nozzle, the fourth unknown is $\varepsilon$, and $t_{TE,s}=0$. The first four residuals are
-obtained minus assumed quantities; the fifth is an LE thickness correction that brings the thinner rotor edge to its minimum
-normal thickness. Thus the fixed-point map is $F(\mathbf{x})=\mathbf{x}+\mathbf{r}(\mathbf{x})$.
+For a single nozzle, the fourth unknown is $\varepsilon$, and $t_{TE,s}=0$. All four residuals are
+obtained minus assumed quantities. Rotor LE thickness is calculated directly during each evaluation and is not
+a solver unknown. Thus the fixed-point map is $F(\mathbf{x})=\mathbf{x}+\mathbf{r}(\mathbf{x})$.
 
 Because this vector mixes ratios, lengths and possibly admission, `couple_meanline_and_blading()` solves for normalized variables
-$\mathbf{z}=\mathbf{x}/\mathbf{s}$. Chord/pitch scales are the larger of the initial ratio and 1; rotor thicknesses
-use $0.12p_r$. The fourth scale is $0.12p_s$ for multiple nozzles, or initial admission clipped to $[0.01,1]$ for one
+$\mathbf{z}=\mathbf{x}/\mathbf{s}$. Chord/pitch scales are the larger of the initial ratio and 1; rotor TE thickness
+uses $0.12p_r$. The fourth scale is $0.12p_s$ for multiple nozzles, or initial admission clipped to $[0.01,1]$ for one
 nozzle. The relaxed Aitken solver starts at relaxation 0.3, adapts within 0.05 to 1.5, allows 60 updates and requires
 every normalized fixed-point residual to be below $10^{-3}$ in absolute value.
 
-Bounds keep chord/pitch ratios at least $10^{-8}$, rotor LE/TE thickness projections between zero and $0.24p_r$,
-and stator TE thickness between zero and $0.24p_s$. For a single nozzle, admission is bounded by $10^{-6}$ and 1.
-These bounds constrain the coupling variables; nozzle-packing inequalities remain separate design checks.
+Bounds keep chord/pitch ratios at least $10^{-8}$, rotor TE thickness projection between zero and $p_r$ (one full rotor pitch),
+and stator TE thickness between zero and $p_s$ (one full stator pitch). For a single nozzle, admission is bounded by $10^{-6}$ and 1.
+These bounds constrain the coupling variables; nozzle-packing inequalities and rotor metal margins remain separate design checks.
 Nonfinite initial estimates or estimates outside these bounds trigger a `UserWarning` and are replaced by their
 corresponding solution scales. Finite initial estimates already within bounds are retained. Finite substitutes are
 used when constructing scales from nonfinite dimensionless estimates.
 
+During each `evaluate_design` call, a separate copy of the arguments passed to the unchanged
+`Turbine1D.size_turbine` receives capped trailing-edge thicknesses:
+
+$$
+t_{TE,\mathrm{Turbine1D}}=\min\left(t_{TE,\mathrm{assumed}},\;0.24p\right).
+$$
+
+for both stator and rotor. This is a numerical assumption intended to prevent excessive trailing-edge losses from
+interrupting coupling. It does not cap the assumed thickness in the solution vector, blading inputs or geometry
+consistency residuals. Those residuals still match the full obtained thickness to the full assumed thickness.
+The pitches are calculated from the current trial's shaft work, speed, blade counts and admission fraction.
+The caller's dictionary is unchanged. The returned `turbine_meanline.t_TE_stator` and `t_TE_rotor` retain the capped
+values used by `Turbine1D`; the full coupled thicknesses are in `x_solution`. 
+
+`limited_TE_stator_losses` and `limited_TE_rotor_losses` are `True` when the corresponding assumed thickness exceeds
+24% of its pitch in that evaluation. They describe the final evaluated design when stored after convergence.
+A `True` flag means the results use modified losses and the predicted
+efficiency may be optimistic. The engineer must improve the blading and reassess uncapped losses before accepting
+the design.
+
 #### Rotor shaping, separation limits and edge thicknesses
 
 The rotor uses the actual relative inlet Mach `M_r1` and the isentropic rotor outlet Mach
-`M_r2_ideal_r_real_s`. Its inlet angle is `beta_1`; its outlet angle is `beta_2_blade` from the local blade-row
-solution, which excludes additional rotor losses. The stator uses `M_s1_ideal` and `alpha_1`.
+`M_r2_ideal_r_real_s` as the initial outlet Mach. Its inlet angle is `beta_1`. With `symmetric_blades=False`, its shaping
+outlet angle is `beta_2_blade` from the local blade-row solution, which excludes additional rotor losses. The blading
+library varies ideal outlet Mach used for blade construction at that fixed outlet angle to match LE/TE circumferential
+thicknesses. With `symmetric_blades=True`, the shaping outlet angle is `-beta_1`, and thickness matching is not
+automatically enabled. Equal and opposite shaping angles alone do not guarantee equal LE/TE thicknesses when the inlet
+and outlet Mach numbers differ. Mach numbers and angles in Turbine1D are not overwritten by the rotor geometry solve.
+SupersonicStatorNozzle uses `M_s1_ideal` and `alpha_1`.
 
 Goldman and Scullin's separation criterion (NASA TN D-4421, equations 36–40), implemented in
 `_calculate_separation_mach_limits`, gives a minimum
@@ -992,26 +1036,40 @@ $$
 A margin of 0.05 reserves 5% of each endpoint-to-limit Mach interval. The chosen values must satisfy
 $1\le M_\ell<\min(M_{in},M_{out})$ and $M_u>\max(M_{in},M_{out})$.
 
-The shaping input is the independent LE thickness projection divided by total rotor pitch. After dimensionalizing the
-uncorrected contour, both actual edge projections are measured independently:
+Each evaluation calculates the LE circumferential projection from the normal metal thickness and inlet angle:
 
 $$
-t_{LE,r}^{\mathrm{geom}}=p_r-p_{\mathrm{open,in}},\qquad
+t_{LE,r}^{\mathrm{input}}=\frac{t_{\min,r}}{\cos\beta_1}.
+$$
+
+Its ratio to total rotor pitch is supplied as `leading_edge_thickness_over_total_pitch`; a value supplied in the
+rotor argument dictionary is overridden. After dimensionalizing the contour, TE projections is measured:
+
+$$
 t_{TE,r}^{\mathrm{geom}}=p_r-p_{\mathrm{open,out}}.
 $$
 
-The TE thickness residual matches the second value to `t_TE_rotor` used by the loss model. The minimum normal-thickness
-margin is
+The rotor TE thickness residual matches that value to the assumed `t_TE_rotor`; the input to `Turbine1D` is capped as
+described above. The normal minimum thickness is converted to the circumferential projection required at each edge:
 
 $$
-q_r=\min\left(t_{LE,r}^{\mathrm{geom}}\cos\beta_1,
-              t_{TE,r}^{\mathrm{geom}}\cos\beta_{2,\mathrm{blade}}\right)-t_{\min,r}.
+t_{LE,r,\min}=\frac{t_{\min,r}}{\cos\beta_1},\qquad
+t_{TE,r,\min}=\frac{t_{\min,r}}{\cos\beta_{\mathrm{out,shape}}}.
 $$
 
-The fifth residual is $-q_r/\cos\beta_{\mathrm{limiting\ edge}}$. Varying LE thickness therefore enforces the minimum
-at whichever edge is thinner. This correction approximates TE thickness changes to be equal to LE thickness changes.
-The rotor chord is the straight distance between throat and nozzle exit centers; its ratio to $p_r$ allows to calculate
-the rotor chord/pitch residual.
+The reported circumferential thickness margins, in m, are
+
+$$
+q_{LE,r}=t_{LE,r}^{\mathrm{geom}}-t_{LE,r,\min},\qquad
+q_{TE,r}=t_{TE,r}^{\mathrm{geom}}-t_{TE,r,\min}.
+$$
+
+These are stored as `t_LE_rotor_min_margin` and `t_TE_rotor_min_margin`. The LE margin is zero to floating-point
+roundoff. The TE margin may be positive or negative and is calculated using the blade
+outlet angle. Both margins are informational and do not drive the internal coupling solver; a negative TE margin
+reports metal thinner than the requested minimum. Matching circumferential LE/TE thickness projections does not
+imply equal normal thicknesses when inlet and outlet angles differ. The rotor chord is the straight
+distance between the blade LE and TE centres; its ratio to $p_r$ allows to calculate the rotor chord/pitch residual.
 
 #### Stator throat sizing, chord and packing conditions
 
@@ -1236,20 +1294,23 @@ After `couple_meanline_and_blading()` converges, the public result attributes ar
 
 | Attribute | Contents |
 | --- | --- |
-| `turbine_meanline` | Coupled `Turbine1D` object, with geometry and all three design-point result dictionaries. Its `t_LE_rotor` stores the measured uncorrected LE thickness projection; `R_nozzle` stores the actual nozzle exit-centre radius. |
+| `turbine_meanline` | `Turbine1D` object evaluated with capped TE inputs; its `t_TE_stator` and `t_TE_rotor` retain those capped values. Its `t_LE_rotor` stores the LE thickness projection; `R_nozzle` stores the actual nozzle exit-centre radius. |
 | `stator_shape` | `SupersonicStatorNozzle` object; uncorrected dimensional geometry is in `dimensional_shapes.uncorrected`. |
 | `rotor_shape` | `SupersonicRotorBlade` object; call `dimensionalize().uncorrected` for the geometry used by the coupling. |
-| `x_solution` | Converged design-variable vector described above. |
-| `coefficients` | Dictionary of optimality coefficients and thickness margins listed below. |
+| `x_solution` | Converged design-variable vector described above, retaining full uncapped TE thickness assumptions for the blading. |
+| `coefficients` | Dictionary of optimality coefficients, thickness margins and boolean TE-loss limitation flags listed below. |
 
 The entries of `coefficients` are:
 
-| Key | Meaning |
-| --- | --- |
-| `height_optimality` | $H-H_{\max}$ for MOC; $R_{\max}-R_t$ for de Laval, in m. Require $\le0$; zero fills the permitted radial extent for the selected construction. |
-| `width_optimality` | $w-w_{\mathrm{available}}$ in m for multiple de Laval nozzles; require $\le0$. Zero by construction for MOC and single-nozzle cases. |
-| `t_TE_stator_min_margin` | Obtained minus required projected spacing, in m. Multiple MOC exits stay above or tangent to the hub and give $\ge0$; multiple de Laval exits retain signed spacing deficits. Zero for single-nozzle cases. |
-| `t_rotor_min_margin` | Smaller normal rotor LE/TE thickness minus `t_min_rotor`, in m. The coupling drives this to zero within its residual tolerance. |
+| Key | Meaning                                                                                                                                                                                                                            |
+| --- |------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `height_optimality` | $H-H_{\max}$ for MOC; $R_{\max}-R_t$ for de Laval, in m. Require $\le0$; zero fills the permitted radial extent for the selected construction.                                                                                     |
+| `width_optimality` | $w-w_{\mathrm{available}}$ in m for multiple de Laval nozzles; require $\le0$. Zero by construction for MOC and single-nozzle cases.                                                                                               |
+| `t_TE_stator_min_margin` | Obtained minus required projected spacing, in m. Multiple MOC exits stay above or tangent to the hub and give $\ge0$; multiple de Laval exits retain signed spacing deficits. Zero for single-nozzle cases.                        |
+| `t_LE_rotor_min_margin` | Obtained circumferential LE thickness minus `t_min_rotor / cos(beta_1)`, in m. Zero to roundoff by construction.                                                                                                                   |
+| `t_TE_rotor_min_margin` | Obtained circumferential TE thickness minus `t_min_rotor / cos(beta_2)`, in m, using the blade outlet angle. A negative value reports TE metal thikness value below the requested value.                                           |
+| `limited_TE_stator_losses` | Boolean: `True` when assumed stator TE thickness exceeds 24% of stator pitch and its loss-model input is limited. Always `False` for one stator nozzle, whose TE thickness is zero. |
+| `limited_TE_rotor_losses` | Boolean: `True` when assumed rotor TE thickness exceeds 24% of rotor pitch and its loss-model input is limited.                                                                     |
 
 The input dictionary copies retain the constructor's setup and initial estimates; use `turbine_meanline` to read
 the resulting meanline design. For example:
@@ -1260,30 +1321,30 @@ eta_ts = stage.analysis_results_at_design_point["eta_ts"]
 nozzle_exit = turbine.stator_shape.dimensional_shapes.uncorrected
 rotor_contour = turbine.rotor_shape.dimensionalize().uncorrected
 packing = turbine.coefficients
-turbine.print_coefficients()
+turbine.print_design_coupling_results()
 ```
 
-`evaluate_design(meanline_arguments, t_LE_rotor=...)` evaluates a trial design and returns
-`(residuals, turbine_meanline, stator_shape, rotor_shape, coefficients)`. The five residuals, in order, are stator
-chord/pitch, rotor chord/pitch, rotor TE thickness projection, stator TE thickness arc or single-nozzle admission, and
-rotor LE thickness correction. The first two are dimensionless; the third and fifth are in m; the fourth is in m for
-multiple nozzles and dimensionless for a single nozzle.
+`evaluate_design(meanline_arguments)` evaluates a trial design and returns
+`(residuals, turbine_meanline, stator_shape, rotor_shape, coefficients)`. The four residuals, in order, are stator
+chord/pitch, rotor chord/pitch, rotor TE thickness projection, and stator TE thickness arc or single-nozzle admission.
+The first two are dimensionless; the third is in m; the fourth is in m for multiple nozzles and dimensionless for a
+single nozzle.
 
-Manual evaluations return trial objects and coefficients without changing the five stored result attributes or
+Manual calls of `evaluate_design` return trial objects and coefficients without changing the five stored result attributes or
 running the outer coupling loop. The meanline and blading calculations still include their own internal numerical solves.
 For example, after constructing the object, evaluate a trial design and print the coefficients describing all the packing
 with
 
 ```python
-residuals, meanline, stator, rotor, coefficients = turbine.evaluate_design(
-    turbine.Turbine1D_arguments, t_LE_rotor=0.5e-3,
-)
-turbine.print_coefficients(coefficients)
+residuals, meanline, stator, rotor, coefficients = turbine.evaluate_design(turbine.Turbine1D_arguments)
+turbine.print_design_coupling_results(coefficients)
 ```
 
-`print_coefficients(coefficients=None)` prints each key and value and describes what sign represent feasible design:
-packing excesses must be nonpositive and thickness margins nonnegative. Omitting the dictionary uses
-`turbine.coefficients`; if that is still `None`, it prints `SupersonicTurbine.coefficients is None`.
+`print_design_coupling_results(coefficients=None)` prints each coefficient and its range that indicates feasible design,
+then prints the boolean loss-limitation flags with an explanation of the 0.24 cap. Packing excesses must be
+nonpositive and thickness margins nonnegative; the flags are informational rather than feasibility inequalities.
+Omitting the dictionary uses `turbine.coefficients`; if that is still `None`, it prints
+`SupersonicTurbine.coefficients is None`.
 
 Successful coupling establishes agreement between the meanline model and the generated shapes. The engineer or
 outer optimizer must separately check the packing optimality coefficients and thickness margins. Negative height
