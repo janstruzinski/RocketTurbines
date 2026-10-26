@@ -817,6 +817,7 @@ turbine = SupersonicTurbine(
     t_min_rotor=0.1e-3,
     stator_nozzle_chord_scale=1.0,
     symmetric_blades=False,  # True uses outlet angle = -inlet angle for rotor shaping
+    min_MOC_nozzle_width=5e-3,  # Minimum reference width for multiple MOC nozzles, m
 )
 turbine.couple_meanline_and_blading()
 turbine.print_design_coupling_results()
@@ -833,6 +834,7 @@ The three argument dictionaries are copied during construction. They have the fo
 | `t_min_stator`, `t_min_rotor` | Finite, nonnegative normal metal thicknesses in m. Stator shaping and packing use `t_min_stator`. The rotor LE is prescribed from `t_min_rotor`; each rotor edge's flow angle converts this minimum to the required circumferential projection for its informational margin.                                                                                                       |
 | `stator_nozzle_chord_scale` | Finite positive multiplier of the measured stator chord; default 1. It can account for an upstream turning section omitted by the nozzle generator.                                                                                                                                                                                                                                |
 | `symmetric_blades` | Boolean, default `False`. When `True`, the rotor outlet angle is the negative inlet angle. When `False`, the blade-row outlet angle is used and LE/TE circumferential thickness matching varies ideal outlet Mach number used for blade construction at fixed angle. The meanline calculation is unchanged; its outlet Mach is an initial estimate for nonsymmetric rotor shaping. |
+| `min_MOC_nozzle_width` | Finite positive minimum reference width in m for multiple MOC stator nozzles; default `5e-3`. If the width calculated from minimum metal thickness is smaller, the nozzle is widened and  `t_TE_stator_min_margin` becomes negative. Single MOC and de Laval nozzles are unaffected.                                                                                               |
 
 For example, the shaping dictionaries can start with
 
@@ -924,7 +926,7 @@ The following shows the coupling logic between meanline design from `Turbine1D` 
    |      |      |                                                                                  |
    |      |      +--> Multiple MOC nozzles                                                          |
    |      |      |      Determine nozzle placement.                                                 |
-   |      |      |      Calculate MOC nozzle exit width based on minimum thickness.                 |
+   |      |      |      Calculate MOC nozzle width; enforce the minimum reference width.            |
    |      |      |      Mass flow sets nozzle height.                                               |
    |      |      |                                                                                  |
    |      |      +--> Single MOC nozzle                                                             |
@@ -1124,14 +1126,21 @@ conditions as follows.
 
 Select `contour_method="moc"` and $n>1$. Start each rectangular exit centre at Euler radius $R_E$ and shift it
 radially when necessary to fit them in the annulus. Determine its width such that when the nozzle is tangent to the hub,
-minimum thickness is achieved. For angular pitch $\delta$, the straight gap between adjacent reference inner corners is:
+minimum thickness is achieved. This calculation ensures that MOC nozzle width is not smaller than 
+`min_MOC_nozzle_width` - in this case minimum TE thickness is below required minimum thickness. For angular pitch
+$\delta$, the thickness between adjacent nozzle corners is:
 
 $$
 g=2R_h\sin(\delta/2)-w\cos(\delta/2).
 $$
 
 1. Set $g=t_{s,\min}^{\mathrm{proj}}$, giving
-   $w=[2R_h\sin(\delta/2)-t_{s,\min}^{\mathrm{proj}}]/\cos(\delta/2)$.
+   $w_{\mathrm{ref}}=[2R_h\sin(\delta/2)-t_{s,\min}^{\mathrm{proj}}]/\cos(\delta/2)$.
+   Enforce $w=\max(w_{\mathrm{ref}},w_{\min})$, where $w_{\min}$ is `min_MOC_nozzle_width`, default 5 mm.
+   This permits construction even when $w_{\mathrm{ref}}$ is nonpositive. Widening the nozzle reduces the obtained
+   metal spacing and can cause adjacent exits to overlap. If the resulting circumferential spacing between neighbouring 
+   exits is smaller than `t_min_stator / cos(alpha_1)`, `t_TE_stator_min_margin` is negative and reports that the design
+   violates the minimum metal thickness requirement.
 2. Calculate the maximum height with the inner side tangent to the hub and outer corners at the tip:
    $H_{\max}=\max(0,\sqrt{\max(0,R_t^2-w^2/4)}-R_h)$. For the fixed width, this also maximizes exit area.
    If no positive height fits, $H_{\max}=0$ and the positive actual height produces a positive `height_optimality`.
@@ -1143,7 +1152,8 @@ $$
    $y_0=\max[R_h,\min(R_E-H/2,\;R_h+H_{\max}-H)]$ and centre radius $R_c=y_0+H/2$.
    Sum all Euler-circle arcs inside this exit to obtain $L_e$. If the circle crosses both radial sides and no tangential
    side, this reduces to $L_e=2R_E\arcsin[w/(2R_E)]$. The fourth residual is
-   $r_4=(p_s-L_e)-t_{TE,s}$, matching the meanline stator TE thickness arc to the geometry.
+   $r_4=\max(0,p_s-L_e)-t_{TE,s}$, matching the meanline stator TE thickness arc to the geometry.
+   Clipping only this meanline TE thickness at zero prevents overlapping exits from passing negative thickness to `Turbine1D`.
 
 This placement has three regimes. While the Euler-centred exit fits, $R_c=R_E$. Once its outer corners reach the
 tip, shift the centre inward as height grows, keeping those corners at the tip and retaining a positive hub clearance.
@@ -1151,23 +1161,26 @@ At $H=H_{\max}$ the inner side becomes hub-tangent. For $H>H_{\max}$ keep that s
 outward and the outer corners exceed the tip. The height coefficient is negative before maximum height, zero at it
 and positive afterwards.
 
-Width is imposed by the reference construction, so `width_optimality` is zero. Calculate the obtained minimum
+Width is imposed by the construction approach, so `width_optimality` is zero. Calculate the obtained minimum
 spacing between the actual adjacent inner corners at $y_0\ge R_h$. The obtained spacing and margin are
 
 $$
 t_{TE,s,\min}^{\mathrm{obtained}}
 =2y_0\sin(\delta/2)-w\cos(\delta/2)
-=t_{s,\min}^{\mathrm{proj}}+2(y_0-R_h)\sin(\delta/2),
+=t_{s,\min}^{\mathrm{proj}}-(w-w_{\mathrm{ref}})\cos(\delta/2)+2(y_0-R_h)\sin(\delta/2),
 $$
 
 $$
 \texttt{t\_TE\_stator\_min\_margin}
-=t_{TE,s,\min}^{\mathrm{obtained}}-t_{s,\min}^{\mathrm{proj}}\ge0.
+=t_{TE,s,\min}^{\mathrm{obtained}}-t_{s,\min}^{\mathrm{proj}}.
 $$
 
-Shorter exits whose inner side lies above the hub tangent line have a positive thickness margin. The margin becomes
-zero at maximum height and remains zero for taller exits as nozzle remains hub tangent. Such construction method ensures
-that Euler circle always crosses through the nozzles. 
+When the minimum width does not increase the reference width, the margin is nonnegative: it is positive above the
+hub tangent line and zero at hub tangency. When the minimum width widens the nozzle, the margin is reduced and can
+be negative, including at hub tangency. Negative obtained spacing denotes overlap; negative margin denotes spacing
+below the required minimum. Neither is clipped. The engineer or outer optimizer must adjust the design until
+`t_TE_stator_min_margin >= 0`. The width minimum prevents the nonpositive MOC nozzle exit width; it does not establish
+feasible nozzle packing.
 
 ##### Single MOC nozzle
 
@@ -1274,8 +1287,9 @@ width and height after mass flow and expansion set its scale. An outer design ch
 satisfy both dimensions and metal spacing.
 
 Only the meanline TE thickness arc in $r_4$ is clipped at zero when exits overlap. This lets the coupling evaluate an
-infeasible packing without assigning negative meanline TE thickness; the signed spacing margin still exposes the
-problem to the engineer ot outer optimizer. Convergence alone therefore does not establish a usable stator.
+infeasible packing without assigning negative meanline TE thickness to `Turbine1D`; the negative 
+`t_TE_stator_min_margin` still exposes the problem to the engineer or to the outer optimizer, just like for multiple
+MOC nozzles. Convergence alone therefore does not establish a usable stator.
 
 ##### Single de Laval nozzle
 
@@ -1308,15 +1322,15 @@ After `couple_meanline_and_blading()` converges, the public result attributes ar
 
 The entries of `coefficients` are:
 
-| Key | Meaning                                                                                                                                                                                                                            |
-| --- |------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `height_optimality` | $H-H_{\max}$ for MOC; $R_{\max}-R_t$ for de Laval, in m. Require $\le0$; zero fills the permitted radial extent for the selected construction.                                                                                     |
-| `width_optimality` | $w-w_{\mathrm{available}}$ in m for multiple de Laval nozzles; require $\le0$. Zero by construction for MOC and single-nozzle cases.                                                                                               |
-| `t_TE_stator_min_margin` | Obtained minus required projected spacing, in m. Multiple MOC exits stay above or tangent to the hub and give $\ge0$; multiple de Laval exits retain signed spacing deficits. Zero for single-nozzle cases.                        |
-| `t_LE_rotor_min_margin` | Obtained circumferential LE thickness minus `t_min_rotor / cos(beta_1)`, in m. Zero to roundoff by construction.                                                                                                                   |
-| `t_TE_rotor_min_margin` | Obtained circumferential TE thickness minus `t_min_rotor / cos(beta_2)`, in m, using the blade outlet angle. A negative value reports TE metal thikness value below the requested value.                                           |
-| `limited_TE_stator_losses` | Boolean: `True` when assumed stator TE thickness exceeds 24% of stator pitch and its loss-model input is limited. Always `False` for one stator nozzle, whose TE thickness is zero. |
-| `limited_TE_rotor_losses` | Boolean: `True` when assumed rotor TE thickness exceeds 24% of rotor pitch and its loss-model input is limited.                                                                     |
+| Key | Meaning                                                                                                                                                                                                                                                                    |
+| --- |----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `height_optimality` | $H-H_{\max}$ for MOC; $R_{\max}-R_t$ for de Laval, in m. Require $\le0$; zero fills the permitted radial extent for the selected construction.                                                                                                                             |
+| `width_optimality` | $w-w_{\mathrm{available}}$ in m for multiple de Laval nozzles; require $\le0$. Zero by construction for MOC and single-nozzle cases.                                                                                                                                       |
+| `t_TE_stator_min_margin` | Obtained minus required projected spacing, in m; require $\ge0$. Multiple MOC and de Laval exits retain signed margins, including negative values (nozzle overlap). For MOC, enforcing `min_MOC_nozzle_width` can make this margin negative. Zero for single-nozzle cases. |
+| `t_LE_rotor_min_margin` | Obtained circumferential LE thickness minus `t_min_rotor / cos(beta_1)`, in m. Zero to roundoff by construction.                                                                                                                                                           |
+| `t_TE_rotor_min_margin` | Obtained circumferential TE thickness minus `t_min_rotor / cos(beta_2)`, in m, using the blade outlet angle. A negative value reports TE metal thikness value below the requested value.                                                                                   |
+| `limited_TE_stator_losses` | Boolean: `True` when assumed stator TE thickness exceeds 24% of stator pitch and its loss-model input is limited. Always `False` for one stator nozzle, whose TE thickness is zero.                                                                                        |
+| `limited_TE_rotor_losses` | Boolean: `True` when assumed rotor TE thickness exceeds 24% of rotor pitch and its loss-model input is limited.                                                                                                                                                            |
 
 The input dictionary copies retain the constructor's setup and initial estimates; use `turbine_meanline` to read
 the resulting meanline design. For example:

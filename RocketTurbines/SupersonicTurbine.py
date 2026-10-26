@@ -12,7 +12,7 @@ class SupersonicTurbine:
     def __init__(self, gas: IdealGas, loss_model: TraupelLossModel, Turbine1D_arguments,
                  SupersonicStatorNozzle_arguments, SupersonicRotorBlades_arguments, separation_margin,
                  t_min_stator, t_min_rotor, stator_nozzle_chord_scale=1.0, print_user_warnings=True,
-                 symmetric_blades=False):
+                 symmetric_blades=False, min_MOC_nozzle_width=5e-3):
         """SupersonicTurbine is the class to represent a supersonic turbine, with consistent meanline design and blading
          shape. It ensures that chord/pitch ratios and other variables used in Turbine1D agrees with the values obtained from
          SupersonicTurbineBlading objects, which in turn also use Turbine1D meanline results. Thus, there is a coupling
@@ -54,6 +54,9 @@ class SupersonicTurbine:
          Default False uses the blade-row outlet angle and enables LE/TE thickness matching by varying ideal outlet
          Mach number used for blade construction. The inlet and ideal outlet Mach numbers are supplied by the meanline
           design.
+        :param float min_MOC_nozzle_width: Minimum reference width for multiple MOC stator nozzles, m; finite and
+         positive. Default 0.005 m. Wider nozzles may violate the minimum metal thickness or overlap; their signed
+         t_TE_stator_min_margin must be checked by the engineer or outer optimizer. Single nozzles are unaffected.
         :ivar numpy.ndarray x_solution: None until coupling converges; then [stator chord/pitch, rotor chord/pitch,
          rotor TE thickness, stator TE thickness (or single-nozzle admission)]; thicknesses are circumferential projections in m.
         :ivar dict coefficients: None until coupling converges; then optimality coefficients, thickness margins and
@@ -112,7 +115,8 @@ class SupersonicTurbine:
         #    |      |      |                                                                                  |
         #    |      |      +--> Multiple MOC nozzles                                                          |
         #    |      |      |      Determine nozzle placement.                                                 |
-        #    |      |      |      Calculate MOC nozzle exit width based on minimum thickness.                 |
+        #    |      |      |      Calculate MOC nozzle exit width based on minimum TE thickness               |
+        #    |      |      |      and allowable nozzle exit width.                                            |
         #    |      |      |      Mass flow sets nozzle height.                                               |
         #    |      |      |                                                                                  |
         #    |      |      +--> Single MOC nozzle                                                             |
@@ -191,8 +195,11 @@ class SupersonicTurbine:
             raise ValueError("Minimum metal thicknesses must be finite and nonnegative.")
         if not np.isfinite(stator_nozzle_chord_scale) or stator_nozzle_chord_scale <= 0:
             raise ValueError("stator_nozzle_chord_scale must be finite and positive.")
+        if not np.isfinite(min_MOC_nozzle_width) or min_MOC_nozzle_width <= 0:
+            raise ValueError("min_MOC_nozzle_width must be finite and positive.")
         self.t_min_stator, self.t_min_rotor = t_min_stator, t_min_rotor
         self.stator_nozzle_chord_scale = stator_nozzle_chord_scale
+        self.min_MOC_nozzle_width = min_MOC_nozzle_width
 
         # Create and store Fluid object for SupersonicTurbineBlading objects.
         self.SupersonicTurbineBlading_Fluid = blading.Fluid(ideal_gas=gas)
@@ -445,12 +452,13 @@ class SupersonicTurbine:
         # this is not the same as true metal thickness - the blade/nozzles inlets and outlets are angled, so actual
         # metal thicknesses there are smaller. The minimal allowed values of this true metal thickness are given as
         # t_min_rotor and t_min_stator as inputs to this object. Stator blade outlet angle is then used to change
-        # t_min_stator to t_TE_stator_min. MOC nozzle shaping is done such that t_TE_stator_min_obtained is never
-        # below t_TE_stator_min. For da Laval nozzle this is not possible, since nozzle exit height and widths are
-        # coupled and there is one less degree of freedom in shaping it. Consequently,
-        # t_TE_stator_min_margin = t_TE_stator_min_obtained - t_TE_stator_min is calculated for
-        # it, which the outer optimizer or designed must always keep above 0 by changing number of nozzles, admission
-        # fraction, etc. Rotor LE projection length, t_LE_rotor is calculated in this method as t_min_rotor/cos(beta_1),
+        # t_min_stator to t_TE_stator_min. Multiple MOC nozzles initially use this minimum to calculate their width,
+        # but min_MOC_nozzle_width can widen them and reduce the obtained metal thickness, possibly causing overlap.
+        # For da Laval nozzles, exit height and width are coupled and there is one less degree of freedom in shaping.
+        # Both nozzle types therefore report the signed margin
+        # t_TE_stator_min_margin = t_TE_stator_min_obtained - t_TE_stator_min, which the engineer or outer optimizer
+        # must keep nonnegative by changing nozzle count, admission fraction, etc.
+        # Rotor LE projection length, t_LE_rotor is calculated in this method as t_min_rotor/cos(beta_1),
         # and passed to SupersonicRotorBlade. This sets the rotor TE projection length, t_TE_rotor.
         # t_LE_rotor_min_margin and t_TE_rotor_min_margin compare the obtained circumferential edge
         # thicknesses with t_min_rotor/cos(flow angle) at the inlet and outlet angles. They are informational;
@@ -479,7 +487,9 @@ class SupersonicTurbine:
 
         # Starting with MOC nozzles. First, width of the rectangular exit, w_nozzle, can be calculated such that point 3 is
         # satisfied for given annulus dimensions, admission fraction, number of nozzles and t_TE_stator_min when the
-        # exit is tangent to the hub. Actual exit centres start at Euler radius. Then, maximum possible nozzle height,
+        # exit is tangent to the hub. If this width is below min_MOC_nozzle_width, increase it to that minimum and report
+        # the resulting nozzle packing violation through t_TE_stator_min_margin instead of rejecting a nonpositive
+        # reference width. Actual exit centres start at Euler radius. Then, maximum possible nozzle height,
         # H_max, places the inner side tangent to the hub and outer corners at the tip.
         # If no positive height fits this width, H_max is zero. w_nozzle dimensionalizes MOC shape in
         # SupersonicStatorNozzle, which in turn settles throat width. Throat area can be calculated such that point 4 is
@@ -492,12 +502,15 @@ class SupersonicTurbine:
         # values. If the Euler-centred exit exceeds the tip, shift its centre inward until the corners touch the tip.
         # At H_max, the inner side also touches the hub. For greater heights, retain hub tangency and allow the exit to
         # cross tip radius. In such case height_optimality is positive and the engineer or outer optimizer need to adjust the design.
-        # Minimum spacing uses the actual inner corners and is at least t_TE_stator_min, with zero margin at H_max.
+        # Minimum TE spacing is measured at the nozzle corners and can be below t_TE_stator_min when the minimum nozzle width is applied.
+        # Negative spacing denotes overlap and is retained in t_TE_stator_min_margin for the engineer/outer optimizer.
         # Finally, the arc length at Euler diameter between edges of adjacent nozzles, t_TE_stator_obtained,
-        # can be calculated. It must be equal to the arc length t_TE_stator assumed during meanline calculations.
+        # can be calculated. Clip it at zero when exits overlap so negative thickness is not passed to Turbine1D.
+        # The clipped value must equal the arc length t_TE_stator assumed during meanline calculations.
         # Their difference is t_TE_stator_residual and the numerical solver must hold it at zero - it means that assumed
         # and obtained trailing edge thicknesses are consistent, and that meanline code and nozzle shapes agree with
-        # each other. This satisfies point 2.
+        # each other. This satisfies point 2. This clipping is not a problem if t_TE_stator_min_margin is nonnegative,
+        # as then t_TE_stator_obtained will be always positive too.
 
         # This was a procedure when multiple MOC nozzles are used. If there is a single MOC nozzle, a few things change.
         # Firstly, points 2 and 3 go away, as t_TE_stator for the meanline code is always zero and there is no adjecent
@@ -703,9 +716,11 @@ class SupersonicTurbine:
         # determine all remaining margins, residuals and optimality coefficients
         # If MOC stator nozzles are used
         if contour == "moc" and count > 1:
-            # Set width so an inward extension to the hub tangent line has exactly the required minimum thickness.
+            # First calculate width for exactly the required minimum thickness at the hub tangent line.
             # Adjacent reference inner corners are separated by 2*R_hub*sin(delta/2) - w_nozzle*cos(delta/2).
-            w_nozzle = (2 * R_hub * np.sin(delta / 2) - t_TE_stator_min) / np.cos(delta / 2)
+            w_nozzle_reference = (2 * R_hub * np.sin(delta / 2) - t_TE_stator_min) / np.cos(delta / 2)
+            # Keep a positive construction width even when this violates the minimum metal thickness.
+            w_nozzle = max(self.min_MOC_nozzle_width, w_nozzle_reference)
             H_max = self._calculate_rectangle_maximum_height(w_nozzle, R_hub, R_tip)
             # Now calculate stator shape and dimensions. Use isentropic outlet Mach number at station 1 from Turbine1D,
             # as SupersonicStatorNozzle requires ideal value.
@@ -722,17 +737,22 @@ class SupersonicTurbine:
             # nozzle exit to cross the tip radius.
             inner_side_radius = max(R_hub, min(R_Euler - H_nozzle / 2, R_hub + H_max - H_nozzle))
             # Moving the inner side outward from the reference adds 2*(inner_side_radius-R_hub)*sin(delta/2) to its gap.
-            # This equivalent gap formula avoids cancellation at the prescribed minimum thickness.
-            t_TE_stator_min_obtained = t_TE_stator_min + 2 * (inner_side_radius - R_hub) * np.sin(delta / 2)
+            # Widening the reference nozzle to minimum value reduces the gap by the extra width projected onto the
+            # spacing line. Preserve a negative gap/margin for overlapping exits.
+            t_TE_stator_min_obtained = (t_TE_stator_min
+                                        - (w_nozzle - w_nozzle_reference) * np.cos(delta / 2)
+                                        + 2 * (inner_side_radius - R_hub) * np.sin(delta / 2))
             t_TE_stator_min_margin = t_TE_stator_min_obtained - t_TE_stator_min
-            # Width remains fixed by the hub-tangent reference construction.
+            # The thickness margin above reports any shortfall caused by widening the hub-tangent reference.
             width_optimality = 0.
             # Calculate chord - pitch ratio residuals between meanline design and blade shapes for the stator
             stator_chord_pitch_ratio_residual = \
                 stator_chord / turbine_meanline.p_stator - meanline_arguments["chord_over_pitch_stator"]
             # Calculate trailing edge thickness residuals between meanline design and blade shapes for the stator
             exit_arc = self._calculate_rectangle_exit_arc(w_nozzle, H_nozzle, inner_side_radius, R_Euler)
-            t_TE_stator_obtained = turbine_meanline.p_stator - exit_arc
+            # Clip the meanline TE thickness, so that Turbine1D does not fail. This clip will not occur if
+            # t_TE_stator_min_margin is made to be nonnegative by the engineer or the outer optimizer.
+            t_TE_stator_obtained = max(0., turbine_meanline.p_stator - exit_arc)
             t_TE_stator_residual = t_TE_stator_obtained - meanline_arguments["t_TE_stator"]
 
         # Follow the procedure if a single MOC stator nozzle is used
