@@ -1,5 +1,7 @@
+from itertools import zip_longest
 import numpy as np
 from scipy.optimize import root_scalar, least_squares
+from tabulate import tabulate
 from TraupelLossModel import TraupelLossModel
 from IdealGas import IdealGas
 from RelaxedAitken import solve_with_relaxed_aitken
@@ -215,6 +217,7 @@ class Turbine1D:
                                                  "M_s1_ideal": None, # Mach number in stationary reference frame
                                                  # assuming ideal expansion at station 1, -
                                                  "M_r1": None, # Mach number in rotary reference frame at station 1, -
+                                                 "M_ax_1": None, # Axial Mach number at station 1, -
                                                  "p_2": None, # Static pressure at station 2, Pa
                                                  "p_t2": None, # Total pressure at station 2, Pa
                                                  "T_2": None, # Static temperature at station 2, K
@@ -246,6 +249,7 @@ class Turbine1D:
                                                  # expansion at station 2, m/s
                                                  "M_s2": None, # Station 2 Mach number in stationary frame, -
                                                  "M_r2": None, # Mach number in rotary reference frame at station 2, -
+                                                 "M_ax_2": None, # Axial Mach number at station 2, -
                                                  "M_r2_ideal_r_real_s": None, # Mach number in rotary reference
                                                  # frame assuming ideal expansion at station 2, -
                                                  "M_r2_ideal_r_real_s_construction": None, # Mach number used for rotor
@@ -1136,6 +1140,10 @@ class Turbine1D:
         # Calculate isentropic enthalpy drop through the rotor, assuming real expansion at the stator
         delta_h_rotor_ideal = h_1 - h_2_ideal_r_real_s
 
+        # Calculate axial Mach numbers from axial velocity, theta*u, and sound velocity at each station.
+        M_ax_1 = theta_1 * u / a_1  # -
+        M_ax_2 = theta_2 * u / a_2  # -
+
         # Calculate Reynolds numbers only for the solved outlet states.
         Re_s1 = rho_1 * v_1 * self.c_stator / gas.calculate_dynamic_viscosity(T_1)  # -
         Re_r2 = rho_2 * w_2 * self.c_rotor / gas.calculate_dynamic_viscosity(T_2)  # -
@@ -1151,6 +1159,7 @@ class Turbine1D:
                                  "M_s1": M_s1,  # -
                                  "M_s1_ideal": M_s1_ideal,  # -
                                  "M_r1": M_r1,  # -
+                                 "M_ax_1": M_ax_1,  # -
                                  "T_2_ideal_r_real_s": T_2_ideal_r_real_s,  # K
                                  "h_2_ideal_r_real_s": h_2_ideal_r_real_s,  # J/kg
                                  "a_2": a_2,  # m/s
@@ -1159,6 +1168,7 @@ class Turbine1D:
                                  "w_2_ideal_r_real_s": w_2_ideal_r_real_s,  # m/s
                                  "M_s2": M_s2,  # -
                                  "M_r2": M_r2,  # -
+                                 "M_ax_2": M_ax_2,  # -
                                  "M_r2_ideal_r_real_s": M_r2_ideal_r_real_s,  # -
                                  "Re_s1": Re_s1,  # -
                                  "Re_r2": Re_r2,  # -
@@ -1300,3 +1310,67 @@ class Turbine1D:
                              "Re_r2_blade": Re_r2_blade,  # -
                              }
         return blade_row_results
+
+    def print_analysis_results(self):
+        """Print stored design-point results in turbine and station 0, 1 and 2 columns using a GitHub table.
+
+        :raises ValueError: If no design-point analysis is available. Call size_turbine first.
+        """
+        # First obtain the stored design-point results and check that analysis has been performed.
+        results = self.analysis_results_at_design_point
+        if results.get("eta_tt") is None:
+            raise ValueError("No design-point analysis results available. Call size_turbine() first.")
+
+        # Define a helper to convert units and format each entry with its symbol, value and unit.
+        def format_entry(symbol, unit, factor):
+            # Leave missing quantities blank and omit the unit suffix for dimensionless quantities.
+            # Print available values with two decimal places.
+            value = results.get(symbol)
+            return "" if value is None else f"{symbol}, {value * factor:.2f} {unit}".rstrip()
+
+        # Define whole-turbine quantities in display order, together with units and conversion factors.
+        turbine_fields = [
+            ("psi_tt", "", 1),
+            ("theta_2", "", 1),
+            ("R_h_tt_ideal", "", 1),
+            ("p_0_over_p_2", "", 1),
+            ("P_shaft", "kW", 1e-3),
+            ("RPM", "rpm", 1),
+            ("u", "m/s", 1),
+            ("eta_tt", "%", 100),
+            ("eta_ts", "%", 100),
+            ("eta_poly_tt", "%", 100),
+            ("eta_poly_ts", "%", 100),
+        ]
+        # Map each station quantity to its stored symbols, display unit and conversion factor.
+        # None marks an unavailable quantity. Entropy rises are shown separately for each loss group.
+        station_fields = [
+            (("T_0", "T_1", "T_2"), "K", 1),
+            (("p_0", "p_1", "p_2"), "bar", 1e-5),
+            ((None, "p_t1", "p_t2"), "bar", 1e-5),
+            ((None, "h_1", "h_2"), "kJ/kg", 1e-3),
+            (("h_t0", "h_t1", "h_t2"), "kJ/kg", 1e-3),
+            ((None, "rho_1", "rho_2"), "kg/m^3", 1),
+            ((None, "delta_s_stator", "delta_s_rotor"), "kJ/kg", 1e-3),
+            ((None, None, "delta_s_rotor_additional"), "kJ/kg", 1e-3),
+            ((None, "v_1", "v_2"), "m/s", 1),
+            ((None, "w_1", "w_2"), "m/s", 1),
+            ((None, "alpha_1", "alpha_2"), "deg", 180 / np.pi),
+            ((None, "beta_1", "beta_2"), "deg", 180 / np.pi),
+            ((None, "M_s1", "M_s2"), "", 1),
+            ((None, "M_r1", "M_r2"), "", 1),
+            ((None, "M_ax_1", "M_ax_2"), "", 1),
+            ((None, "M_s1_ideal", "M_r2_ideal_r_real_s"), "", 1),
+            ((None, "theta_1", "theta_2"), "", 1),
+            ((None, "Re_s1", "Re_r2"), "", 1),
+        ]
+        # Format the first column with the whole-turbine quantities.
+        columns = [[format_entry(*field) for field in turbine_fields]]
+        # Add a column for each station, keeping corresponding station quantities on the same row.
+        for station in range(3):
+            columns.append([format_entry(symbols[station], unit, factor)
+                            for symbols, unit, factor in station_fields])
+
+        # Transpose the columns into rows, pad shorter columns with blanks and print a GitHub-style table.
+        headers = ["Turbine", "Station 0", "Station 1", "Station 2"]
+        print(tabulate(zip_longest(*columns, fillvalue=""), headers=headers, tablefmt="github"))
