@@ -1478,22 +1478,35 @@ class Turbine1D:
         :raises ValueError: If design-point velocities are unavailable. Call size_turbine first.
         """
 
-        # Obtain the stored velocity magnitudes and flow angles required to draw both triangles.
+        # Obtain the stored velocity magnitudes and flow angles from the stage and blade-row analyses.
         results = self.analysis_results_at_design_point
         required_fields = ("u", "v_1", "v_2", "w_1", "w_2", "alpha_1", "alpha_2", "beta_1", "beta_2")
         if any(results.get(field) is None for field in required_fields):
             raise ValueError("No design-point velocity results available. Call size_turbine() first.")
 
-        # Create two subplots with common velocity scales and a shared tangential-velocity axis.
-        figure, axes = plt.subplots(1, 2, sharex=True, sharey=True, figsize=(8, 5), layout="compressed")
+        # Check the rotor outlet results without additional rotor losses used for the middle triangle.
+        blade_results = self.blade_row_results_at_design_point
+        required_blade_fields = ("v_2_blade", "w_2_blade", "alpha_2_blade", "beta_2_blade")
+        if any(blade_results.get(field) is None for field in required_blade_fields):
+            raise ValueError("No design-point blade-row velocity results available. Call size_turbine() first.")
+
+        # Define the plot order and the result dictionary and variable suffix for each triangle.
+        triangles = [
+            ("Station 1", results, "1"),
+            ("Station 2 - without\nadditional rotor losses", blade_results, "2_blade"),
+            ("Station 2", results, "2"),
+        ]
+
+        # Create three subplots with common velocity scales and a shared tangential-velocity axis.
+        figure, axes = plt.subplots(1, 3, sharex=True, sharey=True, figsize=(12, 5), layout="compressed")
         u = results["u"]  # m/s
 
         # Reconstruct the absolute and relative velocity components from angles measured from the axial direction.
-        for station, axis in zip((1, 2), axes):
-            v = results[f"v_{station}"]  # m/s
-            w = results[f"w_{station}"]  # m/s
-            alpha = results[f"alpha_{station}"]  # rad
-            beta = results[f"beta_{station}"]  # rad
+        for (title, source_results, station), axis in zip(triangles, axes):
+            v = source_results[f"v_{station}"]  # m/s
+            w = source_results[f"w_{station}"]  # m/s
+            alpha = source_results[f"alpha_{station}"]  # rad
+            beta = source_results[f"beta_{station}"]  # rad
             absolute_tip = (v * np.cos(alpha), v * np.sin(alpha))
             relative_tip = (w * np.cos(beta), u + w * np.sin(beta))
 
@@ -1512,7 +1525,7 @@ class Turbine1D:
                                           "mutation_scale": 15, "shrinkA": 0, "shrinkB": 0})
 
             # Label each station and use equal coordinate scales to preserve the actual triangle angles.
-            axis.set_title(f"Station {station}")
+            axis.set_title(title)
             axis.set_xlabel("Axial velocity (m/s)")
             axis.set_aspect("equal", adjustable="box")
 
