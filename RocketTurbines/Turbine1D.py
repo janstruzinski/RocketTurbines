@@ -1,4 +1,5 @@
 from itertools import zip_longest
+import matplotlib.pyplot as plt
 import numpy as np
 from scipy.optimize import root_scalar, least_squares
 from tabulate import tabulate
@@ -1470,3 +1471,95 @@ class Turbine1D:
                         "Rotor aerodynamic loss\ncoefficient - breakdown"]
         print()
         print(tabulate(zip_longest(*loss_columns, fillvalue=""), headers=loss_headers, tablefmt="github"))
+
+    def plot_velocity_triangles(self):
+        """Plot the design-point velocity triangles at stations 1 and 2.
+
+        :raises ValueError: If design-point velocities are unavailable. Call size_turbine first.
+        """
+
+        # Obtain the stored velocity magnitudes and flow angles required to draw both triangles.
+        results = self.analysis_results_at_design_point
+        required_fields = ("u", "v_1", "v_2", "w_1", "w_2", "alpha_1", "alpha_2", "beta_1", "beta_2")
+        if any(results.get(field) is None for field in required_fields):
+            raise ValueError("No design-point velocity results available. Call size_turbine() first.")
+
+        # Create two subplots with common velocity scales and a shared tangential-velocity axis.
+        figure, axes = plt.subplots(1, 2, sharex=True, sharey=True, figsize=(8, 5), layout="compressed")
+        u = results["u"]  # m/s
+
+        # Reconstruct the absolute and relative velocity components from angles measured from the axial direction.
+        for station, axis in zip((1, 2), axes):
+            v = results[f"v_{station}"]  # m/s
+            w = results[f"w_{station}"]  # m/s
+            alpha = results[f"alpha_{station}"]  # rad
+            beta = results[f"beta_{station}"]  # rad
+            absolute_tip = (v * np.cos(alpha), v * np.sin(alpha))
+            relative_tip = (w * np.cos(beta), u + w * np.sin(beta))
+
+            # Position the vectors head to tail so that the blade-speed and relative vectors form the absolute one.
+            vectors = [
+                ((0, 0), absolute_tip, "red", f"Absolute velocity, v_{station}"),
+                ((0, u), relative_tip, "blue", f"Relative velocity, w_{station}"),
+                ((0, 0), (0, u), "cyan", "Blade speed, u"),
+            ]
+
+            # Draw each velocity line with a legend label and an arrowhead at its endpoint.
+            for start, end, color, label in vectors:
+                axis.plot([start[0], end[0]], [start[1], end[1]], color=color, linewidth=2, label=label)
+                axis.annotate("", xy=end, xytext=start,
+                              arrowprops={"arrowstyle": "-|>", "color": color, "linewidth": 2,
+                                          "mutation_scale": 15, "shrinkA": 0, "shrinkB": 0})
+
+            # Label each station and use equal coordinate scales to preserve the actual triangle angles.
+            axis.set_title(f"Station {station}")
+            axis.set_xlabel("Axial velocity (m/s)")
+            axis.set_aspect("equal", adjustable="box")
+
+            # Add major and minor grids behind the vectors and a legend in each subplot's upper-right corner.
+            axis.set_axisbelow(True)
+            axis.minorticks_on()
+            axis.grid(which="major", alpha=0.4)
+            axis.grid(which="minor", linestyle=":", alpha=0.25)
+            axis.legend(loc="upper right")
+
+        # Leave space around the arrowheads and label the shared tangential-velocity axis.
+        axes[0].margins(x=0.08, y=0.05)
+        axes[0].set_ylabel("Tangential velocity (m/s)")
+
+        # Measure the rendered legends and arrows so that the layout adapts to the actual velocity triangles.
+        for _ in range(20):
+            figure.canvas.draw()
+            renderer = figure.canvas.get_renderer()
+            padding = renderer.points_to_pixels(8)
+            legend_bounds = [axis.get_legend().get_window_extent(renderer) for axis in axes]
+
+            # Enlarge the figure if necessary to fit the legends without widening the axial-velocity bounds.
+            width_scale = max((legend.width + 2 * padding) / axis.get_window_extent(renderer).width
+                              for axis, legend in zip(axes, legend_bounds))
+            if width_scale > 1.01:
+                width, height = figure.get_size_inches()
+                required_width = sum(legend.width + 2 * padding for legend in legend_bounds) / figure.dpi
+                figure.set_size_inches(max(width, required_width + 1.5), height * width_scale, forward=True)
+                continue
+
+            # Reserve enough space above every arrow for the legend and a small gap, using display coordinates.
+            y_min, y_max = axes[0].get_ylim()
+            upper_limit = y_max
+            for axis, legend in zip(axes, legend_bounds):
+                arrow_top = max(annotation.arrow_patch.get_window_extent(renderer).y1
+                                for annotation in axis.texts if annotation.arrow_patch is not None)
+                overlap = arrow_top + padding - legend.y0
+                if overlap > 0.5:
+                    data_coordinates = axis.transData.inverted()
+                    extra_margin = (data_coordinates.transform((0, overlap))[1]
+                                    - data_coordinates.transform((0, 0))[1])
+                    upper_limit = max(upper_limit, y_max + extra_margin)
+
+            # Repeat only when the shared upper bound changed, since equal aspect can change the rendered layout.
+            if upper_limit == y_max:
+                break
+            axes[0].set_ylim(y_min, upper_limit)
+
+        # Display the velocity triangles.
+        plt.show()

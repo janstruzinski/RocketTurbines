@@ -302,6 +302,7 @@ The result dictionaries are:
   admission loss coefficients, dissipated enthalpies, entropy rises and shroud leakage flow.
 
 Call `turbine.print_analysis_results()` after sizing to print a table with meanline analysis results.
+Call `turbine.plot_velocity_triangles()` to plot the design-point velocity triangles at stations 1 and 2.
 
 The reported efficiencies use the exact isentropic enthalpy drops at the corresponding outlet total or static
 pressure. With $\Delta s_{\mathrm{stage}}$ denoting total stage entropy rise, the ideal reference enthalpies are

@@ -11,3 +11,4 @@ turbine.size_turbine(gas=gas, work_coefficient_tt=4.321, flow_coefficient=1.570,
                     t_TE_stator=0.5e-3, t_TE_rotor=0.5e-3, Ra_roughness=3e-6, loss_model=loss_model,
                     admission_fraction=0.05440, delta_s_estimate=[350, 130, 200])
 turbine.print_analysis_results()
+turbine.plot_velocity_triangles()
