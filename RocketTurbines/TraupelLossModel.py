@@ -738,7 +738,7 @@ class TraupelLossModel:
                                              outlet_Mach_number, Reynolds_number, speed_parameter, blade_velocity_ratio,
                                              axial_clearance_over_blade_length, shrouded_row=False,
                                              shroud_axial_clearance_over_blade_length=None):
-        """A method to calculate the total aerodynamic loss coefficient of a stator or rotor blade row.
+        """A method to calculate the total aerodynamic loss coefficient and breakdown components.
 
         :param str blade_row: Blade row being evaluated, either "stator" or "rotor".
         :param float inlet_angle: Blade-row inlet flow angle measured from the positive vertical direction (rad).
@@ -758,8 +758,11 @@ class TraupelLossModel:
         :param bool shrouded_row: Whether the blade row has a shroud. By default, False.
         :param float or None shroud_axial_clearance_over_blade_length: Axial shroud clearance over blade length,
             required for a shrouded row. By default, None.
-        :return: Total blade-row aerodynamic loss coefficient (-).
-        :rtype: float
+        :return: Total blade-row aerodynamic loss coefficient and a dictionary containing zeta_p0,
+            corrected_zeta_p0, zeta_h, zeta_C, zeta_p, zeta_f, integrated_zeta_p, zeta_a,
+            zeta_short_blade and zeta_rest. All coefficients are dimensionless. zeta_short_blade
+            is the blade-length-dependent contribution to zeta_rest, excluding zeta_a, in both branches.
+        :rtype: tuple[float, dict]
         """
 
         # Aerodynamic loss coefficient of the blade row has the form of zeta = zeta_p + zeta_f + zeta_rest
@@ -776,7 +779,7 @@ class TraupelLossModel:
         # Calcuale zeta C
         zeta_C = (t_TE_over_pitch / (1 - t_TE_over_pitch))**2 * np.sin(outlet_angle)**2  # -
         # Sum individual coefficients
-        zeta_p = chi_R * chi_M * zeta_p0 + zeta_h + zeta_C  # -
+        zeta_p = corrected_zeta_p0 + zeta_h + zeta_C  # -
 
         # Calculate fanning loss coefficients
         zeta_f = self.calculate_zeta_f(blade_length_over_mean_diameter, speed_parameter)  # -
@@ -809,7 +812,7 @@ class TraupelLossModel:
         F_coefficient = self.calculate_F(flow_angle_change, blade_velocity_ratio)  # -
         # Calculate the residual loss if length ratio is above the critical value
         if blade_length_to_pitch_ratio >= critical_blade_length_to_pitch_ratio:
-            zeta_rest = zeta_a + (zeta_p / zeta_p0) * F_coefficient / blade_length_to_pitch_ratio  # -
+            zeta_short_blade = (zeta_p / zeta_p0) * F_coefficient / blade_length_to_pitch_ratio  # -
         # Calculate the residual loss if length ratio is below the critical value
         else:
             # Choose A coefficient. According to Traupel, it has avalue of 0.02 for strongly accelerating cascades,
@@ -818,13 +821,28 @@ class TraupelLossModel:
                 A_coefficient = 0.02  # -
             else:
                 A_coefficient = 0.035 if self.rotor in ("impulse_low_M", "impulse_high_M") else 0.02  # -
-            zeta_rest = zeta_a + (zeta_p / zeta_p0) * F_coefficient / critical_blade_length_to_pitch_ratio \
-                        + A_coefficient * chord_over_pitch * \
-                        (1 / blade_length_to_pitch_ratio - 1 / critical_blade_length_to_pitch_ratio)  # -
+            zeta_short_blade = (zeta_p / zeta_p0) * F_coefficient / critical_blade_length_to_pitch_ratio \
+                               + A_coefficient * chord_over_pitch * \
+                               (1 / blade_length_to_pitch_ratio - 1 / critical_blade_length_to_pitch_ratio)  # -
 
-        # Calculate and return total aerodynamic loss coefficient
+        # Combine zeta_a and the blade-length contribution to the residual loss.
+        zeta_rest = zeta_a + zeta_short_blade  # -
+
+        # Calculate the total aerodynamic loss coefficient and pack its individual components.
         zeta_total_aerodynamic = integrated_zeta_p + zeta_rest  # -
-        return zeta_total_aerodynamic
+        aerodynamic_loss_breakdown = {
+            "zeta_p0": zeta_p0,
+            "corrected_zeta_p0": corrected_zeta_p0,
+            "zeta_h": zeta_h,
+            "zeta_C": zeta_C,
+            "zeta_p": zeta_p,
+            "zeta_f": zeta_f,
+            "integrated_zeta_p": integrated_zeta_p,
+            "zeta_a": zeta_a,
+            "zeta_short_blade": zeta_short_blade,
+            "zeta_rest": zeta_rest,
+        }
+        return zeta_total_aerodynamic, aerodynamic_loss_breakdown
 
     def calculate_shrouded_rotor_clearance_loss(self, tip_diameter, seal_clearance, teeth_number, teeth_spacing,
                                                 admission_fraction, p_2_over_p_1, mdot, p_1, rho_1,
@@ -994,6 +1012,7 @@ class TraupelLossModel:
         :param dict blade_row_results: Blade-row flow analysis results that account only for profile losses.
         :return: Stator entropy increase, rotor blade-row entropy increase, additional rotor entropy increase
                  (J/(kg K)), and a dictionary of the calculated losses and leakage mass flow rate.
+                 Aerodynamic loss components have _stator or _rotor suffixes identifying their blade row.
         :rtype: tuple[float, float, float, dict]
         """
 
@@ -1033,7 +1052,7 @@ class TraupelLossModel:
         Re_s1 = analysis_results["Re_s1"]  # -
         psi_ss_ideal = analysis_results["psi_ss_ideal"]  # -
         speed_parameter = 1 / np.sqrt(2 * psi_ss_ideal)  # -
-        zeta_aerodynamic_stator = \
+        zeta_aerodynamic_stator, aerodynamic_loss_breakdown_stator = \
             self.calculate_blade_row_aerodynamic_loss(blade_row="stator", inlet_angle=np.pi/2, outlet_angle=alpha_1,
                                                       t_TE_over_pitch=t_TE_over_p_stator,
                                                       roughness_over_chord=k_s_over_c_stator,
@@ -1043,7 +1062,7 @@ class TraupelLossModel:
                                                       chord_over_blade_length=c_over_l_stator,
                                                       outlet_Mach_number=M_s1, Reynolds_number=Re_s1,
                                                       speed_parameter=speed_parameter, blade_velocity_ratio=0,
-                                                      axial_clearance_over_blade_length=s_ax_over_l_stator)  # -
+                                                      axial_clearance_over_blade_length=s_ax_over_l_stator)
         # Calculate incidence loss. For the stator, it is assumed to be zero.
         zeta_incidence_stator = 0  # -
         if self.loss_coefficient_error and zeta_aerodynamic_stator >= 1:
@@ -1081,7 +1100,7 @@ class TraupelLossModel:
         w_1_blade = blade_row_results["w_1_blade"]  # m/s
         w_2_blade = blade_row_results["w_2_blade"]  # m/s
         velocity_ratio_rotor = w_1_blade / w_2_blade  # -
-        zeta_aerodynamic_rotor = \
+        zeta_aerodynamic_rotor, aerodynamic_loss_breakdown_rotor = \
             self.calculate_blade_row_aerodynamic_loss(blade_row="rotor", inlet_angle=beta_1, outlet_angle=beta_2,
                                                       t_TE_over_pitch=t_TE_over_p_rotor,
                                                       roughness_over_chord=k_s_over_c_rotor,
@@ -1095,7 +1114,7 @@ class TraupelLossModel:
                                                       axial_clearance_over_blade_length=s_ax_over_l_rotor,
                                                       shrouded_row=shrouded_rotor,
                                                       shroud_axial_clearance_over_blade_length=
-                                                      s_ax_shroud_over_l_rotor)  # -
+                                                      s_ax_shroud_over_l_rotor)
         # Calculate incidence loss for the rotor
         incidence = analysis_results["incidence"]  # rad
         M_r1_blade = blade_row_results["M_r1_blade"]  # -
@@ -1215,6 +1234,12 @@ class TraupelLossModel:
             # losses, J/(kg K)
             "mdot_leak": mdot_leak,  # Mass flow leaking through the rotor shroud seal (zero if unshrouded), kg/s
         }
+
+        # Store each aerodynamic loss component with a suffix identifying its blade row.
+        Traupel_loss_analysis_results.update({f"{name}_stator": value
+                                             for name, value in aerodynamic_loss_breakdown_stator.items()})
+        Traupel_loss_analysis_results.update({f"{name}_rotor": value
+                                             for name, value in aerodynamic_loss_breakdown_rotor.items()})
 
         # Return everything
         return delta_s_stator, delta_s_rotor, delta_s_rotor_additional, Traupel_loss_analysis_results

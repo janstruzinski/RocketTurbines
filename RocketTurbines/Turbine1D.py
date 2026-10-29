@@ -325,6 +325,28 @@ class Turbine1D:
             "delta_s_rotor": None,  # Specific entropy rise across the rotor blade row, J/(kg K)
             "delta_s_rotor_additional": None,  # Specific entropy rise from additional rotor losses, J/(kg K)
             "mdot_leak": None,  # Mass flow leaking through the rotor shroud seal (zero if unshrouded), kg/s
+            # Breakdown of the stator aerodynamic loss coefficient:
+            "zeta_p0_stator": None,  # Uncorrected stator profile loss coefficient, -
+            "corrected_zeta_p0_stator": None,  # Stator profile loss after Mach and Reynolds corrections, -
+            "zeta_h_stator": None,  # Stator trailing-edge underpressure loss coefficient, -
+            "zeta_C_stator": None,  # Stator trailing-edge mixing/blockage loss coefficient, -
+            "zeta_p_stator": None,  # Total stator profile loss coefficient, -
+            "zeta_f_stator": None,  # Stator fanning loss coefficient, -
+            "integrated_zeta_p_stator": None,  # Sum of stator profile and fanning loss coefficients, -
+            "zeta_a_stator": None,  # Stator endwall loss coefficient in the axial gap, -
+            "zeta_short_blade_stator": None,  # Blade-length contribution to stator residual loss, -
+            "zeta_rest_stator": None,  # Total stator residual endwall loss coefficient, -
+            # Breakdown of the rotor aerodynamic loss coefficient:
+            "zeta_p0_rotor": None,  # Uncorrected rotor profile loss coefficient, -
+            "corrected_zeta_p0_rotor": None,  # Rotor profile loss after Mach and Reynolds corrections, -
+            "zeta_h_rotor": None,  # Rotor trailing-edge underpressure loss coefficient, -
+            "zeta_C_rotor": None,  # Rotor trailing-edge mixing/blockage loss coefficient, -
+            "zeta_p_rotor": None,  # Total rotor profile loss coefficient, -
+            "zeta_f_rotor": None,  # Rotor fanning loss coefficient, -
+            "integrated_zeta_p_rotor": None,  # Sum of rotor profile and fanning loss coefficients, -
+            "zeta_a_rotor": None,  # Rotor endwall loss coefficient in the axial shroud gap, -
+            "zeta_short_blade_rotor": None,  # Blade-length contribution to rotor residual loss, -
+            "zeta_rest_rotor": None,  # Total rotor residual endwall loss coefficient, -
         }
 
     def size_turbine(self, gas: IdealGas, work_coefficient_tt, flow_coefficient, reaction_isentropic_tt, RPM,
@@ -1312,21 +1334,26 @@ class Turbine1D:
         return blade_row_results
 
     def print_analysis_results(self):
-        """Print stored design-point results in turbine and station 0, 1 and 2 columns using a GitHub table.
+        """Print stored stage results, rotor blade-row outlet results and loss breakdowns as GitHub tables.
 
         :raises ValueError: If no design-point analysis is available. Call size_turbine first.
         """
+
         # First obtain the stored design-point results and check that analysis has been performed.
         results = self.analysis_results_at_design_point
         if results.get("eta_tt") is None:
             raise ValueError("No design-point analysis results available. Call size_turbine() first.")
 
         # Define a helper to convert units and format each entry with its symbol, value and unit.
-        def format_entry(symbol, unit, factor):
-            # Leave missing quantities blank and omit the unit suffix for dimensionless quantities.
-            # Print available values with two decimal places.
-            value = results.get(symbol)
-            return "" if value is None else f"{symbol}, {value * factor:.2f} {unit}".rstrip()
+        def format_entry(symbol, unit, factor, source_results):
+            # Leave missing quantities blank.
+            value = source_results.get(symbol)
+            if value is None:
+                return ""
+            # Use three significant figures for all zeta coefficients, retaining trailing zeros.
+            # Other quantities keep two decimal places; dimensionless entries have no unit suffix.
+            number_format = "#.3g" if "zeta" in symbol else ".2f"
+            return f"{symbol}, {value * factor:{number_format}} {unit}".rstrip()
 
         # Define whole-turbine quantities in display order, together with units and conversion factors.
         turbine_fields = [
@@ -1351,8 +1378,8 @@ class Turbine1D:
             ((None, "h_1", "h_2"), "kJ/kg", 1e-3),
             (("h_t0", "h_t1", "h_t2"), "kJ/kg", 1e-3),
             ((None, "rho_1", "rho_2"), "kg/m^3", 1),
-            ((None, "delta_s_stator", "delta_s_rotor"), "kJ/kg", 1e-3),
-            ((None, None, "delta_s_rotor_additional"), "kJ/kg", 1e-3),
+            ((None, "delta_s_stator", "delta_s_rotor"), "J/kg", 1),
+            ((None, None, "delta_s_rotor_additional"), "J/kg", 1),
             ((None, "v_1", "v_2"), "m/s", 1),
             ((None, "w_1", "w_2"), "m/s", 1),
             ((None, "alpha_1", "alpha_2"), "deg", 180 / np.pi),
@@ -1364,13 +1391,82 @@ class Turbine1D:
             ((None, "theta_1", "theta_2"), "", 1),
             ((None, "Re_s1", "Re_r2"), "", 1),
         ]
-        # Format the first column with the whole-turbine quantities.
-        columns = [[format_entry(*field) for field in turbine_fields]]
+        # Format the first column with the whole turbine quantities.
+        columns = [[format_entry(*field, source_results=results) for field in turbine_fields]]
         # Add a column for each station, keeping corresponding station quantities on the same row.
         for station in range(3):
-            columns.append([format_entry(symbols[station], unit, factor)
+            columns.append([format_entry(symbols[station], unit, factor, source_results=results)
                             for symbols, unit, factor in station_fields])
 
         # Transpose the columns into rows, pad shorter columns with blanks and print a GitHub-style table.
         headers = ["Turbine", "Station 0", "Station 1", "Station 2"]
         print(tabulate(zip_longest(*columns, fillvalue=""), headers=headers, tablefmt="github"))
+
+        # Define rotor blade-row outlet quantities, using the same units as the stage table.
+        blade_row_fields = [
+            ("T_2_blade", "K", 1),
+            ("p_2_blade", "bar", 1e-5),
+            ("p_t2_blade", "bar", 1e-5),
+            ("h_2_blade", "kJ/kg", 1e-3),
+            ("h_t2_blade", "kJ/kg", 1e-3),
+            ("rho_2_blade", "kg/m^3", 1),
+            ("v_2_blade", "m/s", 1),
+            ("w_2_blade", "m/s", 1),
+            ("alpha_2_blade", "deg", 180 / np.pi),
+            ("beta_2_blade", "deg", 180 / np.pi),
+            ("M_r2_blade", "", 1),
+            ("psi_tt_blade", "", 1),
+            ("theta_2_blade", "", 1),
+            ("Re_r2_blade", "", 1),
+        ]
+        # Format and print the station 2 results for the rotor blade row without additional losses.
+        blade_row_column = [format_entry(*field, source_results=self.blade_row_results_at_design_point)
+                            for field in blade_row_fields]
+        print()
+        print(tabulate([[entry] for entry in blade_row_column if entry],
+                       headers=["Station 2, rotor blade row alone\nwithout additional losses"], tablefmt="github"))
+
+        # Combine the stored loss results with the stage's Denton coefficients for the loss table.
+        loss_results = self.loss_model_results_at_design_point.copy()
+        loss_results.update({"zeta_stator_Denton": results.get("zeta_stator_Denton"),
+                             "zeta_rotor_Denton": results.get("zeta_rotor_Denton")})
+
+        # Define the existing loss-summary quantities, omitting delta_h_loss_rotor_sum_static.
+        loss_fields = [
+            ("zeta_aerodynamic_stator", "", 1),
+            ("zeta_incidence_stator", "", 1),
+            ("zeta_aerodynamic_rotor", "", 1),
+            ("zeta_incidence_rotor", "", 1),
+            ("zeta_disk_friction", "", 1),
+            ("zeta_clearance_rotor", "", 1),
+            ("zeta_admission", "", 1),
+            ("zeta_rotor_additional", "", 1),
+            ("zeta_stator_Denton", "", 1),
+            ("zeta_rotor_Denton", "", 1),
+            ("delta_h_loss_stator", "kJ/kg", 1e-3),
+            ("delta_h_loss_rotor", "kJ/kg", 1e-3),
+            ("delta_h_loss_rotor_additional", "kJ/kg", 1e-3),
+            ("delta_h_loss_rotor_sum", "kJ/kg", 1e-3),
+            ("delta_s_stator", "J/kg", 1),
+            ("delta_s_rotor", "J/kg", 1),
+            ("delta_s_rotor_additional", "J/kg", 1),
+            ("mdot_leak", "kg/s", 1),
+        ]
+        # Define the aerodynamic components in the same order for the stator and rotor breakdowns.
+        aerodynamic_loss_fields = [
+            "zeta_p0", "corrected_zeta_p0", "zeta_h", "zeta_C", "zeta_p", "zeta_f",
+            "integrated_zeta_p", "zeta_a", "zeta_short_blade", "zeta_rest",
+        ]
+
+        # Format the loss summary followed by the stator and rotor aerodynamic breakdown columns.
+        loss_columns = [[format_entry(*field, source_results=loss_results) for field in loss_fields]]
+        for blade_row in ("stator", "rotor"):
+            loss_columns.append([format_entry(f"{symbol}_{blade_row}", "", 1, source_results=loss_results)
+                                 for symbol in aerodynamic_loss_fields])
+
+        # Print the loss table, padding the shorter aerodynamic breakdowns with blank entries.
+        loss_headers = ["Turbine loss coefficients and\ndissipated enthalpies",
+                        "Stator aerodynamic loss\ncoefficient - breakdown",
+                        "Rotor aerodynamic loss\ncoefficient - breakdown"]
+        print()
+        print(tabulate(zip_longest(*loss_columns, fillvalue=""), headers=loss_headers, tablefmt="github"))
