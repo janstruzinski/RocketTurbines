@@ -1401,6 +1401,7 @@ class Turbine1D:
 
         # Transpose the columns into rows, pad shorter columns with blanks and print a GitHub-style table.
         headers = ["Turbine", "Station 0", "Station 1", "Station 2"]
+        print("\nMeanline analysis results")
         print(tabulate(zip_longest(*columns, fillvalue=""), headers=headers, tablefmt="github"))
 
         # Define rotor blade-row outlet quantities, using the same units as the stage table.
@@ -1423,7 +1424,7 @@ class Turbine1D:
         # Format and print the station 2 results for the rotor blade row without additional losses.
         blade_row_column = [format_entry(*field, source_results=self.blade_row_results_at_design_point)
                             for field in blade_row_fields]
-        print()
+        print("\nRotor blade-row results without additional losses")
         print(tabulate([[entry] for entry in blade_row_column if entry],
                        headers=["Station 2, rotor blade row alone\nwithout additional losses"], tablefmt="github"))
 
@@ -1469,7 +1470,7 @@ class Turbine1D:
         loss_headers = ["Turbine loss coefficients and\ndissipated enthalpies",
                         "Stator aerodynamic loss\ncoefficient - breakdown",
                         "Rotor aerodynamic loss\ncoefficient - breakdown"]
-        print()
+        print("\nTurbine losses")
         print(tabulate(zip_longest(*loss_columns, fillvalue=""), headers=loss_headers, tablefmt="github"))
 
     def plot_velocity_triangles(self):
@@ -1576,3 +1577,91 @@ class Turbine1D:
 
         # Display the velocity triangles.
         plt.show()
+
+    def print_geometry(self):
+        """Print grouped geometry in Turbine, Stator and Rotor columns using a GitHub table.
+
+        :raises ValueError: If design-point geometry is unavailable. Call size_turbine first.
+        """
+
+        # Check that turbine sizing has produced the annulus geometry.
+        if self.D_hub is None or self.D_tip is None:
+            raise ValueError("No design-point geometry available. Call size_turbine() first.")
+
+        # Collect geometry and the requested flow angles without changing the stored results.
+        geometry = vars(self).copy()
+        geometry.update({"alpha_1": self.analysis_results_at_design_point.get("alpha_1"),
+                         "beta_1": self.analysis_results_at_design_point.get("beta_1"),
+                         "beta_2_blade": self.blade_row_results_at_design_point.get("beta_2_blade")})
+
+        # Recover the prescribed chord-to-pitch and axial-gap ratios.
+        ratio_fields = [
+            ("chord_over_pitch_stator", "c_stator", "p_stator"),
+            ("chord_over_pitch_rotor", "c_rotor", "p_rotor"),
+            ("s_ax_over_pitch_rotor", "s_ax", "p_rotor"),
+        ]
+        for symbol, numerator, denominator in ratio_fields:
+            if geometry.get(numerator) is not None and geometry.get(denominator) not in (None, 0):
+                geometry[symbol] = geometry[numerator] / geometry[denominator]
+
+        # Define a formatter with the same symbol, value and unit layout as the analysis tables.
+        def format_entry(symbol, unit, factor, source_results):
+            # Leave unavailable quantities blank and preserve text and boolean configuration values.
+            value = source_results.get(symbol)
+            if value is None:
+                return ""
+            formatted_value = str(value) if isinstance(value, (str, bool, np.bool_)) else f"{value * factor:.2f}"
+            return f"{symbol}, {formatted_value} {unit}".rstrip()
+
+        # Group common turbine geometry separately from quantities belonging to the stator or rotor.
+        geometry_groups = [
+            # Diameters.
+            [("D_hub", None, None, "mm", 1e3),
+             ("D_tip", None, None, "mm", 1e3),
+             ("D_mean", None, None, "mm", 1e3),
+             ("D_Euler", None, None, "mm", 1e3)],
+            # Stator outlet angle and rotor inlet and blade-row outlet angles.
+            [(None, "alpha_1", "beta_1", "deg", 180 / np.pi),
+             (None, None, "beta_2_blade", "deg", 180 / np.pi)],
+            # Blade dimensions and throat areas, when available.
+            [(None, "l_stator", "l_rotor", "mm", 1e3),
+             (None, "c_stator", "c_rotor", "mm", 1e3),
+             (None, "p_stator", "p_rotor", "mm", 1e3),
+             (None, "A_throat_stator", "A_throat_rotor", "mm^2", 1e6)],
+            # Axial and radial clearances and surface roughness.
+            [("s_ax", None, "s_r", "mm", 1e3),
+             ("sand_grain_roughness", None, None, "mm", 1e3)],
+            # Trailing-edge and leading-edge thicknesses.
+            [(None, "t_TE_stator", "t_TE_rotor", "mm", 1e3),
+             (None, None, "t_LE_rotor", "mm", 1e3)],
+            # Dimensionless geometry ratios and admission fraction.
+            [(None, "chord_over_pitch_stator", "chord_over_pitch_rotor", "", 1),
+             ("s_ax_over_pitch_rotor", None, None, "", 1),
+             ("admission_fraction", None, None, "%", 100)],
+            # Blade counts and partial-admission rotor configuration.
+            [(None, "no_blades_stator", "no_blades_rotor", "", 1),
+             (None, None, "partial_admission_rotor", "", 1)],
+            # Rotor shroud and seal geometry.
+            [(None, None, "shrouded_rotor", "", 1),
+             (None, None, "h_shroud", "mm", 1e3),
+             (None, None, "t_shroud", "mm", 1e3),
+             (None, None, "s_ax_shroud", "mm", 1e3),
+             (None, None, "h_shroud_over_blade_length", "", 1),
+             (None, None, "s_ax_shroud_over_h_shroud", "", 1),
+             (None, None, "seal_teeth_spacing", "mm", 1e3),
+             (None, None, "seal_teeth_number", "", 1)],
+        ]
+
+        # Format each column independently so that missing quantities do not leave gaps between entries.
+        columns = [[], [], []]
+        for group in geometry_groups:
+            for turbine, stator, rotor, unit, factor in group:
+                for column, symbol in zip(columns, (turbine, stator, rotor)):
+                    entry = format_entry(symbol, unit, factor, source_results=geometry)
+                    if entry:
+                        column.append(entry)
+
+        # Print the compact columns, padding only the ends of shorter columns.
+        print("\nTurbine geometry")
+        print(tabulate(zip_longest(*columns, fillvalue=""), headers=["Turbine", "Stator", "Rotor"],
+                       tablefmt="github"))
