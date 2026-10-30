@@ -400,13 +400,15 @@ class SupersonicTurbine:
                       "t_TE_stator_min_margin": ">= 0 (nonnegative)",
                       "t_LE_rotor_min_margin": ">= 0 (nonnegative)",
                       "t_TE_rotor_min_margin": ">= 0 (nonnegative)"}
+        # First print title
+        print("\nOptimality coefficients and thickness margins:")
         # Print each supplied coefficient and the sign condition for a feasible design.
         for name, value in coefficients.items():
             if name in ("limited_TE_stator_losses", "limited_TE_rotor_losses"):
-                print(f"{name}: {value}; True means cicrumferential TE thickness to pitch ratio was limited to 0.24 in"
+                print(f"{name}: {bool(value)}; True means cicrumferential TE thickness to pitch ratio was limited to 0.24 in"
                       f" meanline loss calculations.")
             else:
-                print(f"{name}: {value}; feasible: {conditions[name]}")
+                print(f"{name}: {value * 1000:.4g} mm; feasible: {conditions[name]}")
 
     def evaluate_design(self, meanline_arguments):
         """This method allows to calculate the residuals between assumed values for 1D meanline calculations in
