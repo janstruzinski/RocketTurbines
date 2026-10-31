@@ -136,6 +136,12 @@ class Turbine1D:
         self.R_mean = None  # Mean radius, m
         self.R_Euler = None # Euler radius, m
         self.R_nozzle = None # Stator nozzle exit-centre radius, m
+        self.D_nozzle_throat = None # Single de Laval nozzle throat diameter, m
+        self.D_nozzle_exit = None # Single de Laval nozzle exit diameter, m
+        self.w_nozzle_throat = None # Single MOC nozzle throat opening, m
+        self.w_nozzle_exit = None # Single MOC nozzle circumferential exit width, m
+        self.h_nozzle_throat = None # Single MOC nozzle throat height, m
+        self.h_nozzle_exit = None # Single MOC nozzle exit height, m
         self.l_stator = None  # Stator blade/nozzle radial length, m
         self.l_rotor = None # Rotor blade radial length, m
         self.A_throat_stator = None # Total stator throat area, m^2
@@ -1738,6 +1744,13 @@ class Turbine1D:
              (None, None, "width_rotor", "mm", 1e3),
              (None, "p_stator", "p_rotor", "mm", 1e3),
              (None, "A_throat_stator", "A_throat_rotor", "mm^2", 1e6)],
+            # Single-nozzle throat and exit dimensions, when available.
+            [(None, "D_nozzle_throat", None, "mm", 1e3),
+             (None, "D_nozzle_exit", None, "mm", 1e3),
+             (None, "w_nozzle_throat", None, "mm", 1e3),
+             (None, "w_nozzle_exit", None, "mm", 1e3),
+             (None, "h_nozzle_throat", None, "mm", 1e3),
+             (None, "h_nozzle_exit", None, "mm", 1e3)],
             # Axial and radial clearances and surface roughness.
             [("s_ax", None, "s_r", "mm", 1e3),
              ("sand_grain_roughness", None, None, "mm", 1e3)],

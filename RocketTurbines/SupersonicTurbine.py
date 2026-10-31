@@ -889,6 +889,16 @@ class SupersonicTurbine:
         # Store the actual exit-centre radius for MOC or de Laval nozzle exits.
         turbine_meanline.R_nozzle = inner_side_radius + H_nozzle / 2 if contour == "moc" else R_mean
 
+        # Store single-nozzle dimensions from the uncorrected construction; MOC throat and exit share their height.
+        if contour == "moc":
+            turbine_meanline.w_nozzle_throat = stator_shape.dimensional_shapes.uncorrected.throat_width
+            turbine_meanline.h_nozzle_throat = H_nozzle
+            turbine_meanline.w_nozzle_exit = w_nozzle
+            turbine_meanline.h_nozzle_exit = H_nozzle
+        else:
+            turbine_meanline.D_nozzle_throat = D_throat
+            turbine_meanline.D_nozzle_exit = D_nozzle
+
         # Now pack all the results and return them
         # Use the stator TE thickness residual for multiple nozzles and the admission fraction residual for one nozzle.
         fourth_residual = t_TE_stator_residual if count > 1 else admission_fraction_residual
