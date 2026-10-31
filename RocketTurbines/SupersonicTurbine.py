@@ -7,6 +7,8 @@ import numpy as np
 from scipy.optimize import brentq
 import warnings
 from typing import cast
+import plotly.graph_objects as go
+from mapbox_earcut import triangulate_float64
 
 class SupersonicTurbine:
     def __init__(self, gas: IdealGas, loss_model: TraupelLossModel, Turbine1D_arguments,
@@ -1038,3 +1040,224 @@ class SupersonicTurbine:
         # Solve for the positive intersection angle, then use symmetry to obtain the full Euler-circle arc length.
         return 2 * R_Euler * cast(float, brentq(intersection, 0., np.arcsin(a / R_Euler),
                                                xtol=1e-14, full_output=False))
+
+    def plot_3D_geometry(self):
+        """Display the assembled stator and rotor in an interactive Plotly browser view.
+
+        :raises ValueError: If coupled geometry is unavailable or a contour cannot be triangulated.
+        """
+
+        # Require the stored coupled design before constructing any plotting geometry.
+        if any(value is None for value in (self.turbine_meanline, self.stator_shape, self.rotor_shape)):
+            raise ValueError("No coupled geometry available. Call couple_meanline_and_blading() first.")
+        meanline = self.turbine_meanline
+        required_geometry = ("R_hub", "R_tip", "R_Euler", "R_nozzle", "s_ax", "p_stator",
+                             "A_throat_stator", "no_blades_stator", "no_blades_rotor")
+        if any(getattr(meanline, geometry_field) is None for geometry_field in required_geometry):
+            raise ValueError("Coupled turbine geometry is incomplete. Call couple_meanline_and_blading() first.")
+
+        # Use NumPy functions for array arithmetic and masks to avoid PyCharm's expensive overloaded-operator inference.
+        # Clean closed profiles before triangulation so that their end caps share the wall vertices.
+        def triangulate_profile(profile_points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+            profile_points = np.asarray(profile_points, dtype=float)
+            if profile_points.ndim != 2 or profile_points.shape[1] != 2 or not np.all(np.isfinite(profile_points)):
+                raise ValueError("A plotted contour must contain finite axial and tangential coordinates.")
+            tolerance = max(float(np.max(np.ptp(profile_points, axis=0))), float(np.finfo(float).tiny)) * 1e-10
+            segment_lengths = np.linalg.norm(np.diff(profile_points, axis=0), axis=1)
+            distinct_point_mask = np.concatenate(([True], np.greater(segment_lengths, tolerance)))
+            profile_points = profile_points[distinct_point_mask]
+            if (len(profile_points) > 1
+                    and float(np.linalg.norm(np.subtract(profile_points[-1], profile_points[0]))) <= tolerance):
+                profile_points = profile_points[:-1]
+
+            # Remove redundant points on straight segments while retaining the actual curved contour.
+            incoming_edges = np.subtract(profile_points, np.roll(profile_points, 1, axis=0))
+            outgoing_edges = np.subtract(np.roll(profile_points, -1, axis=0), profile_points)
+            edge_cross_products = np.subtract(np.multiply(incoming_edges[:, 0], outgoing_edges[:, 1]),
+                                              np.multiply(incoming_edges[:, 1], outgoing_edges[:, 0]))
+            adjacent_edge_lengths = np.add(np.linalg.norm(incoming_edges, axis=1),
+                                           np.linalg.norm(outgoing_edges, axis=1))
+            collinear_point_mask = np.logical_and(
+                np.less_equal(np.abs(edge_cross_products), np.multiply(tolerance, adjacent_edge_lengths)),
+                np.greater_equal(np.sum(np.multiply(incoming_edges, outgoing_edges), axis=1), 0))
+            profile_points = profile_points[np.logical_not(collinear_point_mask)]
+            if len(profile_points) < 3:
+                raise ValueError("A plotted contour must enclose a nonzero area.")
+
+            # Use consistent winding and constrained polygon triangulation for concave blade and nozzle sections.
+            following_points = np.roll(profile_points, -1, axis=0)
+            signed_area = float(np.sum(np.subtract(np.multiply(profile_points[:, 0], following_points[:, 1]),
+                                                  np.multiply(profile_points[:, 1], following_points[:, 0])))) / 2
+            if signed_area < 0:
+                profile_points = profile_points[::-1]
+            profile_points = np.ascontiguousarray(profile_points)
+            end_cap_faces = triangulate_float64(profile_points, np.array([len(profile_points)], dtype=np.uint32)).reshape(-1, 3)
+            triangle_vertices = profile_points[end_cap_faces]
+            first_triangle_edges = np.subtract(triangle_vertices[:, 1], triangle_vertices[:, 0])
+            second_triangle_edges = np.subtract(triangle_vertices[:, 2], triangle_vertices[:, 0])
+            triangle_cross_products = np.subtract(np.multiply(first_triangle_edges[:, 0], second_triangle_edges[:, 1]),
+                                                  np.multiply(first_triangle_edges[:, 1], second_triangle_edges[:, 0]))
+            triangulated_area = float(np.sum(np.abs(triangle_cross_products))) / 2
+            if (abs(signed_area) <= tolerance**2
+                    or not np.isclose(triangulated_area, abs(signed_area), rtol=1e-7, atol=tolerance**2)):
+                raise ValueError("A plotted contour cannot be triangulated into a valid closed section.")
+            return profile_points, end_cap_faces
+
+        # Sweep a profile between two radial levels; leave specified inlet and outlet edges open for nozzles.
+        def extrude_profile(profile_points: np.ndarray, end_cap_faces: np.ndarray, lower_radius: float,
+                            upper_radius: float, opening_edges: tuple = ()) -> tuple[np.ndarray, np.ndarray]:
+            point_count = len(profile_points)
+            mesh_vertices = np.vstack((np.column_stack((profile_points, np.full(point_count, lower_radius))),
+                                       np.column_stack((profile_points, np.full(point_count, upper_radius)))))
+            mesh_faces = [end_cap_faces, np.add(end_cap_faces[:, ::-1], point_count)]
+            tolerance = float(np.max(np.ptp(profile_points, axis=0))) * 1e-9
+            for edge_start_index in range(point_count):
+                edge_end_index = (edge_start_index + 1) % point_count
+                profile_edge = profile_points[[edge_start_index, edge_end_index]]
+                if any(np.allclose(profile_edge, opening_edge, rtol=0, atol=tolerance)
+                       or np.allclose(profile_edge[::-1], opening_edge, rtol=0, atol=tolerance)
+                       for opening_edge in opening_edges):
+                    continue
+                mesh_faces.append(np.array([[edge_start_index, edge_end_index + point_count, edge_end_index],
+                                            [edge_start_index, edge_start_index + point_count, edge_end_index + point_count]]))
+            return mesh_vertices, np.vstack(mesh_faces)
+
+        # Triangulate a regular surface grid explicitly instead of filling its convex hull.
+        def grid_mesh(surface_grid: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+            row_count, column_count = surface_grid.shape[:2]
+            row_offsets = np.multiply(np.arange(row_count - 1)[:, None], column_count)
+            cell_start_indices = np.add(row_offsets, np.arange(column_count - 1)).ravel()
+            next_row_indices = np.add(cell_start_indices, column_count)
+            next_column_indices = np.add(cell_start_indices, 1)
+            mesh_faces = np.vstack((np.column_stack((cell_start_indices, next_row_indices, next_column_indices)),
+                                    np.column_stack((next_column_indices, next_row_indices, np.add(next_row_indices, 1)))))
+            return surface_grid.reshape(-1, 3), mesh_faces
+
+        # Rotate local tangential/radial coordinates rigidly around the turbine axis for each stator nozzle.
+        def place_nozzle(nozzle_vertices: np.ndarray, position_angle: float) -> np.ndarray:
+            axial_coordinates, tangential_coordinates, radial_coordinates = nozzle_vertices.T
+            cosine, sine = float(np.cos(position_angle)), float(np.sin(position_angle))
+            positioned_y_coordinates = np.subtract(np.multiply(radial_coordinates, cosine),
+                                                   np.multiply(tangential_coordinates, sine))
+            positioned_z_coordinates = np.add(np.multiply(radial_coordinates, sine),
+                                              np.multiply(tangential_coordinates, cosine))
+            return np.column_stack((axial_coordinates, positioned_y_coordinates, positioned_z_coordinates))
+
+        # Add mesh surfaces in millimetres, keeping each blade or nozzle separately identifiable on hover.
+        figure = go.Figure()
+        def add_mesh(mesh_vertices: np.ndarray, mesh_faces: np.ndarray, mesh_name: str, mesh_color: str, legend_group: str,
+                     show_legend: bool, opacity: float = 1.0) -> None:
+            triangle_vertices = mesh_vertices[mesh_faces]
+            first_triangle_edges = np.subtract(triangle_vertices[:, 1], triangle_vertices[:, 0])
+            second_triangle_edges = np.subtract(triangle_vertices[:, 2], triangle_vertices[:, 0])
+            doubled_triangle_areas = np.linalg.norm(np.cross(first_triangle_edges, second_triangle_edges), axis=1)
+            area_tolerance = float(np.finfo(float).eps) * float(np.max(np.ptp(mesh_vertices, axis=0)))**2
+            mesh_faces = mesh_faces[np.greater(doubled_triangle_areas, area_tolerance)]
+            coordinates_mm = np.multiply(mesh_vertices, 1e3)
+            legend_name = {"stator": "Stator nozzles", "rotor": "Rotor blades"}.get(legend_group, mesh_name)
+            figure.add_trace(go.Mesh3d(x=coordinates_mm[:, 0], y=coordinates_mm[:, 1], z=coordinates_mm[:, 2],
+                                      i=mesh_faces[:, 0], j=mesh_faces[:, 1], k=mesh_faces[:, 2], color=mesh_color, opacity=opacity,
+                                      name=legend_name if show_legend else mesh_name,
+                                      legendgroup=legend_group, showlegend=show_legend,
+                                      lighting={"ambient": 0.65, "diffuse": 0.75, "specular": 0.2},
+                                      hovertemplate=(mesh_name + "<br>Axial: %{x:.2f} mm<br>Y: %{y:.2f} mm"
+                                                     "<br>Z: %{z:.2f} mm<extra></extra>")))
+
+        # Rotate the stored nozzle-axis coordinates into the turbine's axial/tangential plane.
+        nozzle_geometry = self.stator_shape.dimensional_shapes.uncorrected
+        pressure_surface = np.column_stack((nozzle_geometry.pressure_surface.x, nozzle_geometry.pressure_surface.y))
+        suction_surface = np.column_stack((nozzle_geometry.suction_surface.x, nozzle_geometry.suction_surface.y))
+        nozzle_outlet_angle = float(np.radians(self.stator_shape.outlet_metal_angle))
+        outlet_cosine, outlet_sine = float(np.cos(nozzle_outlet_angle)), float(np.sin(nozzle_outlet_angle))
+        nozzle_rotation = np.array([[outlet_cosine, -outlet_sine], [outlet_sine, outlet_cosine]])
+        nozzle_exit_centre = np.matmul(nozzle_rotation, np.divide(np.add(pressure_surface[-1], suction_surface[-1]), 2))
+        stator_nozzle_count = int(meanline.no_blades_stator)
+        rotor_blade_count = int(meanline.no_blades_rotor)
+
+        # Build both contoured side walls and the two radial walls of a rectangular MOC nozzle passage.
+        if self.stator_shape.contour_method == "moc":
+            pressure_surface = np.subtract(np.matmul(pressure_surface, nozzle_rotation.T), nozzle_exit_centre)
+            suction_surface = np.subtract(np.matmul(suction_surface, nozzle_rotation.T), nozzle_exit_centre)
+            nozzle_profile, nozzle_end_cap_faces = triangulate_profile(np.vstack((pressure_surface, suction_surface[::-1])))
+            nozzle_height = meanline.A_throat_stator / (stator_nozzle_count * nozzle_geometry.throat_width)
+            nozzle_opening_edges = (np.array([pressure_surface[-1], suction_surface[-1]]),
+                                    np.array([suction_surface[0], pressure_surface[0]]))
+            nozzle_vertices, nozzle_faces = extrude_profile(nozzle_profile, nozzle_end_cap_faces,
+                                                            meanline.R_nozzle - nozzle_height / 2,
+                                                            meanline.R_nozzle + nozzle_height / 2, nozzle_opening_edges)
+
+        # Revolve the de Laval meridional contour and vary the straight extension around its oblique exit.
+        elif self.stator_shape.contour_method == "conical":
+            nozzle_azimuths = np.linspace(0, 2 * np.pi, 65)
+            nozzle_exit_radius = float(np.abs(pressure_surface[-1, 1]))
+            exit_axial_positions = np.divide(
+                np.add(nozzle_exit_centre[0], np.multiply(np.multiply(nozzle_exit_radius, np.cos(nozzle_azimuths)), outlet_sine)),
+                outlet_cosine)
+            extension_fractions = np.linspace(0, 1, max(2, len(suction_surface) - len(pressure_surface) + 1))[1:]
+            straight_extension = np.add(pressure_surface[-1, 0], np.multiply(
+                extension_fractions[:, None], np.subtract(exit_axial_positions, pressure_surface[-1, 0])))
+            meridian_grid_shape = (len(pressure_surface), len(nozzle_azimuths))
+            nozzle_axial_coordinates = np.vstack((np.broadcast_to(pressure_surface[:, 0, None], meridian_grid_shape),
+                                                  straight_extension))
+            nozzle_radii = np.vstack((np.broadcast_to(np.abs(pressure_surface[:, 1, None]), meridian_grid_shape),
+                                      np.full_like(straight_extension, nozzle_exit_radius)))
+            nozzle_transverse_coordinates = np.multiply(nozzle_radii, np.cos(nozzle_azimuths))
+            nozzle_radial_coordinates = np.add(meanline.R_nozzle, np.multiply(nozzle_radii, np.sin(nozzle_azimuths)))
+            turbine_axial_coordinates = np.subtract(
+                np.subtract(np.multiply(nozzle_axial_coordinates, outlet_cosine),
+                            np.multiply(nozzle_transverse_coordinates, outlet_sine)), nozzle_exit_centre[0])
+            turbine_tangential_coordinates = np.subtract(
+                np.add(np.multiply(nozzle_axial_coordinates, outlet_sine),
+                       np.multiply(nozzle_transverse_coordinates, outlet_cosine)), nozzle_exit_centre[1])
+            nozzle_surface_grid = np.stack((turbine_axial_coordinates, turbine_tangential_coordinates,
+                                            nozzle_radial_coordinates), axis=-1)
+            nozzle_vertices, nozzle_faces = grid_mesh(nozzle_surface_grid)
+        else:
+            raise ValueError("The plotted stator contour must be 'moc' or 'conical'.")
+
+        # Place the exact nozzle count at its Euler-radius angular pitch in one centred admission sector.
+        colors = ("blue", "red")
+        nozzle_position_angles = np.divide(np.multiply(np.subtract(np.arange(stator_nozzle_count),
+                                                                  (stator_nozzle_count - 1) / 2), meanline.p_stator),
+                                          meanline.R_Euler)
+        for nozzle_index, nozzle_position_angle in enumerate(nozzle_position_angles):
+            add_mesh(place_nozzle(nozzle_vertices, nozzle_position_angle), nozzle_faces, f"Stator nozzle {nozzle_index + 1}",
+                     colors[nozzle_index % 2], "stator", nozzle_index == 0)
+
+        # The CAD profile joins the pressure wall to the periodically translated suction wall of one blade.
+        # Convert its millimetres to metres, centre the leading edge, and put its upstream edge after the axial gap.
+        blade_profile = np.multiply(np.column_stack((self.rotor_shape.uncorrected_blade_profile_x_CAD,
+                                                    self.rotor_shape.uncorrected_blade_profile_y_CAD)), 1e-3)
+        blade_profile[:, 0] = np.subtract(blade_profile[:, 0], np.min(blade_profile[:, 0]))
+        blade_profile[:, 1] = np.subtract(blade_profile[:, 1], self.rotor_shape.dimensional_leading_edge_thickness / 2)
+        blade_profile, blade_end_cap_faces = triangulate_profile(blade_profile)
+        blade_vertices, blade_faces = extrude_profile(blade_profile, blade_end_cap_faces, meanline.R_hub, meanline.R_tip)
+
+        # Wrap the Euler-radius section around the annulus and sweep it radially to preserve the blade count and span.
+        for blade_index in range(rotor_blade_count):
+            blade_axial_coordinates, blade_tangential_coordinates, blade_radial_coordinates = blade_vertices.T
+            blade_position_angles = np.add(np.divide(blade_tangential_coordinates, meanline.R_Euler),
+                                          2 * np.pi * blade_index / rotor_blade_count)
+            positioned_blade_vertices = np.column_stack((np.add(blade_axial_coordinates, meanline.s_ax),
+                                                        np.multiply(blade_radial_coordinates, np.cos(blade_position_angles)),
+                                                        np.multiply(blade_radial_coordinates, np.sin(blade_position_angles))))
+            add_mesh(positioned_blade_vertices, blade_faces, f"Rotor blade {blade_index + 1}",
+                     colors[blade_index % 2], "rotor", blade_index == 0)
+
+        # Draw only the transparent rotor hub boundary without inventing a hub or rotor-shroud thickness.
+        hub_ring_angles = np.linspace(0, 2 * np.pi, max(129, 4 * rotor_blade_count + 1))
+        hub_axial_coordinates, hub_position_angles = np.meshgrid(
+            [meanline.s_ax, meanline.s_ax + float(np.max(blade_profile[:, 0]))], hub_ring_angles, indexing="ij")
+        hub_surface_grid = np.stack((hub_axial_coordinates, np.multiply(meanline.R_hub, np.cos(hub_position_angles)),
+                                    np.multiply(meanline.R_hub, np.sin(hub_position_angles))), axis=-1)
+        hub_vertices, hub_faces = grid_mesh(hub_surface_grid)
+        add_mesh(hub_vertices, hub_faces[:, ::-1], "Rotor hub", "grey", "Rotor hub",
+                 True, opacity=0.2)
+
+        # Keep true geometric proportions and enable orbit, pan and wheel zoom in a local browser window.
+        figure.update_layout(title="Turbine 3D geometry", template="plotly_white",
+                             scene={"aspectmode": "data", "dragmode": "orbit",
+                                    "xaxis_title": "Axial x (mm)", "yaxis_title": "Y (mm)", "zaxis_title": "Z (mm)",
+                                    "camera": {"eye": {"x": -1.8, "y": 2.2, "z": 1.2}}},
+                             showlegend=False, margin={"l": 15, "r": 15, "b": 30, "t": 45})
+        figure.show(renderer="browser", config={"scrollZoom": True, "displaylogo": False, "responsive": True})

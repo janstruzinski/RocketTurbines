@@ -1370,6 +1370,8 @@ nonpositive and thickness margins nonnegative; the flags are informational rathe
 Omitting the dictionary uses `turbine.coefficients`; if that is still `None`, it prints
 `SupersonicTurbine.coefficients is None`.
 
+Call `turbine.plot_3D_geometry()` after coupling to view the assembled & interactive turbine in 3D.
+
 Successful coupling establishes agreement between the meanline model and the generated shapes. The engineer or
 outer optimizer must separately check the packing optimality coefficients and thickness margins. Negative height
 or width excesses indicate unused space; values near zero fill the corresponding available dimension. Changing nozzle

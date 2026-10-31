@@ -52,3 +52,5 @@ supersonic_turbine.couple_meanline_and_blading()
 supersonic_turbine.print_design_coupling_results()
 # Print geometry of converged & coupled turbine
 supersonic_turbine.turbine_meanline.print_geometry()
+# Plot 3D geometry
+supersonic_turbine.plot_3D_geometry()
