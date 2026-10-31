@@ -118,7 +118,6 @@ class Turbine1D:
         # 2. Velocity at station 0 is assumed to be negligible.
         # 3. Flow areas at station 1 and 2 are equal.
         # 4. Constant Euler diameter.
-        # 5. Axial width of the rotor blade row assumed to be equal to chord of the blade.
 
         # Geometry stored in the object properties. Metal angles are not calculated by the code since they may depend
         # on specific blade profiles - only flow angles are calculated. These are stored in dictionaries below.
@@ -147,11 +146,10 @@ class Turbine1D:
         # it, -
         self.seal_teeth_number = None # Number of teeth in shroud's half-labirynth seal, -.
         self.seal_teeth_spacing = None # Spacing between teeth in shroud's half-labirynth seal, m.
-        self.c_stator = None # Stator chord, m. Assumed to be equal to stator blade width / length of projection over
-        # meridional axis.
+        self.c_stator = None # Stator chord, m.
         self.p_stator = None # Stator pitch at Euler radius, m
-        self.c_rotor = None # Rotor chord, m. Assumed to be equal to rotor blade width / length of projection over
-        # meridional axis
+        self.c_rotor = None # Rotor blade chord, m.
+        self.width_rotor = None # Rotor blade row axial width, m.
         self.p_rotor = None # Rotor pitch at Euler radius, m
         self.t_TE_stator = None # Stator trailing edge thickness at Euler radius, m.
         self.t_LE_rotor = None # Circumferential rotor leading edge thickness, m.
@@ -356,7 +354,7 @@ class Turbine1D:
                      admission_fraction=1, partial_admission_rotor="free", chord_over_pitch_rotor=2.5,
                      s_ax_over_pitch_rotor=0.35, delta_s_estimate=[0, 0, 0], shrouded_rotor=False,
                      h_shroud_over_blade_length=0.008, s_ax_shroud_over_h_shroud=2, t_shroud=None,
-                     seal_teeth_number=None):
+                     seal_teeth_number=None, rotor_width_to_chord=1):
         """A method to size the turbine based on given requirements. It changes properties of the object.
         This method calls calculate_entropy_rise, which is an outer numerical solution loop, to calculate consistent
         fluid and flow state at each station. This allows to calculate the geometry of the turbine.
@@ -382,6 +380,7 @@ class Turbine1D:
         :param float or integer chord_over_pitch_rotor: Ratio of rotor chord to its blade pitch (-). By default,
          equal to 2.5, which is in the range of 2.5-3.3 recommended for supersonic impulse rotor cascades by Traupel
          in "Thermal Turbomachines".
+        :param float rotor_width_to_chord: Positive ratio of rotor axial width to rotor blade chord (-). Default 1.
         :param float or integer admission_fraction: Admission fraction (-) of the turbine stage. By default, 1.
         :param string partial_admission_rotor: Whether partial admission rotor (if used) is "enclosed" or "free".
          By default, "free".
@@ -426,13 +425,12 @@ class Turbine1D:
             "RPM": RPM, "shaft_power": shaft_power, "mdot": mdot, "T_0": T_0, "p_0": p_0,
             "no_blades_stator": no_blades_stator, "no_blades_rotor": no_blades_rotor,
             "chord_over_pitch_stator": chord_over_pitch_stator,
-            "chord_over_pitch_rotor": chord_over_pitch_rotor, "admission_fraction": admission_fraction,
-            "radial_clearance": radial_clearance, "s_ax_over_pitch_rotor": s_ax_over_pitch_rotor
-        }
+            "chord_over_pitch_rotor": chord_over_pitch_rotor, "rotor_width_to_chord": rotor_width_to_chord,
+            "admission_fraction": admission_fraction,
+            "radial_clearance": radial_clearance, "s_ax_over_pitch_rotor": s_ax_over_pitch_rotor}
         nonnegative_inputs = {
             "t_TE_stator": t_TE_stator, "t_TE_rotor": t_TE_rotor, "Ra_roughness": Ra_roughness,
-            "reaction_isentropic_tt": reaction_isentropic_tt
-        }
+            "reaction_isentropic_tt": reaction_isentropic_tt}
         shroud_inputs = {"h_shroud_over_blade_length": h_shroud_over_blade_length,
                          "s_ax_shroud_over_h_shroud": s_ax_shroud_over_h_shroud}
         if shrouded_rotor:
@@ -531,6 +529,8 @@ class Turbine1D:
         self.p_rotor = self.D_Euler * np.pi / no_blades_rotor  # m
         self.c_stator = self.p_stator * chord_over_pitch_stator  # m
         self.c_rotor = self.p_rotor * chord_over_pitch_rotor  # m
+        # Calculate rotor axial width independently from the true blade chord.
+        self.width_rotor = self.c_rotor * rotor_width_to_chord  # m
         self.s_ax = self.p_rotor * s_ax_over_pitch_rotor  # m
 
         # Assign remaining geometry that is already known
@@ -548,7 +548,8 @@ class Turbine1D:
         self.s_ax_shroud_over_h_shroud = s_ax_shroud_over_h_shroud  # -
         self.partial_admission_rotor = partial_admission_rotor
         self.seal_teeth_number = seal_teeth_number  # -
-        if self.shrouded_rotor: self.seal_teeth_spacing = self.c_rotor / (seal_teeth_number - 1)  # m
+        # Distribute shroud seal teeth across the rotor's axial width.
+        if self.shrouded_rotor: self.seal_teeth_spacing = self.width_rotor / (seal_teeth_number - 1)  # m
         # If not shrouded, set all shroud related geometry to None in case turbine is resized.
         if not self.shrouded_rotor:
             self.seal_teeth_spacing = None
@@ -876,6 +877,7 @@ class Turbine1D:
                             "c_stator": self.c_stator,  # m
                             "p_stator": self.p_stator,  # m
                             "c_rotor": self.c_rotor,  # m
+                            "width_rotor": self.width_rotor,  # m
                             "p_rotor": self.p_rotor,  # m
                             "t_TE_stator": self.t_TE_stator,  # m
                             "t_LE_rotor": self.t_LE_rotor,  # m
@@ -1626,6 +1628,7 @@ class Turbine1D:
             # Blade dimensions and throat areas, when available.
             [(None, "l_stator", "l_rotor", "mm", 1e3),
              (None, "c_stator", "c_rotor", "mm", 1e3),
+             (None, None, "width_rotor", "mm", 1e3),
              (None, "p_stator", "p_rotor", "mm", 1e3),
              (None, "A_throat_stator", "A_throat_rotor", "mm^2", 1e6)],
             # Axial and radial clearances and surface roughness.

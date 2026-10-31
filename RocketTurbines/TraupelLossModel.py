@@ -929,7 +929,7 @@ class TraupelLossModel:
         calculated using the mean diameter.
         :param float flow_coefficient: Turbine flow coefficient (-)  calculated using the mean diameter..
         :param float blade_length_over_mean_diameter: Rotor blade length over mean turbine diameter (-).
-        :param float blade_width_over_mean_diameter: Rotor blade width over mean turbine diameter (-).
+        :param float blade_width_over_mean_diameter: Rotor axial width over mean turbine diameter (-).
         :param float outlet_angle: Blade row outlet flow angle for rotor, measured from the negative vertical direction
          (rad).
         :param str partial_admission_rotor: Rotor configuration, either "free" or "enclosed".
@@ -1008,7 +1008,7 @@ class TraupelLossModel:
         Exact definitions of the variables in the input dictionaries are in Turbine1D.__init__.
 
         :param dict analysis_results: Turbine flow analysis results that account for all losses.
-        :param dict turbine_geometry: Stator, rotor, and seal geometry and roughness.
+        :param dict turbine_geometry: Stator, rotor, and seal geometry.
         :param dict blade_row_results: Blade-row flow analysis results that account only for profile losses.
         :return: Stator entropy increase, rotor blade-row entropy increase, additional rotor entropy increase
                  (J/(kg K)), and a dictionary of the calculated losses and leakage mass flow rate.
@@ -1174,9 +1174,10 @@ class TraupelLossModel:
                                                              psi_ss_ideal_design, psi_ss_ideal)  # (-, kg/s)
         # Partial admission loss
         partial_admission_rotor = turbine_geometry["partial_admission_rotor"]
-        c_rotor_over_D_m = c_rotor / D_m  # -
+        # Use axial rotor width for admission losses.
+        blade_width_over_mean_diameter = turbine_geometry["width_rotor"] / D_m  # -
         zeta_admission = self.calculate_admission_loss(admission_fraction, psi_ss_ideal_mean, theta_2_mean,
-                                                       l_rotor_over_D_m, c_rotor_over_D_m, beta_2,
+                                                       l_rotor_over_D_m, blade_width_over_mean_diameter, beta_2,
                                                        partial_admission_rotor)  # -
         # Sum these losses and get the sum dissipated enthalpy
         zeta_rotor_additional = zeta_disk_friction + zeta_admission + zeta_clearance_rotor  # -
