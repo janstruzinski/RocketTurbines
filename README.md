@@ -1371,6 +1371,8 @@ Omitting the dictionary uses `turbine.coefficients`; if that is still `None`, it
 `SupersonicTurbine.coefficients is None`.
 
 Call `turbine.plot_3D_geometry()` after coupling to view the assembled & interactive turbine in 3D.
+Call `turbine.plot_2D_geometry(number_of_rotor_blades=4)` to plot an axial/circumferential turbine section at Euler
+diameter.
 
 Successful coupling establishes agreement between the meanline model and the generated shapes. The engineer or
 outer optimizer must separately check the packing optimality coefficients and thickness margins. Negative height

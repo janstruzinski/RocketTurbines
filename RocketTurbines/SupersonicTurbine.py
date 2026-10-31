@@ -4,6 +4,7 @@ from TraupelLossModel import TraupelLossModel
 import SupersonicTurbineBlading as blading
 from RelaxedAitken import solve_with_relaxed_aitken
 import numpy as np
+import matplotlib.pyplot as plt
 from scipy.optimize import brentq
 import warnings
 from typing import cast
@@ -1261,3 +1262,112 @@ class SupersonicTurbine:
                                     "camera": {"eye": {"x": -1.8, "y": 2.2, "z": 1.2}}},
                              showlegend=False, margin={"l": 15, "r": 15, "b": 30, "t": 45})
         figure.show(renderer="browser", config={"scrollZoom": True, "displaylogo": False, "responsive": True})
+
+    def plot_2D_geometry(self, number_of_rotor_blades=4):
+        """Plot the developed axial/circumferential geometry at Euler diameter in millimetres.
+        The circumferential window spans the requested number of rotor pitches.
+
+        :param int number_of_rotor_blades: Number of rotor pitches to display, default 4; cannot exceed the blade count.
+        :raises ValueError: If the blade count is invalid or coupled geometry is unavailable.
+        """
+
+        # Require an integer window size and the stored coupled design before reading the profiles.
+        if (isinstance(number_of_rotor_blades, (bool, np.bool_))
+                or not isinstance(number_of_rotor_blades, (int, np.integer)) or number_of_rotor_blades < 1):
+            raise ValueError("number_of_rotor_blades must be a positive integer.")
+        if any(value is None for value in (self.turbine_meanline, self.stator_shape, self.rotor_shape)):
+            raise ValueError("No coupled geometry available. Call couple_meanline_and_blading() first.")
+        meanline = self.turbine_meanline
+        required_geometry = ("p_rotor", "p_stator", "s_ax", "no_blades_rotor", "no_blades_stator")
+        if any(getattr(meanline, geometry_field) is None for geometry_field in required_geometry):
+            raise ValueError("Coupled turbine geometry is incomplete. Call couple_meanline_and_blading() first.")
+        if number_of_rotor_blades > meanline.no_blades_rotor:
+            raise ValueError("number_of_rotor_blades cannot exceed the turbine's rotor blade count.")
+
+        # Set the circumferential span from the stored Euler-radius pitch and retain the actual axial clearance.
+        rotor_pitch_mm = float(meanline.p_rotor) * 1e3
+        stator_pitch_mm = float(meanline.p_stator) * 1e3
+        axial_gap_mm = float(meanline.s_ax) * 1e3
+        half_window_height_mm = int(number_of_rotor_blades) * rotor_pitch_mm / 2
+        lower_y_bound_mm, upper_y_bound_mm = -half_window_height_mm, half_window_height_mm
+
+        # Rotate the stored throat-to-exit passage walls into the axial/circumferential plane.
+        # Use NumPy functions for array operations to avoid expensive overloaded-operator inference in PyCharm.
+        nozzle_geometry = self.stator_shape.dimensional_shapes.uncorrected
+        pressure_surface = np.column_stack((nozzle_geometry.pressure_surface.x, nozzle_geometry.pressure_surface.y))
+        suction_surface = np.column_stack((nozzle_geometry.suction_surface.x, nozzle_geometry.suction_surface.y))
+        nozzle_outlet_angle = float(np.radians(self.stator_shape.outlet_metal_angle))
+        outlet_cosine, outlet_sine = float(np.cos(nozzle_outlet_angle)), float(np.sin(nozzle_outlet_angle))
+        nozzle_rotation = np.array([[outlet_cosine, -outlet_sine], [outlet_sine, outlet_cosine]])
+        pressure_surface = np.matmul(pressure_surface, nozzle_rotation.T)
+        suction_surface = np.matmul(suction_surface, nozzle_rotation.T)
+        nozzle_exit_centre = np.divide(np.add(pressure_surface[-1], suction_surface[-1]), 2)
+        pressure_surface = np.multiply(np.subtract(pressure_surface, nozzle_exit_centre), 1e3)
+        suction_surface = np.multiply(np.subtract(suction_surface, nozzle_exit_centre), 1e3)
+        pressure_surface[-1, 0] = suction_surface[-1, 0] = 0.
+
+        # Use the closed single-blade CAD profile, whose coordinates are already in millimetres.
+        # Put the stator exit at x=0 and the rotor's upstream edge at the meanline axial clearance.
+        blade_profile = np.column_stack((self.rotor_shape.uncorrected_blade_profile_x_CAD,
+                                        self.rotor_shape.uncorrected_blade_profile_y_CAD))
+        blade_profile[:, 0] = np.add(np.subtract(blade_profile[:, 0], np.min(blade_profile[:, 0])), axial_gap_mm)
+        blade_profile[:, 1] = np.subtract(blade_profile[:, 1],
+                                          self.rotor_shape.dimensional_leading_edge_thickness * 1e3 / 2)
+        blade_profile = np.vstack((blade_profile, blade_profile[:1]))
+
+        # Let the axes clip the repeated profiles so that the boundary cuts retain partial blade and nozzle shapes.
+        figure, axes = plt.subplots(figsize=(8, 7))
+        def plot_profile(profile_points: np.ndarray, circumferential_offset_mm: float) -> None:
+            positioned_profile = np.add(profile_points, np.array([0., circumferential_offset_mm]))
+            if (float(np.max(positioned_profile[:, 1])) < lower_y_bound_mm
+                    or float(np.min(positioned_profile[:, 1])) > upper_y_bound_mm):
+                return
+            axes.plot(positioned_profile[:, 0], positioned_profile[:, 1], color="black", linewidth=1.5,
+                      clip_on=True)
+
+        # Place the finite set of stator nozzles at their actual pitch, centred on the admitted sector.
+        stator_nozzle_count = int(meanline.no_blades_stator)
+        nozzle_offsets_mm = np.multiply(np.subtract(np.arange(stator_nozzle_count), (stator_nozzle_count - 1) / 2),
+                                         stator_pitch_mm)
+        for nozzle_offset_mm in nozzle_offsets_mm:
+            plot_profile(pressure_surface, float(nozzle_offset_mm))
+            plot_profile(suction_surface, float(nozzle_offset_mm))
+
+        # Draw the solid exit wall between open passages, extending to each bound only outside nozzle openings.
+        # Clipped openings remain open at the plot boundaries, and no nozzles are invented outside the admission sector.
+        lower_exit_edge_mm = min(float(pressure_surface[-1, 1]), float(suction_surface[-1, 1]))
+        upper_exit_edge_mm = max(float(pressure_surface[-1, 1]), float(suction_surface[-1, 1]))
+        wall_start_mm = lower_y_bound_mm
+        for nozzle_offset_mm in nozzle_offsets_mm:
+            opening_lower_mm = float(nozzle_offset_mm) + lower_exit_edge_mm
+            opening_upper_mm = float(nozzle_offset_mm) + upper_exit_edge_mm
+            if opening_upper_mm <= lower_y_bound_mm or opening_lower_mm >= upper_y_bound_mm:
+                continue
+            if opening_lower_mm > wall_start_mm:
+                axes.plot([0., 0.], [wall_start_mm, opening_lower_mm], color="black", linewidth=1.5, clip_on=True)
+            wall_start_mm = max(wall_start_mm, min(opening_upper_mm, upper_y_bound_mm))
+        if wall_start_mm < upper_y_bound_mm:
+            axes.plot([0., 0.], [wall_start_mm, upper_y_bound_mm], color="black", linewidth=1.5, clip_on=True)
+
+        # Include every rotor profile that intersects the window, even when its leading edge lies outside it.
+        # Neighbouring copies supply the partial blades at both circumferential boundaries.
+        minimum_blade_y_mm = float(np.min(blade_profile[:, 1]))
+        maximum_blade_y_mm = float(np.max(blade_profile[:, 1]))
+        first_blade_index = int(np.ceil((lower_y_bound_mm - maximum_blade_y_mm) / rotor_pitch_mm))
+        last_blade_index = int(np.floor((upper_y_bound_mm - minimum_blade_y_mm) / rotor_pitch_mm))
+        for blade_index in range(first_blade_index, last_blade_index + 1):
+            plot_profile(blade_profile, blade_index * rotor_pitch_mm)
+
+        # Keep the geometry undistorted, label both dimensions, and leave the drawing free of grids and legends.
+        minimum_x_mm = min(float(np.min(pressure_surface[:, 0])), float(np.min(suction_surface[:, 0])))
+        maximum_x_mm = float(np.max(blade_profile[:, 0]))
+        axial_margin_mm = 0.04 * (maximum_x_mm - minimum_x_mm)
+        axes.set_xlim(minimum_x_mm - axial_margin_mm, maximum_x_mm + axial_margin_mm)
+        axes.set_ylim(lower_y_bound_mm, upper_y_bound_mm)
+        axes.set_aspect("equal", adjustable="box")
+        axes.set_xlabel("Axial coordinate (mm)")
+        axes.set_ylabel("Circumferential coordinate (mm)")
+        axes.set_title("Turbine 2D geometry")
+        axes.grid(False, which="both")
+        figure.tight_layout()
+        plt.show()

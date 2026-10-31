@@ -54,3 +54,5 @@ supersonic_turbine.print_design_coupling_results()
 supersonic_turbine.turbine_meanline.print_geometry()
 # Plot 3D geometry
 supersonic_turbine.plot_3D_geometry()
+# Plot 2D geometry of the blades
+supersonic_turbine.plot_2D_geometry(number_of_rotor_blades=10)
