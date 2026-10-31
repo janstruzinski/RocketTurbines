@@ -10,7 +10,7 @@ loss_model = TraupelLossModel(extrapolation_method="closest", rotor="impulse_hig
 # Create meanline analysis object
 turbine = Turbine1D()
 turbine.size_turbine(gas=gas, work_coefficient_tt=4.321, flow_coefficient=1.570, reaction_isentropic_tt=0, RPM=30e3,
-                    shaft_power=25e3, mdot=0.15, T_0=800, p_0=50e5, radial_clearance=0.1e-3, no_blades_stator=1,
+                    shaft_power=25e3, mdot=0.15, T_t0=800, p_t0=50e5, radial_clearance=0.1e-3, no_blades_stator=1,
                     no_blades_rotor=47, chord_over_pitch_stator=3.300, chord_over_pitch_rotor=2.518,
                     t_TE_stator=0.5e-3, t_TE_rotor=0.5e-3, Ra_roughness=3e-6, loss_model=loss_model,
                     admission_fraction=0.05440, delta_s_estimate=[350, 130, 200])
@@ -23,7 +23,7 @@ turbine.plot_velocity_triangles()
 # First create arguments for Turbine1D
 Turbine1D_arguments = dict(
     work_coefficient_tt=4.321, flow_coefficient=1.570, reaction_isentropic_tt=0, RPM=30e3,
-    shaft_power=25e3, mdot=0.15, T_0=800, p_0=50e5, radial_clearance=0.1e-3,
+    shaft_power=25e3, mdot=0.15, T_t0=800, p_t0=50e5, radial_clearance=0.1e-3,
     no_blades_stator=1, no_blades_rotor=47, chord_over_pitch_stator=3.300,
     chord_over_pitch_rotor=2.518, t_TE_stator=0.5e-3, t_TE_rotor=0.5e-3,
     Ra_roughness=3e-6, admission_fraction=0.05440, delta_s_estimate=[350, 130, 200])

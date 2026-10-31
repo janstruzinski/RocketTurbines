@@ -1052,6 +1052,9 @@ class TraupelLossModel:
         Re_s1 = analysis_results["Re_s1"]  # -
         psi_ss_ideal = analysis_results["psi_ss_ideal"]  # -
         speed_parameter = 1 / np.sqrt(2 * psi_ss_ideal)  # -
+        v_0 = analysis_results["v_0"]  # m/s
+        v_1 = analysis_results["v_1"]  # m/s
+        velocity_ratio_stator = v_0 / v_1  # -
         zeta_aerodynamic_stator, aerodynamic_loss_breakdown_stator = \
             self.calculate_blade_row_aerodynamic_loss(blade_row="stator", inlet_angle=np.pi/2, outlet_angle=alpha_1,
                                                       t_TE_over_pitch=t_TE_over_p_stator,
@@ -1061,7 +1064,8 @@ class TraupelLossModel:
                                                       chord_over_pitch=c_over_p_stator,
                                                       chord_over_blade_length=c_over_l_stator,
                                                       outlet_Mach_number=M_s1, Reynolds_number=Re_s1,
-                                                      speed_parameter=speed_parameter, blade_velocity_ratio=0,
+                                                      speed_parameter=speed_parameter,
+                                                      blade_velocity_ratio=velocity_ratio_stator,
                                                       axial_clearance_over_blade_length=s_ax_over_l_stator)
         # Calculate incidence loss. For the stator, it is assumed to be zero.
         zeta_incidence_stator = 0  # -
@@ -1069,7 +1073,6 @@ class TraupelLossModel:
             raise ValueError("Stator aerodynamic loss coefficient is too large; it must be less than 1.")
         # Calculate dissipated enthalpy in the stator
         eta_stator = 1 - (zeta_aerodynamic_stator + zeta_incidence_stator)  # -
-        v_1 = analysis_results["v_1"]  # m/s
         delta_h_loss_stator = ((1 - eta_stator) / eta_stator) * v_1**2 / 2  # J/kg
         # Calculate entropy generation in the stator
         gas = analysis_results["gas"]

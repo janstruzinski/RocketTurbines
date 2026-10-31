@@ -80,9 +80,9 @@ Its principal workflow is:
 
 #### Assumptions and nomenclature
 
-The model uses a calorically perfect ideal gas, negligible inlet velocity at station 0, equal flow areas at stations 1
-and 2 and a constant Euler diameter. Rotor axial width is taken equal to its chord. Geometry is represented at the
-meanline; the code calculates flow angles, not blade metal angles or detailed blade profiles.
+The model uses a calorically perfect ideal gas, axial subsonic inlet flow at station 0, equal flow areas at stations 0,
+1 and 2 and a constant Euler diameter. Geometry is represented at the meanline; the code calculates flow angles, not
+blade metal angles or detailed blade profiles.
 
 Station 0 is before the stator, station 1 is between the stator and rotor, and station 2 is after the rotor. In the
 equations below, $v$ is absolute velocity, $w$ is rotor-relative velocity, $u$ is blade speed, $h$ is static enthalpy,
@@ -98,8 +98,8 @@ stage. They supply the local cascade flow needed by the loss correlations.
 #### Design-point quantities and geometry
 
 `size_turbine(...)` takes `gas`, `work_coefficient_tt`, `flow_coefficient`, `reaction_isentropic_tt`, `RPM`,
-`shaft_power`, `mdot`, `T_0`, `p_0` and a `loss_model`. The specified loading is the real work coefficient;
-the specified flow coefficient is based on the rotor outlet axial velocity:
+`shaft_power`, `mdot`, inlet total temperature `T_t0`, inlet total pressure `p_t0` and a `loss_model`.
+The specified loading is the real work coefficient; the specified flow coefficient is based on the rotor outlet axial velocity:
 
 $$
 \Delta h_t=\frac{P_{\mathrm{shaft}}}{\dot{m}}, \qquad
@@ -117,7 +117,7 @@ $$
 Here $N$ is `RPM`. Inlet and prescribed outlet total enthalpies are
 
 $$
-h_{t0}=c_pT_0, \qquad h_{t2}=h_{t0}-\Delta h_t.
+h_{t0}=c_pT_{t0}, \qquad h_{t2}=h_{t0}-\Delta h_t.
 $$
 
 `reaction_isentropic_tt` is the rotor static enthalpy drop divided by the stage total-to-total enthalpy drop in the
@@ -181,7 +181,7 @@ The following diagram explains turbine sizing & flow calculations procedure in `
    |
    +--> OUTER LOOP ---------------------------------------------------------------+
    |      Vary: stator, rotor aerodynamic and additional rotor entropy rises      |
-   |      Residuals: calculated minus assumed entropy rise for each loss group   |
+   |      Residuals: calculated minus assumed entropy rise for each loss group    |
    |      |                                                                       |
    |      v                                                                       |
    |    Turbine1D.calculate_entropy_rise                                          |
@@ -195,7 +195,12 @@ The following diagram explains turbine sizing & flow calculations procedure in `
    |      |    Turbine1D.__calculate_thermodynamic_properties --------+           |
    |      |                                                                       |
    |      v  (after inner loop converges)                                         |
-   |    Analysis results: station states and absolute rotor outlet velocity       |
+   |    Analysis results: station 1/2 states and absolute rotor outlet velocity   |
+   |      |                                                                       |
+   |      v                                                                       |
+   |    Turbine1D._calculate_inlet_velocity                                       |
+   |      Solve for v_0 with bounded Aitken and fallback to TOMS748.              |
+   |      Update station 0 state and static stage coefficients.                   |
    |      |                                                                       |
    |      v                                                                       |
    |    Turbine1D.__calculate_blade_rows_outlet_velocities                        |
@@ -259,8 +264,8 @@ $$
 r_h=\frac{h_2+v_2^2/2-h_{t2}}{h_{t0}}=0.
 $$
 
-This allows to find all other thermodynamic properties at station 0 and 1. The inner solver uses TOMS 748 with a
-bracket, or a Newton fallback when necessary. The ideal-gas entropy relation determines pressures from the assumed
+The inner solver first uses bounded relaxed Aitken with `xtol=rtol=1e-11`, then TOMS 748 with a bracket,
+or a Newton fallback when necessary. The ideal-gas entropy relation determines pressures from the assumed
 entropy rises and static temperatures:
 
 $$
@@ -271,11 +276,32 @@ $$
 For example, with the sum of all three entropy rises denoted by $\Delta s_{\mathrm{stage}}$,
 
 $$
-p_2=p_0\exp\left(-\frac{\Delta s_{\mathrm{stage}}}{R}\right)
+p_2=p_{t0}\exp\left(-\frac{\Delta s_{\mathrm{stage}}}{R}\right)
 \left(\frac{h_2}{h_{t0}}\right)^{c_p/R}.
 $$
 
-Equal-area continuity gives $\theta_1=\theta_2\rho_2/\rho_1$. The prescribed isentropic reaction determines the
+After the enthalpy solve converges, `_calculate_inlet_velocity(analysis_results)` adds the station 0 state variables to
+the same dictionary and returns it. This runs once per outer entropy evaluation, before the
+outlet velocities and losses are calculated.
+
+Equal-area continuity sets $G_0=\rho_2\theta_2u=\rho_0v_0$. With
+$\rho_{t0}=p_{t0}/(RT_{t0})$, inlet velocity satisfies
+
+$$
+v_0=\frac{G_0}{\rho_{t0}\left(1-v_0^2/(2h_{t0})\right)^{c_p/R-1}}.
+$$
+
+The inlet velocity numerical solve uses bounded relaxed Aitken, followed by TOMS 748 with the same bounds if fallback is needed.
+The bounds are: $G_0/\rho_{t0}\leq v_0\leq\sqrt{2\gamma RT_{t0}/(\gamma+1)}$. Inlet mass flux above the sonic limit is rejected.
+The static state is:
+
+$$
+h_0=h_{t0}-\frac{v_0^2}{2},\qquad T_0=\frac{h_0}{c_p},\qquad
+p_0=p_{t0}\left(\frac{h_0}{h_{t0}}\right)^{c_p/R},\qquad
+\theta_0=\frac{v_0}{u},\qquad M_{s0}=\frac{v_0}{\sqrt{\gamma RT_0}}.
+$$
+
+Equal-area continuity also gives $\theta_1=\theta_2\rho_2/\rho_1$. The prescribed isentropic reaction determines the
 intermediate state, while the real reaction $R_{h,tt}=(h_1-h_2)/\Delta h_t$ enters the velocity triangles. Define
 $d_\theta=(\theta_2^2-\theta_1^2)/(2\psi_{tt})$. The circumferential velocities are then
 
@@ -322,9 +348,10 @@ $$
 \eta_{ts}=\frac{\Delta h_t}{h_{t0}-h_{2,\mathrm{ideal}}}.
 $$
 
-`psi_tt_ideal` uses the same total-to-total isentropic enthalpy drop. `zeta_stator_Denton` and `zeta_rotor_Denton` are
-entropy-based loss coefficients based on Denton's definition and use a different normalisation from Traupel's
-coefficients below.
+`psi_tt_ideal` uses the same total-to-total isentropic enthalpy drop. `psi_ss_ideal` and Traupel's additional losses
+use the static-to-static drop `delta_h_ideal` $=h_0-h_{2,\mathrm{ideal}}$. `p_0_over_p_2` is the static-to-static
+pressure ratio; `p_t0_over_p_2` is the total-to-static pressure ratio. `zeta_stator_Denton` and `zeta_rotor_Denton` are
+entropy-based loss coefficients based on Denton's definition and use a different normalisation from Traupel's coefficients below.
 
 After sizing calculations have been performed, `calculate_entropy_rise(...)` evaluates a trial set of entropy rises and
 returns `(residuals, analysis_results, blade_row_results, loss_model_results)`.
@@ -1038,7 +1065,7 @@ The rotor uses the actual relative inlet Mach `M_r1` and the isentropic rotor ou
 `M_r2_ideal_r_real_s` as the initial outlet Mach. Its inlet angle is `beta_1`. With `symmetric_blades=False`, its shaping
 outlet angle is `beta_2_blade` from the local blade-row solution, which excludes additional rotor losses. The blading
 library varies ideal outlet Mach used for blade construction at that fixed outlet angle to match LE/TE circumferential
-thicknesses. This can slightly (~1%) affect turbine's power output and increase its reaction, but this effect is not
+thicknesses. This can slightly (~1%) increase turbine's power output and increase its reaction, but this effect is not
 captured by the meanline analysis in `Turbine1D`. With `symmetric_blades=True`, the shaping outlet angle is `-beta_1`,
 and thickness matching is not automatically enabled. Equal and opposite shaping angles alone do not guarantee equal
 LE/TE thicknesses when the inlet and outlet Mach numbers differ. Mach numbers and angles in Turbine1D are not
@@ -1107,7 +1134,7 @@ generated rotor contour at convergence.
 All four nozzle cases first calculate the total choked throat area required by the total stage mass flow:
 
 $$
-G^*=\frac{p_0}{\sqrt{T_0}}\sqrt{\frac{\gamma}{R}}
+G^*=\frac{p_{t0}}{\sqrt{T_{t0}}}\sqrt{\frac{\gamma}{R}}
 \left(\frac{2}{\gamma+1}\right)^{\frac{\gamma+1}{2(\gamma-1)}},\qquad
 A^*_{\mathrm{total}}=\frac{\dot m_{\mathrm{total}}}{G^*}.
 $$

@@ -705,7 +705,7 @@ class SupersonicTurbine:
 
         # Calculate total throat area needed to satisfy massflow requirements
         gamma = self.gas.gamma
-        stator_throat_mass_flux = results["p_0"] / np.sqrt(results["T_0"]) * np.sqrt(gamma / self.gas.R) \
+        stator_throat_mass_flux = results["p_t0"] / np.sqrt(results["T_t0"]) * np.sqrt(gamma / self.gas.R) \
                            * (2 / (gamma + 1)) ** ((gamma + 1) / (2 * (gamma - 1)))
         A_throat_stator = results["mdot_total"] / stator_throat_mass_flux
         # Store the total stator throat area required to pass the admitted mass flow.
@@ -735,8 +735,8 @@ class SupersonicTurbine:
                             "requested_outlet_absolute_flow_mach": results["M_s1_ideal"],
                             "requested_outlet_absolute_flow_angle": results["alpha_1_deg"],
                             "fluid": self.SupersonicTurbineBlading_Fluid,
-                            "upstream_total_temperature": results["T_0"],
-                            "upstream_total_pressure": results["p_0"],
+                            "upstream_total_temperature": results["T_t0"],
+                            "upstream_total_pressure": results["p_t0"],
                             "trailing_edge_thickness": meanline_arguments["t_TE_stator"] if count > 1 else 0.}
         contour = stator_arguments["contour_method"]
         if contour not in ("moc", "conical"):
