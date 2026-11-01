@@ -8,11 +8,11 @@ from ..Turbine1D import Turbine1D
 
 def plot_Smith_chart(flow_coefficient_array, work_coefficient_array, efficiency_to_plot,
                      Turbine1D_arguments, gas, loss_model, *, stator_angle_constraint=None,
-                     l_over_D_constraint=None, D_tip_constraint=None):
+                     l_over_D_constraint=None, D_tip_constraint=None, l_blade_constraint=None):
     """Sweep turbine duty coefficients and plot the selected meanline efficiency as a Smith chart.
 
     Each grid point sizes a fresh Turbine1D with all other inputs fixed. Failed evaluations and efficiencies
-    outside (0, 1] are not plotted. Designs exceeding any enabled upper limit are treated the same way.
+    outside (0, 1] are not plotted. Designs outside any enabled engineering limit are treated the same way.
 
     :param array-like flow_coefficient_array: Increasing flow-coefficient sample values, with at least two entries.
      For example, numpy.linspace(0.25, 3., 21). These values form the horizontal axis.
@@ -31,7 +31,9 @@ def plot_Smith_chart(flow_coefficient_array, work_coefficient_array, efficiency_
     :param float or None l_over_D_constraint: Maximum rotor blade length divided by mean diameter (-), using
      Turbine1D.l_rotor / Turbine1D.D_mean. None (default) disables this limit.
     :param float or None D_tip_constraint: Maximum turbine tip diameter in metres, using Turbine1D.D_tip.
-     None (default) disables this limit. Values equal to any of the three limits are accepted.
+     None (default) disables this limit.
+    :param float or None l_blade_constraint: Minimum rotor blade length in metres, using Turbine1D.l_rotor.
+     None (default) disables this limit. Values equal to any of the four limits are accepted.
     :return: Dictionary with figure, axes, flow_coefficients, work_coefficients, efficiencies, best_design,
      best_efficiency and failure_reasons. Efficiencies are a masked array of fractions, indexed as [work, flow].
       best_design contains the two coefficients at the highest sampled efficiency; both best fields are None
@@ -72,7 +74,7 @@ def plot_Smith_chart(flow_coefficient_array, work_coefficient_array, efficiency_
                 # Keep the exact construction error, but continue evaluating the remaining coefficient pairs.
                 failure_reasons[f"{type(error).__name__}: {error}"] += 1
                 continue
-            # Read the completed meanline results before checking the optional geometric upper limits.
+            # Read the completed meanline results before checking the optional engineering limits.
             results = turbine.analysis_results_at_design_point
             # If the stator angle exceeds its enabled limit, leave this point masked and move to the next design.
             if stator_angle_constraint is not None and results["alpha_1_deg"] > stator_angle_constraint:
@@ -85,6 +87,10 @@ def plot_Smith_chart(flow_coefficient_array, work_coefficient_array, efficiency_
             # If the tip diameter exceeds its enabled limit, exclude this design from the chart too.
             if D_tip_constraint is not None and turbine.D_tip > D_tip_constraint:
                 failure_reasons["D_tip_constraint exceeded"] += 1
+                continue
+            # If the rotor blade is shorter than its enabled minimum, leave this point out of the chart.
+            if l_blade_constraint is not None and turbine.l_rotor < l_blade_constraint:
+                failure_reasons["l_blade_constraint not met"] += 1
                 continue
             # Read the requested efficiency only after all enabled limits have been satisfied.
             selected_efficiency = results[efficiency_to_plot]

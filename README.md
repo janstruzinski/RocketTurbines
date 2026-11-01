@@ -1754,16 +1754,17 @@ smith_chart = plot_Smith_chart(
     flow_coefficient_array=np.linspace(0.25, 3., 50),
     work_coefficient_array=np.linspace(1., 6., 50), efficiency_to_plot="eta_tt",
     Turbine1D_arguments=Smith_chart_arguments, gas=gas, loss_model=loss_model,
-    stator_angle_constraint=None, l_over_D_constraint=None, D_tip_constraint=None)
+    stator_angle_constraint=None, l_over_D_constraint=None, D_tip_constraint=None, l_blade_constraint=None)
 ```
 
 The optional upper limits are `stator_angle_constraint` for signed `alpha_1_deg` in degrees,
 `l_over_D_constraint` for `l_rotor/D_mean`, and `D_tip_constraint` for tip diameter in metres. For example,
-use `75.`, `0.25` and `0.15` respectively. Each defaults to `None`, which disables that limit.
-Designs exceeding a limit are masked like failed evaluations, omitted from the plot, and counted in
+use `75.`, `0.25` and `0.15` respectively. `l_blade_constraint` adds a minimum rotor blade length in metres,
+using `l_rotor`; for example, `0.010` requires at least 10 mm. Each defaults to `None`, which disables that limit.
+Designs violating a limit are masked like failed evaluations, omitted from the plot, and counted in
 `failure_reasons`. Only the first violated limit is counted for each excluded point.
 
-Example output from the current `example.py`, using its 50 × 50 grid and isentropic total-to-total efficiency:
+Example output with the optional limits disabled, using a 50 × 50 grid and isentropic total-to-total efficiency:
 
 ![Smith chart from example.py showing isentropic total-to-total efficiency over flow and work coefficients](docs/figures/example_smith_chart.png)
 
