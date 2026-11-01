@@ -1,7 +1,7 @@
 from setuptools import find_packages, setup
 
 setup(name='rocketturbines',
-      version='1.0.0',
+      version='1.1.0',
       description='Python package for sizing and meanline analysis of axial rocket turbines',
       url='https://github.com/janstruzinski/RocketTurbines.git',
       author='Jan Struzinski',

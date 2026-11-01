@@ -38,8 +38,9 @@ The repository is organised as follows:
   `SupersonicTurbine`.
 - `RocketTurbines/GA_optimizer/` contains design-domain scouting and mixed-variable GA optimization functions.
 - `example.py` demonstrates sizing a partial-admission impulse turbine with a water-vapour/oxygen mixture.
-- `docs/figures/` contains the empirical-coefficient plots and supersonic nozzle diagrams shown below.
-  `docs/plot_traupel_coefficients.py` and `docs/plot_supersonic_geometry.py` regenerate them with Matplotlib.
+- `docs/figures/` contains the empirical-coefficient plots, supersonic nozzle diagrams and example output shown below.
+  `docs/plot_traupel_coefficients.py`, `docs/plot_supersonic_geometry.py` and `docs/plot_example_figures.py` regenerate them.
+  Exporting the 3D example image also requires Kaleido and Chrome.
 - `setup.py` installs the `RocketTurbines` package and its dependencies, including pymoo and `SupersonicTurbineBlading` from GitHub;
   `LICENSE` contains the GNU General Public License version 3.
 
@@ -1431,9 +1432,17 @@ nonpositive and thickness margins nonnegative; the flags are informational rathe
 Omitting the dictionary uses `turbine.coefficients`; if that is still `None`, it prints
 `SupersonicTurbine.coefficients is None`.
 
+The geometry figures below use the current `example.py` turbine inputs, with `calculate_boundary_layer=False`
+for both stator and rotor before coupling.
+
 Call `turbine.plot_3D_geometry()` after coupling to view the assembled & interactive turbine in 3D.
-Call `turbine.plot_2D_geometry(number_of_rotor_blades=4)` to plot an axial/circumferential turbine section at Euler
+
+![3D turbine geometry from example.py with boundary-layer calculations disabled](docs/figures/example_turbine_3d.png)
+
+Call `turbine.plot_2D_geometry(number_of_rotor_blades=10)` to plot an axial/circumferential turbine section at Euler
 diameter.
+
+![2D turbine geometry from example.py showing ten rotor pitches with boundary-layer calculations disabled](docs/figures/example_turbine_2d.png)
 
 Successful coupling establishes agreement between the meanline model and the generated shapes. The engineer or
 outer optimizer must separately check the packing optimality coefficients and thickness margins. Negative height
@@ -1742,10 +1751,14 @@ import numpy as np
 from RocketTurbines.GA_optimizer.Smith_chart import plot_Smith_chart
 
 smith_chart = plot_Smith_chart(
-    flow_coefficient_array=np.linspace(0.25, 3., 21),
-    work_coefficient_array=np.linspace(1., 6., 21), efficiency_to_plot="eta_tt",
+    flow_coefficient_array=np.linspace(0.25, 3., 50),
+    work_coefficient_array=np.linspace(1., 6., 50), efficiency_to_plot="eta_tt",
     Turbine1D_arguments=Smith_chart_arguments, gas=gas, loss_model=loss_model)
 ```
+
+Example output from the current `example.py`, using its 50 × 50 grid and isentropic total-to-total efficiency:
+
+![Smith chart from example.py showing isentropic total-to-total efficiency over flow and work coefficients](docs/figures/example_smith_chart.png)
 
 `Smith_chart_arguments` contains fixed `Turbine1D.size_turbine` inputs, excluding `flow_coefficient`,
 `work_coefficient_tt`, `gas` and `loss_model`; `example.py` supplies a complete dictionary before its optimization

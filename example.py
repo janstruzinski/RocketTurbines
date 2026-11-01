@@ -37,7 +37,7 @@ SupersonicStatorNozzle_arguments = dict(
     contour_method="conical", number_of_nodes=51, half_cone_metal_angle=7.0,
     calculate_boundary_layer=False)
 
-# And for SupersonicStatorBlade
+# And for SupersonicRotorBlades, with boundary-layer calculations enabled.
 SupersonicRotorBlades_arguments = dict(
     number_of_nodes=51, calculate_starting=False, calculate_boundary_layer=True,
     use_leading_edge_entry_correction=False)
@@ -95,6 +95,9 @@ SupersonicTurbine_arguments = dict(
     t_min_stator=0.5e-3, t_min_rotor=0.5e-3, stator_nozzle_chord_scale=1.,
     print_user_warnings=False)
 
+# Disable rotor boundary-layer calculations during optimization for SupersonicRotorBlade.
+SupersonicRotorBlades_optimization_arguments = dict(SupersonicRotorBlades_arguments, calculate_boundary_layer=False)
+
 # Dictionary below constrains outputs; TE/pitch < 0.2 limits for stator and rotor are always applied internally.
 optimization_constraints = {
     "D_tip": [None, 0.15], "l_rotor": [0.010, None],
@@ -122,7 +125,7 @@ optimization_results = optimize_turbine(
     constraints=optimization_constraints, mode="SupersonicTurbine",
     efficiency="total-to-total", efficiency_type="isentropic",
     SupersonicStatorNozzle_arguments=SupersonicStatorNozzle_arguments,
-    SupersonicRotorBlades_arguments=SupersonicRotorBlades_arguments,
+    SupersonicRotorBlades_arguments=SupersonicRotorBlades_optimization_arguments,
     n_threads=None, plot_axes=["flow_coefficient", "work_coefficient_tt"],
     pymoo_arguments=pymoo_arguments, perturbation_scales=perturbation_scales,
     perturbation_standard_deviations=perturbation_standard_deviations, seed=1, verbose=True)
