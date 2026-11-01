@@ -36,10 +36,11 @@ The repository is organised as follows:
   `SupersonicStatorNozzle` and `SupersonicRotorBlade` from the `SupersonicTurbineBlading` library.
 - `RocketTurbines/RelaxedAitken.py` supplies the bounded, adaptively relaxed fixed-point solver used by `Turbine1D` and
   `SupersonicTurbine`.
+- `RocketTurbines/GA_optimizer/` contains design-domain scouting and mixed-variable GA optimization functions.
 - `RocketTurbines/example.py` demonstrates sizing a partial-admission impulse turbine with a water-vapour/oxygen mixture.
 - `docs/figures/` contains the empirical-coefficient plots and supersonic nozzle diagrams shown below.
   `docs/plot_traupel_coefficients.py` and `docs/plot_supersonic_geometry.py` regenerate them with Matplotlib.
-- `setup.py` installs the five modules above and their dependencies, including `SupersonicTurbineBlading` from GitHub;
+- `setup.py` installs the modules above and their dependencies, including pymoo and `SupersonicTurbineBlading` from GitHub;
   `LICENSE` contains the GNU General Public License version 3.
 
 The current workflows include design-point sizing. Meanline results are stored in the `Turbine1D` object;
@@ -63,8 +64,10 @@ pip3 install git+https://github.com/janstruzinski/RocketTurbines
 ## Disclaimer
 
 This library is intended for preliminary turbine sizing and engineering analysis. The extrapolation of empirical
-correlations and meanline assumptions should be checked for the particular design. LLM was used for the generation of
-this README, docstrings and a few parts of the code.
+correlations and meanline assumptions should be checked for the particular design. Much of the code was written by
+myself and I came up with its architecture, turbine design workflow or methodology behind coupling meanline and blading
+designs. However, LLM was used for the generation of this README, docstrings and a few parts of the code, especially
+`GA_optimizer` and some plotting/printing functions.
 
 ## Documentation
 
@@ -1437,3 +1440,281 @@ Invalid inputs or violated construction assumptions raise `ValueError`; missing 
 The bounded Aitken solver raises `RuntimeError` for nonfinite values, stagnation or failure to converge within its
 iteration limit. Positive packing excesses or negative spacing margins can remain as reported coefficients after a
 successful solve and must still be addressed by the engineer or outer optimizer when selecting the design.
+
+### GA_optimizer: optimization_functions and scouting_functions
+
+`optimize_turbine` maximizes turbine efficiency using geometry-informed Sobol prescouting followed by
+[pymoo's mixed-variable genetic algorithm](https://pymoo.org/customization/mixed.html).
+
+The objective is one selected efficiency: isentropic or polytropic, on a total-to-total or total-to-static basis
+(`eta_tt`, `eta_ts`, `eta_poly_tt` or `eta_poly_ts`), chosen with `efficiency` and `efficiency_type`. RPM, coefficients,
+blade counts and the other bounded design variables are varied to maximize that efficiency subject to the constraints.
+With `mode="Turbine1D"`, evaluations use `Turbine1D` meanline sizing and its loss model, with meanline constraints. With
+`mode="SupersonicTurbine"`, evaluations construct and couple the meanline model with stator-nozzle and rotor blading
+through `SupersonicTurbine`; efficiency comes from the converged coupled meanline, and blading packing, thickness and
+manufacturing constraints can also be imposed. The selected mode and objective are used throughout both prescouting and GA.
+
+Scouting evaluates 64 proposals by default, then mixes local improvements and new global proposals until it finds
+a feasible seed or stagnates. GA can continue from the smallest violation if scouting finds
+no feasible design. A feasible seed supplied by the user is not required. These searches find good designs;
+they do not certify a global optimum.
+
+This workflow is shown below:
+
+```text
+ optimize_turbine
+   |
+   v
+ Fixed inputs, bounded design variables, constraints, gas and loss model
+ Select one model and one efficiency for the whole run:
+   Turbine1D -> meanline sizing; SupersonicTurbine -> coupled meanline and blading.
+ Prepare shared threaded evaluator, evaluation cache and successful-coupling archive.
+   Model failure -> penalty; model success -> efficiency and constraint violation (CV).
+   Coupled mode reuses the nearest compatible successful coupling when available.
+   |
+   v
+ Initial batch: geometry-informed Sobol proposals (64 by default)
+   |
+   +--> PRESCOUTING LOOP ---------------------------------------------------------------------------+
+   |    Evaluate current proposals through the shared evaluator.                                    |
+   |    Rank by smallest CV, then highest efficiency.                                               |
+   |    |                                                                                           |
+   |    +--> Feasible design found, or CV improvement stagnated? -> Leave prescouting.              |
+   |    |                                                                                           |
+   |    v  (otherwise)                                                                              |
+   |    Perturb the best scout leaders and add new global Sobol proposals.                          |
+   |    |                                                                                           |
+   |    +--> Repeat with the new proposals ---------------------------------------------------------+
+   |
+   v  (feasible seed found, or prescouting stagnated)
+ Choose the best feasible scout; if none is feasible, use the design with smallest CV.
+ Build the initial GA population (16 designs by default):
+   1 unchanged scout leader + 7 local perturbations + 8 new global Sobol proposals.
+   |
+   +--> PYMOO MIXED-VARIABLE GA LOOP ---------------------------------------------------------------+
+   |    Evaluate the initial population or new offspring through the same evaluator.                |
+   |    Survival favors feasibility, then efficiency; infeasible designs compete by CV.             |
+   |    Update the best feasible design, statistics and history.                                    |
+   |    Print generation data and update the scatter plot when enabled.                             |
+   |    |                                                                                           |
+   |    +--> Stagnation, optional generation cap, or no unique offspring? -> Finish.                |
+   |    |                                                                                           |
+   |    v  (otherwise)                                                                              |
+   |    Select parents; apply crossover and mutation; round integer blade counts.                   |
+   |    |                                                                                           |
+   |    +--> Continue with the next generation -----------------------------------------------------+
+   |
+   v
+ Return the best feasible turbine, design and efficiency, plus history and failure counts.
+ If no feasible design was found: success=False; return the closest attempt in best_infeasible.
+```
+
+`GA_optimizer/optimization_functions.py` contains `optimize_turbine`, including model evaluation, constraints,
+coupling initialization, plotting and GA control. `GA_optimizer/scouting_functions.py` contains the documented
+Sobol sampler, local proposal generator and `prescout_design_domain` feasibility search. These helpers share the
+optimizer's random generator, evaluator, cache and coupling archive. The end of `example.py` contains a complete
+coupled-turbine optimization example. Fixed inputs and bounded design variables are supplied separately:
+
+```python
+from GA_optimizer.optimization_functions import optimize_turbine
+
+Turbine1D_arguments = dict(
+    reaction_isentropic_tt=0., s_ax_over_pitch_rotor=0.35,
+    shaft_power=25000., mdot=0.15, T_t0=800., p_t0=5e6, radial_clearance=0.1e-3,
+    chord_over_pitch_stator=3.3, chord_over_pitch_rotor=2.518,
+    t_TE_stator=0.5e-3, t_TE_rotor=0.5e-3, Ra_roughness=3e-6,
+    delta_s_estimate=(350., 130., 200.),
+)
+optimization_arguments = dict(
+    RPM=[25000., 50000.], work_coefficient_tt=[1., 4.], flow_coefficient=[0.25, 2.],
+    no_blades_stator=[1, 120], no_blades_rotor=[20, 300], admission_fraction=[0.002, 1.],
+    separation_margin=[0.05, 0.50],
+)
+SupersonicTurbine_arguments = dict(
+    t_min_stator=0.5e-3, t_min_rotor=0.5e-3, stator_nozzle_chord_scale=1.,
+    print_user_warnings=False,
+)
+constraints = {
+    "D_tip": [None, 0.15], "l_rotor": [0.010, None],
+    "l_rotor/D_mean": [None, 0.25], "alpha_1_deg": [None, 75.],
+    "M_ax_1": [None, 1.], "M_ax_2": [None, 1.], "chord_over_pitch_rotor": [2.5, 3.3],
+    "height_optimality": [-0.003, 0.], "width_optimality": [None, 0.],
+    "t_TE_stator_min_margin": [0., None],
+}
+
+# Reuse your IdealGas and TraupelLossModel objects; each worker gets its own copies.
+result = optimize_turbine(
+    gas=gas, loss_model=loss_model, Turbine1D_arguments=Turbine1D_arguments,
+    optimization_arguments=optimization_arguments, SupersonicTurbine_arguments=SupersonicTurbine_arguments,
+    constraints=constraints,
+    mode="SupersonicTurbine", efficiency="total-to-total", efficiency_type="isentropic",
+    SupersonicStatorNozzle_arguments=dict(contour_method="conical", number_of_nodes=51,
+        half_cone_metal_angle=7., calculate_boundary_layer=False),
+    SupersonicRotorBlades_arguments=dict(number_of_nodes=51, calculate_starting=False,
+        calculate_boundary_layer=False, use_leading_edge_entry_correction=False),
+    n_threads=None, plot_axes=["flow_coefficient", "work_coefficient_tt"], seed=1,
+)
+if result["success"]:
+    turbine = result["best_turbine"]
+    print(result["best_efficiency"], result["best_design"])
+print(result["termination"], result["statistics"])
+```
+
+The `gas` and `loss_model` arguments are existing `IdealGas` and `TraupelLossModel` objects. `Turbine1D_arguments`
+contains fixed meanline inputs. `SupersonicTurbine_arguments` holds fixed meanline - blading construction settings,
+while the stator and rotor blading dictionaries keep settings for the respective SupersonicTurbineBlading library objects.
+
+Only the following names are accepted in `optimization_arguments`. Every entry requires two strictly increasing
+bounds, given as a list or tuple; scalars belong in the corresponding fixed-input dictionary. A name cannot occur
+in both a fixed dictionary and `optimization_arguments`. At least one bounded variable must be active in the
+selected mode; an empty dictionary is rejected. Separation-margin bounds alone do not define a search in
+`Turbine1D` mode. With a fixed single stator nozzle in `SupersonicTurbine` mode, admission is solved internally,
+so admission bounds alone are also insufficient; provide another active bounded variable.
+
+| Optimization variable | Type | Model |
+|---|---|---|
+| `RPM` | Real | Both |
+| `work_coefficient_tt` | Real | Both |
+| `flow_coefficient` | Real | Both |
+| `no_blades_stator` | Integer | Both |
+| `no_blades_rotor` | Integer | Both |
+| `admission_fraction` | Real | Both |
+| `separation_margin` | Real | SupersonicTurbine |
+| `reaction_isentropic_tt` | Real | Both |
+
+Axial gap/pitch, thicknesses, chord/pitch estimates, seal-tooth count, duty
+requirements and other settings are fixed inputs. In `SupersonicTurbine` mode the inner solver still determines final
+chord/pitch and thickness values from their fixed initial estimates; their output constraints remain active.
+
+Unspecified optional inputs use the models' defaults. Unknown names, overlapping fixed/bounded inputs, invalid
+optimization intervals and missing required inputs raise errors before scouting. Requirements on input values
+remain with Python, NumPy/SciPy, pymoo and the turbine/blading classes; fixed input values are passed unchanged.
+
+With `mode="Turbine1D"`, `SupersonicTurbine_arguments`, separation-margin bounds and blading dictionaries are ignored.
+Give only meanline constraints in that mode: nozzle packing coefficients and
+manufacturing margins do not exist in a meanline calculation in `Turbine1D`, so requesting them raises an error. For example:
+
+```python
+meanline_constraints = {name: constraints[name] for name in
+    ("D_tip", "l_rotor", "l_rotor/D_mean", "M_ax_1", "M_ax_2", "alpha_1_deg")}
+meanline_result = optimize_turbine(
+    gas, loss_model, Turbine1D_arguments, optimization_arguments, meanline_constraints, mode="Turbine1D",
+    efficiency="total-to-static", efficiency_type="polytropic", n_threads=4,
+)
+```
+
+The two efficiency selectors are independent:
+
+| `efficiency` | `efficiency_type` | Maximized result |
+|---|---|---|
+| `total-to-total` | `isentropic` | `eta_tt` |
+| `total-to-static` | `isentropic` | `eta_ts` |
+| `total-to-total` | `polytropic` | `eta_poly_tt` |
+| `total-to-static` | `polytropic` | `eta_poly_ts` |
+
+Constraints can name scalar geometry attributes, analysis, blade-row and loss results, or coupled geometry
+coefficients. Use `[lower, upper]` with `None` for an open end, or a boolean for a boolean result. Numeric ranges
+include their endpoints. Simple ratios of two output names are supported directly, such as `l_rotor/D_mean`. 
+Lengths, including `height_optimality`, are in metres.
+
+The two **strict** `t_TE_stator/p_stator < 0.2` and `t_TE_rotor/p_rotor < 0.2` constraints are always present, since
+above them losses from `TraupelLossModel` quickly increase. Other engineering limits must be supplied explicitly 
+in `constraints`.
+
+In `SupersonicTurbine` mode, the chord/pitch ratios, TE thicknesses and rotor width/chord are initial coupling estimates,
+not independent outer variables. They must be constants in the input dictionary; constrain their final outputs
+to restrict the constructed geometry. With one stator nozzle, admission is also solved internally; its input
+is only an estimate. A fixed single-nozzle search removes that inactive design variable automatically.
+
+Each coupled evaluation first tries the nearest compatible successful coupling from earlier completed batches,
+including its rotor width/chord estimate. Single- and multi-nozzle archives stay separate. If that attempt fails,
+one low-loss initialization is tried. For each design, the optimizer uses the first coupled solution that converges.
+Failed model evaluations receive finite violation penalties; successful but infeasible designs retain their
+individual continuous constraint residuals so feasibility guides GA selection.
+
+`n_threads=None` uses the available logical CPU count; a requested count is capped at that number. Evaluation
+batches use a thread pool, with concurrency also limited by the number of candidates.
+Progress prints each scouting iteration and GA generation: elapsed time, evaluations,
+successful/failed construction attempts, feasible designs, best feasible efficiency, and smallest constraint
+violation (`CV`). With `verbose=True` (the default), every phase has explicit start/completion lines such as
+`Prescout iteration 0 started`, `GA generation 1 started` and `GA generation 1 completed | ...`.
+Set `verbose=False` to silence these lines. Progress rows are also retained in the
+returned `history`.
+
+`plot_axes=["input_x", "input_y"]` enables a live scatter plot of evaluations in **outer input** coordinates.
+Feasible designs are circles colored by efficiency using a colorbar. Successfully
+constructed but infeasible designs are squares. Construction failures are omitted from the plotted points.
+Omit `plot_axes` to disable plotting. By default, `optimize_turbine` keeps the final interactive plot open until its
+windows are closed, then returns the results. Set `block_plot=False` to return immediately after optimization. 
+
+Local perturbations during scouting and GA initialization can be configured separately from GA mutation:
+
+```python
+perturbation_scales = (0.02, 0.005)
+perturbation_standard_deviations = {"no_blades_stator": 0.5, "no_blades_rotor": 1., "RPM": 250.}
+# Pass both settings to optimize_turbine using the matching keyword arguments.
+```
+
+`perturbation_scales` controls the size of random changes around an existing design. For each continuous variable,
+the change is drawn from a Gaussian distribution centered at zero, with
+`standard deviation = scale * (upper bound - lower bound)`. For example, without an override, RPM bounds
+`[25000, 50000]` and a scale of `0.02` give a standard deviation of 500 rpm.
+
+The default scales are `(0.035, 0.012)`. Their use depends on the phase:
+
+- During additional scouting, each call generates one local proposal around a scout leader. The scale sequence
+  restarts with each call, so these proposals always use the first scale: `0.035` by default.
+- During GA initialization, one call generates several neighbors around the best scout design. The first neighbor
+  uses `0.035`, the second uses `0.012`, the third uses `0.035`, and so on. The unchanged scout design is also retained.
+
+`perturbation_standard_deviations` sets an absolute standard deviation for any named variable, overriding its usual
+setting. In the example above, `"RPM": 250.` makes every local RPM change use a standard deviation of 250 rpm,
+regardless of the relative scale. Blade counts use absolute defaults of one stator nozzle and three rotor blades
+unless overridden; `perturbation_scales` applies only to continuous variables.
+
+These settings describe standard deviations, so larger changes are possible. Proposals are clipped to the variable
+bounds, and blade counts are rounded to integers. They affect local scouting and GA initialization; later GA
+crossover and mutation use their own settings.
+
+The optional `pymoo_arguments` dictionary overrides only the default GA settings; omitting it or passing `{}`
+retains the tuned defaults. For example:
+
+```python
+pymoo_arguments = {
+    "pop_size": 16, "n_offsprings": 16,
+    "crossover_probability": 0.9, "crossover_eta": 15.,
+    "mutation_probability": 1., "mutation_eta": 20.,
+}
+# Add pymoo_arguments=pymoo_arguments to the optimize_turbine(...) call.
+```
+
+`pop_size` overrides the separate `population_size` argument and controls the initial population as well.
+Without `n_offsprings`, pymoo uses the default population size. The four probability/eta entries configure
+SBX and polynomial mutation for both real and integer variables; integer rounding remains enabled.
+Native overrides `selection`, `crossover`, `mutation`, `mating`, `survival`, `repair`, `eliminate_duplicates`,
+and `advance_after_initial_infill` are also supported. Mixed crossover/mutation overrides must be operator
+dictionaries keyed by pymoo's `Real`/`Integer` types. A custom `mating` object replaces the default mating
+configuration; do not combine it with individual operator settings. 
+
+Default GA settings are population 16, random parent selection, SBX crossover probability 0.9/eta 15,
+polynomial mutation probability 1/eta 20, and integer repair. Half the initial GA population is near the scout
+leader and half is global. Stopping uses an eight-generation stagnation window, with efficiency improvement
+tolerance `5e-4` (0.05 percentage points). Scouting stops on finding a feasible design or on constraint-violation
+stagnation. `max_generations=None` adds no generation cap; set an integer to limit GA generations.
+GA also stops if it cannot generate further unique offspring.
+
+`seed` is an integer that initializes the random-number generators used by scouting and GA. It controls the
+scrambled Sobol samples, random local perturbations, and random choices during GA parent selection, crossover
+and mutation. Using `seed=1` (the default) makes these random choices repeatable when the inputs and settings
+stay the same. Changing it to another integer, such as `seed=2`, gives a different random search path and may
+produce a different final design. Use `seed=None` for a new random sequence on each run.
+
+The return dictionary contains `success`, `best_turbine`, `best_design`, `best_results`, `best_efficiency`,
+`best_infeasible`, `termination`, `elapsed_seconds`, `statistics`, `history`, `evaluations`, and `figure`.
+`best_design` contains outer inputs; `best_results` contains actual coupled outputs, which can differ for
+internally solved quantities. If no feasible design is found, best-result fields are `None` and
+`best_infeasible` describes the closest attempt. A generation-limited run can return a feasible incumbent;
+its termination reason states the generation limit rather than claiming numerical convergence.
+Statistics count unique evaluated designs, cache hits, successful/failed construction attempts (including
+retries), feasible designs, exact construction-failure messages and output-evaluation errors. A successful
+construction is not necessarily feasible.
