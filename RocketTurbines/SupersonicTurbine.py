@@ -28,12 +28,13 @@ class SupersonicTurbine:
         its row's pitch. Full assumed thicknesses is still used to decrease residuals to zero, but
         the returned Turbine1D object stores the capped thicknesses used for its calculation. A converged
         design with limited_TE_stator_losses or limited_TE_rotor_losses uses modified losses; its efficiency can be
-        optimistic and must be reassessed after improving the blading. Boundary-layer calculations are disabled for
-        both SupersonicTurbineBlading objects to improve speed and robustness. With symmetric_blades=False,
-        rotor LE/TE circumferential thickness matching is ensured by varying ideal outlet Mach number used for rotor
-        blade construction at fixed outlet angle. This can slightly (~1%) affect turbine's power output and increase its
-        reaction, but this effect is not captured by the meanline analysis in Turbine1D. The ideal
-        outlet Mach number from meanline analysis is an initial estimate for this rotor geometry solve. With
+        optimistic and must be reassessed after improving the blading. Stator and symmetric-rotor boundary-layer
+        calculations are disabled. Nonsymmetric rotors retain the user's BL settings and use the corrected shape
+        when available for geometry measurements and plots. Aftermixing is disabled for both rows.
+        With symmetric_blades=False, rotor LE/TE circumferential thickness matching is ensured by varying ideal outlet
+        Mach number used for rotor blade construction at fixed outlet angle. This can slightly (~1%) affect turbine's
+        power output and increase its reaction, but this effect is not captured by the meanline analysis in Turbine1D.
+        The ideal outlet Mach number from meanline analysis is an initial estimate for this rotor geometry solve. With
         symmetric_blades=True, rotor blades will be symmetric.
 
         :param IdealGas gas: Object representing calorically perfect working gas.
@@ -45,8 +46,9 @@ class SupersonicTurbine:
         :param dict SupersonicStatorNozzle_arguments: Arguments for SupersonicStatorNozzle, including contour_method.
          Exit Mach number and flow angle, reference_length and trailing_edge_thickness are calculated in this class.
         :param dict SupersonicRotorBlades_arguments: Arguments for SupersonicRotorBlades. Inlet & outlet Mach numbers
-         and flow angles, surface Mach numbers, blade count, radius, speed and
-          leading_edge_thickness_over_total_pitch are calculated in this class.
+         and flow angles, surface Mach numbers, blade count, radius, speed and leading_edge_thickness_over_total_pitch
+         are calculated in this class. Nonsymmetric rotors retain the user's calculate_boundary_layer setting, including
+         the library default settings when omitted. Symmetric rotors disable BL. calculate_aftermixing is always False.
         :param float separation_margin: Flow separation margin, strictly between zero and one. A value of 0.05 reserves
          5% of the Mach interval bounded by Goldman and Scullin's separation limits (NASA TN D-4421, equations (36)-(40)).
         :param float t_min_stator: Minimum true stator metal thickness, m; nonnegative.
@@ -76,7 +78,7 @@ class SupersonicTurbine:
         #    |
         #    v
         #  Copy input dictionaries; validate inputs and create the shared Fluid object.
-        #  Disable mixed-flow Mach matching and BL calculations; match nonsymmetric rotor LE/TE thicknesses using outlet Mach.
+        #  Disable aftermixing, mixed-flow Mach matching and stator/symmetric-rotor BL; retain nonsymmetric-rotor BL settings.
         #  Initialize design results to None; return without solving.
         #  Loss-model assumption: evaluate_design caps each TE thickness/pitch input to Turbine1D.size_turbine at 0.24.
         #  Retain full assumed TE thicknesses for shaping and residual matching; flag any limited losses.
@@ -112,6 +114,7 @@ class SupersonicTurbine:
         #    |      |      Select the blade-row outlet angle, or negative inlet angle for symmetric_blades.   |
         #    |      |      Calculate LE thickness projection = t_min_rotor/cos(inlet angle); construct rotor. |
         #    |      |      For nonsymmetric blades, match LE/TE thickness projections via outlet Mach.        |
+        #    |      |      Use the BL corrected rotor shape for measurements and plots when available.        |
         #    |      |      Pass rotor LE thickness/total pitch; pitch includes metal at Euler radius.         |
         #    |      |      Measure TE thickness projection and chord between blade edges.                     |
         #    |      |      Measure rotor axial extent and match rotor_width_to_chord.                         |
@@ -238,14 +241,17 @@ class SupersonicTurbine:
                     warnings.warn(f"{option} is disabled: matching mixed Mach would count meanline losses twice.",
                                   UserWarning, stacklevel=2)
 
-        # The coupling uses uncorrected geometry and meanline losses. BL calculations on either row add cost
-        # and failure modes without contributing to the coupled residuals, so always switch them off.
+        # Keep the stator and symmetric rotor uncorrected; nonsymmetric rotors retain the user's BL settings.
+        # Aftermixing is disabled independently of BL to avoid possible failure in calculations when SUpersonicTurbine
+        # object is created many times during outer optimization.
         for name, arguments in (("SupersonicStatorNozzle", self.SupersonicStatorNozzle_arguments),
                                 ("SupersonicRotorBlade", self.SupersonicRotorBlades_arguments)):
-            if arguments.get("calculate_boundary_layer", True) and self.print_user_warnings:
-                warnings.warn(f"Boundary-layer calculations for {name} are disabled to speed up calculations"
-                              " and improve robustness.", UserWarning, stacklevel=2)
-            arguments["calculate_boundary_layer"] = False
+            if name == "SupersonicStatorNozzle" or self.symmetric_blades:
+                if arguments.get("calculate_boundary_layer", True) and self.print_user_warnings:
+                    warnings.warn(f"Boundary-layer calculations for {name} are disabled for stator or symmetric"
+                                  " rotor construction.", UserWarning, stacklevel=2)
+                arguments["calculate_boundary_layer"] = False
+            arguments["calculate_aftermixing"] = False
 
         # Different inlet/outlet angles can produce excessive rotor TE thickness for unsymmetric blades. To ensure LE
         # and TE circumferential thicknesses mach, switch on the option that vary ideal outlet Mach number used for the
@@ -441,6 +447,8 @@ class SupersonicTurbine:
          TE thickness (m). Residual 4 is stator arc thickness (m), or admission fraction for one nozzle.
          Residual 5 is obtained minus assumed rotor_width_to_chord (dimensionless), matching the axial extent of
          rotor blade to the width used in meanline analysis. An omitted input defaults to 1.
+         Rotor measurements use the corrected shape when a nonsymmetric rotor's BL calculation supplies one;
+         otherwise they use the uncorrected shape. Stator geometry is always uncorrected; aftermixing is disabled.
          height_optimality and width_optimality are clearance values for nozzle edges (m); positive values indicate
          infeasible packing. t_TE_stator_min_margin is circumferential projection length of nozzle TE thickness minus the
          required value calculated from t_min_stator and stator outlet flow angle alpha_1. Each rotor margin
@@ -490,7 +498,8 @@ class SupersonicTurbine:
         # meanline analysis to the obtained t_TE_rotor.
 
         # symmetric_blades uses -beta_1 as the shaping outlet angle; otherwise the blade-row outlet angle is used.
-        # BL calculations are disabled for both rows, and only uncorrected geometry is used here.
+        # Stator and symmetric-rotor BL calculations are disabled. Nonsymmetric rotors use their corrected geometry
+        # when BL is enabled and supplies that shape; otherwise use the uncorrected geometry. Aftermixing is disabled.
         # Nonsymmetric rotors match LE/TE circumferential thicknesses through varying ideal outlet Mach number used for
         # the construction of the rotor blade; their minimum metal
         # thicknesses can still differ because the inlet and outlet angles differ. SupersonicRotorBlade takes
@@ -674,9 +683,13 @@ class SupersonicTurbine:
         # Calculate chord - pitch ratio residuals between meanline design and blade shapes for the rotor
         # The two stored surfaces bound a passage. Their endpoint averages give the vector from LE to TE
         # after translating the suction side by one total pitch; the constant translation cancels in the difference.
-        # Length of that vactor is blade chord.
-        rotor_ideal = rotor_shape.dimensionalize().uncorrected
-        pressure_surface, suction_surface = rotor_ideal.pressure_surface, rotor_ideal.suction_surface
+        # Length of that vactor is blade chord. Select the BL-corrected nonsymmetric rotor when available,
+        # preserving the existing uncorrected path otherwise.
+        rotor_shapes = rotor_shape.dimensionalize()
+        use_corrected_rotor = (not self.symmetric_blades and rotor_shape.calculate_boundary_layer
+                               and rotor_shapes.corrected is not None)
+        rotor_geometry = rotor_shapes.corrected if use_corrected_rotor else rotor_shapes.uncorrected
+        pressure_surface, suction_surface = rotor_geometry.pressure_surface, rotor_geometry.suction_surface
         rotor_chord = np.hypot(
             (pressure_surface.x[-1] + suction_surface.x[-1] - pressure_surface.x[0] - suction_surface.x[0]) / 2,
             (pressure_surface.y[-1] + suction_surface.y[-1] - pressure_surface.y[0] - suction_surface.y[0]) / 2)
@@ -691,9 +704,9 @@ class SupersonicTurbine:
                                                    meanline_arguments["rotor_width_to_chord"])
 
         # Perform calculations related to rotor LE & TE thicknesses
-        # First subtract open passages from total Euler-radius pitch to obtain blade TE projection on
-        # circumferential direction.
-        t_TE_rotor = turbine_meanline.p_rotor - rotor_ideal.outlet_passage_pitch
+        # Obtain TE circumferential thickness from the selected rotor shape. BL correction can very
+        # slightly decrease LE thickness as well, but this effect is considered to be negligible.
+        t_TE_rotor = rotor_geometry.trailing_edge_thickness
         # Store the calculated projected LE thickness directly in the returned meanline object.
         turbine_meanline.t_LE_rotor = t_LE_rotor
         # Match the assumed TE thickness with the obtained one, independently of the capped value used by Turbine1D.
@@ -711,8 +724,8 @@ class SupersonicTurbine:
         # Store the total stator throat area required to pass the admitted mass flow.
         turbine_meanline.A_throat_stator = A_throat_stator
 
-        # Measure the narrowest gap between the uncorrected rotor passage walls at Euler radius.
-        w_Euler = self._calculate_rotor_throat_width(rotor_ideal)
+        # Measure the narrowest gap between rotor blades.
+        w_Euler = self._calculate_rotor_throat_width(rotor_geometry)
         # Assume geometrically similar sections, with throat width proportional to radius: w(r)=w_Euler*r/R_Euler.
         # Integrate this width from hub to tip, then include one passage per blade and the admitted fraction.
         turbine_meanline.A_throat_rotor = (w_Euler * turbine_meanline.no_blades_rotor
@@ -1262,8 +1275,13 @@ class SupersonicTurbine:
 
         # The CAD profile joins the pressure wall to the periodically translated suction wall of one blade.
         # Convert its millimetres to metres, centre the leading edge, and put its upstream edge after the axial gap.
-        blade_profile = np.multiply(np.column_stack((self.rotor_shape.uncorrected_blade_profile_x_CAD,
-                                                    self.rotor_shape.uncorrected_blade_profile_y_CAD)), 1e-3)
+        # Plot the same corrected or uncorrected rotor used for design measurements.
+        use_corrected_rotor = (not self.symmetric_blades and self.rotor_shape.calculate_boundary_layer
+                               and self.rotor_shape.nondimensional_shapes.corrected is not None)
+        profile_x, profile_y = ((self.rotor_shape.blade_profile_x_CAD, self.rotor_shape.blade_profile_y_CAD)
+                                if use_corrected_rotor else (self.rotor_shape.uncorrected_blade_profile_x_CAD,
+                                                             self.rotor_shape.uncorrected_blade_profile_y_CAD))
+        blade_profile = np.multiply(np.column_stack((profile_x, profile_y)), 1e-3)
         blade_profile[:, 0] = np.subtract(blade_profile[:, 0], np.min(blade_profile[:, 0]))
         blade_profile[:, 1] = np.subtract(blade_profile[:, 1], self.rotor_shape.dimensional_leading_edge_thickness / 2)
         blade_profile, blade_end_cap_faces = triangulate_profile(blade_profile)
@@ -1343,8 +1361,13 @@ class SupersonicTurbine:
 
         # Use the closed single-blade CAD profile, whose coordinates are already in millimetres.
         # Put the stator exit at x=0 and the rotor's upstream edge at the meanline axial clearance.
-        blade_profile = np.column_stack((self.rotor_shape.uncorrected_blade_profile_x_CAD,
-                                        self.rotor_shape.uncorrected_blade_profile_y_CAD))
+        # Plot the same corrected or uncorrected rotor used for design measurements.
+        use_corrected_rotor = (not self.symmetric_blades and self.rotor_shape.calculate_boundary_layer
+                               and self.rotor_shape.nondimensional_shapes.corrected is not None)
+        profile_x, profile_y = ((self.rotor_shape.blade_profile_x_CAD, self.rotor_shape.blade_profile_y_CAD)
+                                if use_corrected_rotor else (self.rotor_shape.uncorrected_blade_profile_x_CAD,
+                                                             self.rotor_shape.uncorrected_blade_profile_y_CAD))
+        blade_profile = np.column_stack((profile_x, profile_y))
         blade_profile[:, 0] = np.add(np.subtract(blade_profile[:, 0], np.min(blade_profile[:, 0])), axial_gap_mm)
         blade_profile[:, 1] = np.subtract(blade_profile[:, 1],
                                           self.rotor_shape.dimensional_leading_edge_thickness * 1e3 / 2)

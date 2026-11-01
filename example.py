@@ -1,8 +1,10 @@
+import numpy as np
 from RocketTurbines.Turbine1D import Turbine1D
 from RocketTurbines.IdealGas import IdealGas
 from RocketTurbines.TraupelLossModel import TraupelLossModel
 from RocketTurbines.SupersonicTurbine import SupersonicTurbine
 from RocketTurbines.GA_optimizer.optimization_functions import optimize_turbine
+from RocketTurbines.GA_optimizer.Smith_chart import plot_Smith_chart
 
 # Create a gas object
 gas = IdealGas(T_max=900, T_min=450, species=["H2O","O2"], mass_fractions=[0.54, 0.46])
@@ -37,7 +39,7 @@ SupersonicStatorNozzle_arguments = dict(
 
 # And for SupersonicStatorBlade
 SupersonicRotorBlades_arguments = dict(
-    number_of_nodes=51, calculate_starting=False, calculate_boundary_layer=False,
+    number_of_nodes=51, calculate_starting=False, calculate_boundary_layer=True,
     use_leading_edge_entry_correction=False)
 
 # Create SupersonicTurbine object
@@ -58,6 +60,20 @@ supersonic_turbine.turbine_meanline.print_geometry()
 supersonic_turbine.plot_3D_geometry()
 # Plot 2D geometry of the blades
 supersonic_turbine.plot_2D_geometry(number_of_rotor_blades=10)
+
+# The code also has functionality to generate Smith diagrams by exploring efficiency over flow and work coefficients
+# while keeping the other meanline inputs fixed.
+Smith_chart_arguments = dict(
+    reaction_isentropic_tt=0, RPM=30e3, shaft_power=30e3, mdot=0.15, T_t0=900, p_t0=50e5,
+    radial_clearance=0.1e-3, no_blades_stator=1, no_blades_rotor=47,
+    chord_over_pitch_stator=3.300, chord_over_pitch_rotor=2.518,
+    t_TE_stator=0.5e-3, t_TE_rotor=0.5e-3, Ra_roughness=3e-6, admission_fraction=0.05440,
+    s_ax_over_pitch_rotor=0.35, delta_s_estimate=[350, 130, 200])
+# The number of samples sets map resolution; choose any of the four efficiency names from Turbine1D.
+Smith_chart_results = plot_Smith_chart(
+    flow_coefficient_array=np.linspace(0.25, 3., 50),
+    work_coefficient_array=np.linspace(1., 6., 50), efficiency_to_plot="eta_tt",
+    Turbine1D_arguments=Smith_chart_arguments, gas=gas, loss_model=loss_model)
 
 # Now optimize the same turbine with geometry-informed scouting of the design space, followed by a mixed-integer GA.
 # Define the fixed inputs to Turbine1D

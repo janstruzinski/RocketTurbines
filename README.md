@@ -164,7 +164,8 @@ greater than two. Tooth spacing is $b_r/(n_{\mathrm{teeth}}-1)$ across the rotor
 
 `A_throat_stator` and `A_throat_rotor` are initialized to `None` and are not calculated by `size_turbine`.
 `SupersonicTurbine` supplies these total throat areas within the admitted sector, in m², from its throat sizing and
-blading geometry without BL correction.
+blading geometry. The stator uses its uncorrected geometry; the rotor uses BL-corrected geometry for nonsymmetric
+shape when BL calculations are switched on, and otherwise uses uncorrected geometry.
 
 `analysis_results_at_design_point["M_r2_ideal_r_real_s_construction"]` is initialized to `None` and remains `None`
 after `size_turbine`, including when resizing a previously constructed design. `SupersonicTurbine.evaluate_design`
@@ -793,8 +794,9 @@ Its principal workflow is:
 
 The meanline assumptions in the [`Turbine1D`](#turbine1d) section still apply. The stator consists of identical
 nozzles placed at uniform angular pitch within one admitted sector. `no_blades_stator` is the number of nozzles in
-that sector; `no_blades_rotor` counts blades around the full circumference. All packing and chord measurements use
-the **uncorrected contours**, before boundary-layer displacement corrections.
+that sector; `no_blades_rotor` counts blades around the full circumference. Stator packing and chord measurements use
+the uncorrected nozzle contours. Nonsymmetric rotor measurements and plots use the BL-corrected contour when BL is
+enabled and the corrected shape is available; symmetric rotors and rotors without BL use the uncorrected contour.
 
 The following symbols refer to the axial view of a nozzle exit, looking along the machine axis:
 
@@ -826,7 +828,7 @@ $$
 t_{s,\min}^{\mathrm{proj}}=\frac{t_{\min,s}}{\cos\alpha_1}.
 $$
 
-BL calculations are disabled for both rows. A single nozzle has no neighbouring nozzle wall: its meanline `t_TE_stator`
+Stator BL calculations and aftermixing for both rows are disabled. A single nozzle has no neighbouring nozzle wall: its meanline `t_TE_stator`
 is fixed at zero, and no inter-nozzle metal-thickness constraint is applied.
 
 ![Axial-view packing of multiple and single MOC and de Laval nozzles, with exit dimensions, radii, pitch, open arc and spacing](docs/figures/supersonic_nozzle_packing.png)
@@ -890,9 +892,10 @@ Computed blading arguments override duplicate values in the input dictionaries. 
 was requested. The meanline isentropic reference Mach numbers already account for the losses needed to reach the
 actual flow state; matching the mixed Mach again in the blading calculation would count those losses twice.
 
-`calculate_boundary_layer=False` is enforced for both the stator nozzle and rotor blade, overriding supplied values.
-Only geometry without BL correction is used by the coupling, so disabling BL calculations improves speed and robustness.
-The constructor emits a `UserWarning` for each row whose explicit or default BL setting is switched off.
+`calculate_boundary_layer=False` is enforced for the stator and for symmetric rotors. Nonsymmetric rotors retain the
+user's BL settings, including the blading library's default of `True` when the option is omitted. If BL runs and a
+corrected shape is available, that shape supplies every rotor geometry measurement and both turbine plots; otherwise
+the uncorrected rotor is used. `calculate_aftermixing=False` is enforced for both rows independently of the rotor BL setting.
 
 For `symmetric_blades=False`, the constructor also enforces these rotor options:
 
@@ -908,6 +911,11 @@ fixed; the meanline outlet ideal Mach initializes the matching solve. With `symm
 thickness-matching options are left as supplied by the user. `print_user_warnings=False` suppresses the warnings
 emitted by `SupersonicTurbine`.
 
+With rotor BL calculations enabled, the blading library independently matches the corrected contour's own LE/TE
+thicknesses. The BL corrected design supplies then ideal outlet Mach number used for shape construction and geometry
+used by this class. BL displacement can reduce TE thickness and change the outlet Mach needed for matching;
+aftermixing remains disabled.
+
 #### Coupling logic and numerical solution
 
 The following shows the coupling logic between meanline design from `Turbine1D` and blade design from 
@@ -918,7 +926,7 @@ The following shows the coupling logic between meanline design from `Turbine1D` 
    |
    v
  Copy input dictionaries; validate inputs and create the shared Fluid object.
- Disable mixed-flow Mach matching and BL calculations; match nonsymmetric rotor LE/TE thicknesses using outlet Mach.
+ Disable aftermixing, mixed-flow Mach matching and stator/symmetric-rotor BL; retain nonsymmetric-rotor BL settings.
  Initialize design results to None; return without solving.
  Loss-model assumption: evaluate_design caps each TE thickness/pitch input to Turbine1D.size_turbine at 0.24.
  Retain full assumed TE thicknesses for shaping and residual matching; flag any limited losses.
@@ -954,6 +962,7 @@ The following shows the coupling logic between meanline design from `Turbine1D` 
    |      |      Select the blade-row outlet angle, or negative inlet angle for symmetric_blades.   |
    |      |      Calculate LE thickness projection = t_min_rotor/cos(inlet angle); construct rotor. |
    |      |      For nonsymmetric blades, match LE/TE thickness projections via outlet Mach.        |
+   |      |      Use the BL corrected rotor for measurements and plots when available.              |
    |      |      Pass rotor LE thickness/total pitch; pitch includes metal at Euler radius.         |
    |      |      Measure TE thickness projection and chord between blade edges.                     |
    |      |      Measure rotor axial extent and match rotor_width_to_chord.                         |
@@ -1121,6 +1130,7 @@ outlet angle. Both margins are informational and do not drive the internal coupl
 reports metal thinner than the requested minimum. Matching circumferential LE/TE thickness projections does not
 imply equal normal thicknesses when inlet and outlet angles differ. The rotor chord is the straight
 distance between the blade LE and TE centres; its ratio to $p_r$ allows to calculate the rotor chord/pitch residual.
+These measurements use the BL corrected rotor when available.
 
 The rotor axial width is $b_r=\max(x)-\min(x)$ over both blade surfaces. The fifth residual is:
 
@@ -1369,7 +1379,7 @@ After `couple_meanline_and_blading()` converges, the public result attributes ar
 | --- | --- |
 | `turbine_meanline` | `Turbine1D` object evaluated with capped TE inputs; its `t_TE_stator` and `t_TE_rotor` retain those capped values. Its `t_LE_rotor` stores the LE thickness projection; `R_nozzle` stores the actual nozzle exit-centre radius. |
 | `stator_shape` | `SupersonicStatorNozzle` object; uncorrected dimensional geometry is in `dimensional_shapes.uncorrected`. |
-| `rotor_shape` | `SupersonicRotorBlade` object; call `dimensionalize().uncorrected` for the geometry used by the coupling. |
+| `rotor_shape` | `SupersonicRotorBlade` object; `dimensionalize().corrected` supplies nonsymmetric rotor geometry when BL is enabled and that shape exists; otherwise use `.uncorrected`. The same selection is used by both turbine plots. |
 | `x_solution` | Converged design-variable vector described above, retaining full uncapped TE thickness assumptions for the blading. |
 | `coefficients` | Dictionary of optimality coefficients, thickness margins and boolean TE-loss limitation flags listed below. |
 
@@ -1392,7 +1402,8 @@ the resulting meanline design. For example:
 stage = turbine.turbine_meanline
 eta_ts = stage.analysis_results_at_design_point["eta_ts"]
 nozzle_exit = turbine.stator_shape.dimensional_shapes.uncorrected
-rotor_contour = turbine.rotor_shape.dimensionalize().uncorrected
+rotor_shapes = turbine.rotor_shape.dimensionalize()
+rotor_contour = rotor_shapes.corrected if rotor_shapes.corrected is not None else rotor_shapes.uncorrected
 packing = turbine.coefficients
 turbine.print_design_coupling_results()
 ```
@@ -1718,3 +1729,27 @@ its termination reason states the generation limit rather than claiming numerica
 Statistics count unique evaluated designs, cache hits, successful/failed construction attempts (including
 retries), feasible designs, exact construction-failure messages and output-evaluation errors. A successful
 construction is not necessarily feasible.
+
+#### Smith chart
+
+`GA_optimizer/Smith_chart.py` provides `plot_Smith_chart` for a parametric meanline study before optimization.
+It sizes a fresh `Turbine1D` at every flow/work coefficient pair, keeping the other meanline inputs fixed.
+Use coefficient arrays to set the sampled domain and resolution, and select `eta_tt`, `eta_ts`, `eta_poly_tt`
+or `eta_poly_ts`. Failed evaluations and unusable efficiencies remain blank; contours do not bridge failed cells.
+
+```python
+import numpy as np
+from RocketTurbines.GA_optimizer.Smith_chart import plot_Smith_chart
+
+smith_chart = plot_Smith_chart(
+    flow_coefficient_array=np.linspace(0.25, 3., 21),
+    work_coefficient_array=np.linspace(1., 6., 21), efficiency_to_plot="eta_tt",
+    Turbine1D_arguments=Smith_chart_arguments, gas=gas, loss_model=loss_model)
+```
+
+`Smith_chart_arguments` contains fixed `Turbine1D.size_turbine` inputs, excluding `flow_coefficient`,
+`work_coefficient_tt`, `gas` and `loss_model`; `example.py` supplies a complete dictionary before its optimization
+section. The function displays the plot and returns its figure, axes, coefficient arrays, masked efficiency grid,
+best sampled coefficients and efficiency, and failure-reason counts. The grid is indexed as `[work, flow]` and
+stores efficiencies as fractions. All failed samples produce an explanatory empty plot with both best fields set
+to `None`.
