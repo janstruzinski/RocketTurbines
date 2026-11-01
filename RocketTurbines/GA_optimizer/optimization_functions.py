@@ -284,6 +284,18 @@ def optimize_turbine(gas, loss_model, Turbine1D_arguments, optimization_argument
     constraint_count = 1 + sum(1 if isinstance(interval, bool) else sum(bound is not None for bound in interval)
                              for interval in constraint_ranges.values())
 
+    # Prepare output lookups, normalization scales and tolerances once; only model values change between designs.
+    constraint_parameters = {}
+    for name, interval in constraint_ranges.items():
+        numerator, *denominator = name.split("/")
+        scale = 1.
+        # If the constraint is numeric, normalize its residuals using the largest absolute bound.
+        if not isinstance(interval, bool):
+            scale = max(abs(bound) for bound in interval if bound is not None)
+            scale = scale or (1e-3 if name in coefficient_names else 1.)
+        tolerance = geometry_tolerance if name in coefficient_names else 0.
+        constraint_parameters[name] = (numerator, denominator, interval, scale, tolerance)
+
     # --- Worker configuration and search state ---
 
     available_threads = getattr(os, "process_cpu_count", os.cpu_count)() or 1
@@ -382,19 +394,16 @@ def optimize_turbine(gas, loss_model, Turbine1D_arguments, optimization_argument
             # If the attribute contains analysis, blade-row or loss results, merge those named outputs into the values.
             if isinstance(result, dict):
                 values.update(result)
-        rotor_chord = meanline.c_rotor
-        # If blading was constructed, add only its packing/thickness margins and measure rotor contour chord/pitch.
+        # If blading was constructed, read its margins and the contour chord/pitch already saved by coupling.
         if mode == "SupersonicTurbine":
             values.update({name: turbine.coefficients[name] for name in coefficient_names})
-            # Measure the constructed contour, rather than its nearby meanline estimate.
-            rotor_contour = turbine.rotor_shape.dimensionalize().uncorrected
-            pressure_surface, suction_surface = rotor_contour.pressure_surface, rotor_contour.suction_surface
-            rotor_chord = np.hypot(
-                (pressure_surface.x[-1] + suction_surface.x[-1] - pressure_surface.x[0] - suction_surface.x[0]) / 2,
-                (pressure_surface.y[-1] + suction_surface.y[-1] - pressure_surface.y[0] - suction_surface.y[0]) / 2)
-        # Calculate each final ratio once, using the contour chord when blading was constructed.
+            rotor_chord_over_pitch = turbine.x_solution[1]
+        else:
+            # Otherwise, obtain rotor chord/pitch from the stored meanline geometry.
+            rotor_chord_over_pitch = meanline.c_rotor / meanline.p_rotor
+        # Recover the remaining ratios from stored dimensions; Turbine1D does not store those ratios separately.
         values.update(chord_over_pitch_stator=meanline.c_stator / meanline.p_stator,
-                      chord_over_pitch_rotor=rotor_chord / meanline.p_rotor,
+                      chord_over_pitch_rotor=rotor_chord_over_pitch,
                       rotor_width_to_chord=meanline.width_rotor / meanline.c_rotor,
                       s_ax_over_pitch_rotor=meanline.s_ax / meanline.p_rotor)
         # Return only scalar diagnostics; gas, loss-model and other complex objects stay in the turbine object.
@@ -404,9 +413,8 @@ def optimize_turbine(gas, loss_model, Turbine1D_arguments, optimization_argument
     def constraint_residuals(values):
         """Convert ranges and booleans to pymoo inequalities: each residual must be <= 0."""
         residuals = []
-        for name, interval in constraint_ranges.items():
+        for name, (numerator, denominator, interval, scale, tolerance) in constraint_parameters.items():
             # Resolve either a direct output name or a simple ratio such as l_rotor/D_mean.
-            numerator, *denominator = name.split("/")
             value = values[numerator] / values[denominator[0]] if denominator else values[numerator]
             # If a constrained output is unavailable or nonfinite, treat this output evaluation as invalid.
             if value is None or not np.isfinite(value):
@@ -418,12 +426,7 @@ def optimize_turbine(gas, loss_model, Turbine1D_arguments, optimization_argument
             if isinstance(interval, bool):
                 residuals.append(0. if isinstance(value, (bool, np.bool_)) and value == interval else 1.)
             else:
-                # For a numeric constraint, express its lower and upper limits as separate signed residuals.
-                # Normalize different units so a metre-valued packing error can guide selection too.
-                scale = max([abs(bound) for bound in interval if bound is not None])
-                scale = scale or (1e-3 if name in coefficient_names else 1.)
-                # Apply the length tolerance only to the packing and thickness coefficients.
-                tolerance = geometry_tolerance if name in coefficient_names else 0.
+                # Use the prepared scale and tolerance for this constraint's signed residuals.
                 # If a lower bound is present, positive residual means the result is too small.
                 if interval[0] is not None:
                     residuals.append((interval[0] - value - tolerance) / scale)
@@ -453,7 +456,7 @@ def optimize_turbine(gas, loss_model, Turbine1D_arguments, optimization_argument
                                        if name != "admission_fraction" or design["no_blades_stator"] != 1])
             # If the normalized design distance is small enough, retain the archived solution as a possible warm start.
             if distance <= .6:
-                neighbors.append((distance, previous["solution"]))
+                neighbors.append((distance, previous["coupling_solution"]))
 
         # Transfer all five inner unknowns, including rotor width/chord.
         # Begin with the supplied initial estimates; replace them only if a compatible successful neighbor exists.
@@ -468,9 +471,10 @@ def optimize_turbine(gas, loss_model, Turbine1D_arguments, optimization_argument
         fallback = dict(design, chord_over_pitch_stator=.15, chord_over_pitch_rotor=2.8,
                         t_TE_stator=.00025, t_TE_rotor=.00025, rotor_width_to_chord=1.)
         choices = [primary, fallback]
+        # Both initializations share duty, RPM and loading, so their Euler diameter is identical.
+        diameter = euler_diameter(design)
         for choice in choices:
             # Keep starting thicknesses safely below the mandatory 0.2 pitch limit.
-            diameter = euler_diameter(choice)
             choice["t_TE_rotor"] = np.clip(choice["t_TE_rotor"], 0., .18 * np.pi * diameter / choice["no_blades_rotor"])
             choice["t_TE_stator"] = np.clip(choice["t_TE_stator"], 0., .18 * np.pi * diameter
                                              * choice["admission_fraction"] / choice["no_blades_stator"])
@@ -573,18 +577,17 @@ def optimize_turbine(gas, loss_model, Turbine1D_arguments, optimization_argument
                 # For repeated proposals, count a cache hit instead of spending another construction evaluation.
                 statistics["cache_hits"] += 1
         # Pump GUI events while workers run; preview completed designs without changing coupling seeds.
-        future_keys = {future: key for key, future in pending.items()}
-        remaining, completed_results = set(future_keys), {}
+        remaining, completed_records = set(pending.values()), []
         while remaining:
             # Poll futures on the calling thread, allowing the GUI to process events while model threads are busy.
             finished, remaining = wait(remaining, timeout=.1, return_when=FIRST_COMPLETED)
-            for future in finished:
-                completed_results[future_keys[future]] = future.result()
+            completed_records.extend(future.result()[0] for future in finished)
             # Preview completed records immediately, but keep them out of the coupling archive until the batch ends.
-            update_plot([result[0] for result in completed_results.values()], running=len(remaining))
+            update_plot(completed_records, running=len(remaining))
         # Commit in submission order only after the whole batch, preserving nearest-root choices.
-        for key in pending:
-            record, turbine = completed_results[key]
+        for key, future in pending.items():
+            # The future retains its completed result; reading it again does not rerun the model.
+            record, turbine = future.result()
             # Commit the completed record and update unique-design counts, including all initialization attempts.
             cache[key] = record
             evaluations.append(record)
@@ -602,9 +605,9 @@ def optimize_turbine(gas, loss_model, Turbine1D_arguments, optimization_argument
             # If the design is feasible and improves the incumbent, retain its full turbine object as the new winner.
             if record["feasible"] and (best_record is None or record["efficiency"] > best_record["efficiency"]):
                 best_record, best_turbine = record, turbine
-            # If the record contains a successful inner solution, make it available to subsequent evaluation batches.
+            # If the record contains a successful inner solution, archive that same record for later batches.
             if "coupling_solution" in record:
-                coupling_archive.append(dict(design=record["design"], solution=record["coupling_solution"]))
+                coupling_archive.append(record)
         # Refresh committed totals after the batch, then return records in the same order as the input candidates.
         update_plot()
         return [cache[key] for key in keys]
@@ -686,8 +689,9 @@ def optimize_turbine(gas, loss_model, Turbine1D_arguments, optimization_argument
                 points.set_offsets(coordinates)
                 points.set_array(efficiencies)
                 # Highlight the largest feasible efficiency using the shared colors, regardless of infeasible values.
-                maximum_feasible_efficiency = float(efficiencies.max())
-                best_coordinates = coordinates[int(np.argmax(efficiencies))]
+                best_index = int(np.argmax(efficiencies))
+                maximum_feasible_efficiency = float(efficiencies[best_index])
+                best_coordinates = coordinates[best_index]
                 maximum_point.set_offsets(best_coordinates.reshape(1, 2))
                 maximum_point.set_facecolors(points.cmap(points.norm(maximum_feasible_efficiency)))
                 # Move the max annotation with the winner and place it away from the nearest horizontal plot edge.
@@ -770,24 +774,27 @@ def optimize_turbine(gas, loss_model, Turbine1D_arguments, optimization_argument
         initial += sample_designs(population_size - len(initial))
 
         # Mixed operators round blade counts after crossover and mutation.
-        duplicate_elimination = ga_arguments.pop("eliminate_duplicates", MixedVariableDuplicateElimination())
+        duplicate_elimination = ga_arguments.pop("eliminate_duplicates", True)
         # If duplicate elimination was supplied as a boolean, convert it to the matching pymoo strategy object.
         if isinstance(duplicate_elimination, bool):
             duplicate_elimination = (MixedVariableDuplicateElimination() if duplicate_elimination
                                      else NoDuplicateElimination())
-        mating_arguments = dict(selection=ga_arguments.pop("selection", RandomSelection()))
-        # Build real and integer crossover/mutation operators from the chosen probabilities and distribution
-        # indices.
-        for operator_name, operator_class in (("crossover", SBX), ("mutation", PM)):
-            settings = dict(prob=operator_settings[operator_name + "_probability"],
-                            eta=operator_settings[operator_name + "_eta"])
-            mating_arguments[operator_name] = ga_arguments.pop(operator_name, {
-                Real: operator_class(**settings),
-                Integer: operator_class(**settings, vtype=float, repair=RoundingRepair())})
-        # Use custom mating unchanged when supplied; otherwise assemble the tuned mixed-variable mating operator.
         mating = ga_arguments.pop("mating", None)
         # If the user did not supply custom mating, build it from the selected real/integer operators.
         if mating is None:
+            mating_arguments = dict(selection=ga_arguments.pop("selection") if "selection" in ga_arguments
+                                    else RandomSelection())
+            for operator_name, operator_class in (("crossover", SBX), ("mutation", PM)):
+                # If a custom operator was supplied, use it without constructing the unused default pair.
+                if operator_name in ga_arguments:
+                    mating_arguments[operator_name] = ga_arguments.pop(operator_name)
+                else:
+                    # Otherwise, build the tuned real and integer operators, rounding the integer offspring.
+                    settings = dict(prob=operator_settings[operator_name + "_probability"],
+                                    eta=operator_settings[operator_name + "_eta"])
+                    mating_arguments[operator_name] = {
+                        Real: operator_class(**settings),
+                        Integer: operator_class(**settings, vtype=float, repair=RoundingRepair())}
             mating = MixedVariableMating(**mating_arguments, eliminate_duplicates=duplicate_elimination)
         # Initialize pymoo with the scout-derived population and keep stopping decisions in the loop below.
         algorithm = MixedVariableGA(pop_size=population_size, mating=mating, sampling=Population.new(X=initial),
@@ -837,19 +844,16 @@ def optimize_turbine(gas, loss_model, Turbine1D_arguments, optimization_argument
     # Convert failure counters to ordinary dictionaries for the result object.
     statistics["failure_reasons"] = dict(statistics["failure_reasons"])
     statistics["evaluation_errors"] = dict(statistics["evaluation_errors"])
-    # Keep the least-violating record available when the search returns no feasible turbine.
-    closest = min(evaluations, key=rank)
     # If terminal progress is enabled, report the stopping reason and number of completed GA generations.
     if verbose:
-        completed_generations = sum(row["stage"] == "GA" for row in history)
-        print(f"Optimization finished: {termination}; {completed_generations} GA generations completed.", flush=True)
+        print(f"Optimization finished: {termination}; {generation} GA generations completed.", flush=True)
     # Capture results and elapsed optimization time before any wait for the user to close the final plot.
     optimization_result = dict(
         success=best_record is not None, best_turbine=best_turbine,
         best_design=deepcopy(best_record["design"]) if best_record else None,
         best_results=deepcopy(best_record["values"]) if best_record else None,
         best_efficiency=best_record["efficiency"] if best_record else None,
-        best_infeasible=None if best_record else closest, termination=termination,
+        best_infeasible=None if best_record else min(evaluations, key=rank), termination=termination,
         elapsed_seconds=time.perf_counter() - started, statistics=statistics,
         evaluations=evaluations, history=history, figure=figure)
     # If the caller wants to inspect an open interactive plot, keep it open after the calculations finish.

@@ -32,6 +32,17 @@ def sample_designs(count, *, variable_bounds, integer_names, constraint_ranges, 
     samples = sampler.random_base2(sample_power)[:count]
     candidates = []
 
+    # Read the fixed annulus constraints once for this batch of proposals.
+    tip_interval = constraint_ranges.get("D_tip", (None, None))
+    tip_limit = None if isinstance(tip_interval, bool) else tip_interval[1]
+    height_intervals = [constraint_ranges.get(name, (None, None)) for name in ("l_rotor", "l_stator")]
+    blade_height = max(0. if isinstance(interval, bool) else interval[0] or 0. for interval in height_intervals)
+    diameter_limit = None
+    # If tip diameter and minimum blade height define a usable annulus, estimate its Euler-diameter limit.
+    # This estimate biases proposals only; actual constructed geometry is still checked by the constraints.
+    if tip_limit is not None and tip_limit > blade_height > 0:
+        diameter_limit = np.hypot(tip_limit - blade_height, blade_height)
+
     for sample in samples:
         # Start with uniform real variables and uniformly sampled inclusive integer bounds.
         fractions = dict(zip(variable_names, sample))
@@ -47,16 +58,8 @@ def sample_designs(count, *, variable_bounds, integer_names, constraint_ranges, 
 
         # Estimate the largest Euler diameter compatible with the requested tip and blade height.
         design = complete_design(candidate)
-        tip_interval = constraint_ranges.get("D_tip", (None, None))
-        tip_limit = None if isinstance(tip_interval, bool) else tip_interval[1]
-        height_intervals = [constraint_ranges.get(name, (None, None)) for name in ("l_rotor", "l_stator")]
-        blade_height = max(0. if isinstance(interval, bool) else interval[0] or 0. for interval in height_intervals)
-
-        # If both tip diameter and a positive minimum blade height are constrained, estimate a usable diameter
-        # range.
-        # These estimates bias proposals only; the actual constructed geometry is still checked by the constraints.
-        if tip_limit is not None and tip_limit > blade_height > 0:
-            diameter_limit = np.hypot(tip_limit - blade_height, blade_height)
+        # If an annulus limit is available, bias RPM and loading toward compatible Euler diameters.
+        if diameter_limit is not None:
             specific_work = design["shaft_power"] / design["mdot"]
             work_lower, work_upper = variable_bounds.get(
                 "work_coefficient_tt", (design["work_coefficient_tt"],) * 2)
@@ -106,15 +109,16 @@ def sample_designs(count, *, variable_bounds, integer_names, constraint_ranges, 
 
         # Favor rotor counts that leave room for the circumferential metal thickness.
         design = complete_design(candidate)
-        diameter = euler_diameter(design)
         # If rotor blade count is variable, favor counts that leave room for the projected minimum metal thickness.
         if "no_blades_rotor" in candidate:
             lower, upper = variable_bounds["no_blades_rotor"]
-            # Estimate the inlet-angle projection needed to convert true minimum rotor metal thickness to blockage.
-            cosine_beta = design["flow_coefficient"] / np.hypot(
-                design["flow_coefficient"], design["work_coefficient_tt"] / 2)
-            thickness = (design.get("t_min_rotor", 0.) / max(cosine_beta, 1e-6)
-                         if mode == "SupersonicTurbine" else design["t_TE_rotor"])
+            diameter = euler_diameter(design)
+            thickness = design["t_TE_rotor"]
+            # If blading will be constructed, project its minimum metal thickness using the estimated inlet angle.
+            if mode == "SupersonicTurbine":
+                cosine_beta = design["flow_coefficient"] / np.hypot(
+                    design["flow_coefficient"], design["work_coefficient_tt"] / 2)
+                thickness = design.get("t_min_rotor", 0.) / max(cosine_beta, 1e-6)
             # Reserve a thickness/pitch ratio of 0.18 in these proposals, leaving room below the enforced 0.2 limit.
             count_for_thickness = int(.18 * np.pi * diameter / max(thickness, 1e-12))
             preferred_upper = max(lower, min(upper, count_for_thickness))
