@@ -37,7 +37,7 @@ The repository is organised as follows:
 - `RocketTurbines/RelaxedAitken.py` supplies the bounded, adaptively relaxed fixed-point solver used by `Turbine1D` and
   `SupersonicTurbine`.
 - `RocketTurbines/GA_optimizer/` contains design-domain scouting and mixed-variable GA optimization functions.
-- `RocketTurbines/example.py` demonstrates sizing a partial-admission impulse turbine with a water-vapour/oxygen mixture.
+- `example.py` demonstrates sizing a partial-admission impulse turbine with a water-vapour/oxygen mixture.
 - `docs/figures/` contains the empirical-coefficient plots and supersonic nozzle diagrams shown below.
   `docs/plot_traupel_coefficients.py` and `docs/plot_supersonic_geometry.py` regenerate them with Matplotlib.
 - `setup.py` installs the modules above and their dependencies, including pymoo and `SupersonicTurbineBlading` from GitHub;
