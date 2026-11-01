@@ -1,8 +1,8 @@
-from Turbine1D import Turbine1D
-from IdealGas import IdealGas
-from TraupelLossModel import TraupelLossModel
-from SupersonicTurbine import SupersonicTurbine
-from GA_optimizer.optimization_functions import optimize_turbine
+from RocketTurbines.Turbine1D import Turbine1D
+from RocketTurbines.IdealGas import IdealGas
+from RocketTurbines.TraupelLossModel import TraupelLossModel
+from RocketTurbines.SupersonicTurbine import SupersonicTurbine
+from RocketTurbines.GA_optimizer.optimization_functions import optimize_turbine
 
 # Create a gas object
 gas = IdealGas(T_max=900, T_min=450, species=["H2O","O2"], mass_fractions=[0.54, 0.46])

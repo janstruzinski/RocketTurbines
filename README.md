@@ -40,7 +40,7 @@ The repository is organised as follows:
 - `example.py` demonstrates sizing a partial-admission impulse turbine with a water-vapour/oxygen mixture.
 - `docs/figures/` contains the empirical-coefficient plots and supersonic nozzle diagrams shown below.
   `docs/plot_traupel_coefficients.py` and `docs/plot_supersonic_geometry.py` regenerate them with Matplotlib.
-- `setup.py` installs the modules above and their dependencies, including pymoo and `SupersonicTurbineBlading` from GitHub;
+- `setup.py` installs the `RocketTurbines` package and its dependencies, including pymoo and `SupersonicTurbineBlading` from GitHub;
   `LICENSE` contains the GNU General Public License version 3.
 
 The current workflows include design-point sizing. Meanline results are stored in the `Turbine1D` object;
@@ -841,7 +841,7 @@ rather than a particular converged turbine design.
 #### Constructor inputs and design setup
 
 ```python
-from SupersonicTurbine import SupersonicTurbine
+from RocketTurbines.SupersonicTurbine import SupersonicTurbine
 
 turbine = SupersonicTurbine(
     gas=gas,
@@ -1516,7 +1516,7 @@ optimizer's random generator, evaluator, cache and coupling archive. The end of 
 coupled-turbine optimization example. Fixed inputs and bounded design variables are supplied separately:
 
 ```python
-from GA_optimizer.optimization_functions import optimize_turbine
+from RocketTurbines.GA_optimizer.optimization_functions import optimize_turbine
 
 Turbine1D_arguments = dict(
     reaction_isentropic_tt=0., s_ax_over_pitch_rotor=0.35,

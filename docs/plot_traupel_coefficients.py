@@ -13,8 +13,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / 'RocketTurbines'))
-from TraupelLossModel import TraupelLossModel
+sys.path.insert(0, str(ROOT))
+from RocketTurbines.TraupelLossModel import TraupelLossModel
 
 OUTPUT = ROOT / 'docs' / 'figures'
 OUTPUT.mkdir(parents=True, exist_ok=True)

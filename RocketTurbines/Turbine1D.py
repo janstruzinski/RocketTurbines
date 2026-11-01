@@ -3,9 +3,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.optimize import root_scalar, least_squares
 from tabulate import tabulate
-from TraupelLossModel import TraupelLossModel
-from IdealGas import IdealGas
-from RelaxedAitken import solve_with_relaxed_aitken
+from .TraupelLossModel import TraupelLossModel
+from .IdealGas import IdealGas
+from .RelaxedAitken import solve_with_relaxed_aitken
 
 class Turbine1D:
     def __init__(self):

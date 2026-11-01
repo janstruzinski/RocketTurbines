@@ -18,8 +18,8 @@ from pymoo.operators.mutation.pm import PM
 from pymoo.operators.repair.rounding import RoundingRepair
 from pymoo.core.duplicate import NoDuplicateElimination
 from pymoo.operators.selection.rnd import RandomSelection
-from Turbine1D import Turbine1D
-from SupersonicTurbine import SupersonicTurbine
+from ..Turbine1D import Turbine1D
+from ..SupersonicTurbine import SupersonicTurbine
 from . import scouting_functions
 
 
@@ -189,9 +189,10 @@ def optimize_turbine(gas, loss_model, Turbine1D_arguments, optimization_argument
     construction_parameters = {name: parameter for name, parameter in
                                inspect.signature(SupersonicTurbine).parameters.items()
                                if name not in shared_inputs | blading_inputs}
-    fixed_meanline_inputs = deepcopy(dict(Turbine1D_arguments))
-    fixed_construction_inputs = deepcopy(dict(SupersonicTurbine_arguments or {}))
-    optimization_inputs = deepcopy(dict(optimization_arguments))
+    # Read names and bounds here; fixed values are copied when constant_inputs is assembled below.
+    fixed_meanline_inputs = dict(Turbine1D_arguments)
+    fixed_construction_inputs = dict(SupersonicTurbine_arguments or {})
+    optimization_inputs = dict(optimization_arguments)
     allowed_variables = {"RPM", "work_coefficient_tt", "flow_coefficient", "no_blades_stator", "no_blades_rotor",
                          "admission_fraction", "separation_margin", "reaction_isentropic_tt"}
     # If an optimization name is outside the supported set, reject it before scouting or construction begins.
@@ -243,9 +244,9 @@ def optimize_turbine(gas, loss_model, Turbine1D_arguments, optimization_argument
         value = (supplied_inputs[name] if parameter.default is inspect.Parameter.empty
                  else supplied_inputs.get(name, parameter.default))
         constant_inputs[name] = deepcopy(value)
-    # Copy blading settings once here; each construction attempt receives another private copy.
-    stator_arguments = deepcopy(dict(SupersonicStatorNozzle_arguments or {}))
-    rotor_arguments = deepcopy(dict(SupersonicRotorBlades_arguments or {}))
+    # Read blading settings here; each construction attempt receives its own deep copy.
+    stator_arguments = dict(SupersonicStatorNozzle_arguments or {})
+    rotor_arguments = dict(SupersonicRotorBlades_arguments or {})
 
     # --- Constraint names and ranges ---
 
@@ -267,7 +268,7 @@ def optimize_turbine(gas, loss_model, Turbine1D_arguments, optimization_argument
     # If the full turbine model is used, also allow its packing coefficients and thickness margins.
     if mode == "SupersonicTurbine":
         output_names.update(coefficient_names)
-    constraint_ranges = deepcopy(dict(constraints or {}))
+    constraint_ranges = dict(constraints or {})
     for name in constraint_ranges:
         parts = name.split("/") if isinstance(name, str) else []
         # If a constraint names an unavailable output or an unsupported expression, report it before scouting.
@@ -381,21 +382,21 @@ def optimize_turbine(gas, loss_model, Turbine1D_arguments, optimization_argument
             # If the attribute contains analysis, blade-row or loss results, merge those named outputs into the values.
             if isinstance(result, dict):
                 values.update(result)
-        # These ratios are derived from the final geometry, not the outer initial estimates.
-        values.update(chord_over_pitch_stator=meanline.c_stator / meanline.p_stator,
-                      chord_over_pitch_rotor=meanline.c_rotor / meanline.p_rotor,
-                      rotor_width_to_chord=meanline.width_rotor / meanline.c_rotor,
-                      s_ax_over_pitch_rotor=meanline.s_ax / meanline.p_rotor)
+        rotor_chord = meanline.c_rotor
         # If blading was constructed, add only its packing/thickness margins and measure rotor contour chord/pitch.
         if mode == "SupersonicTurbine":
             values.update({name: turbine.coefficients[name] for name in coefficient_names})
             # Measure the constructed contour, rather than its nearby meanline estimate.
             rotor_contour = turbine.rotor_shape.dimensionalize().uncorrected
             pressure_surface, suction_surface = rotor_contour.pressure_surface, rotor_contour.suction_surface
-            contour_chord = np.hypot(
+            rotor_chord = np.hypot(
                 (pressure_surface.x[-1] + suction_surface.x[-1] - pressure_surface.x[0] - suction_surface.x[0]) / 2,
                 (pressure_surface.y[-1] + suction_surface.y[-1] - pressure_surface.y[0] - suction_surface.y[0]) / 2)
-            values["chord_over_pitch_rotor"] = contour_chord / meanline.p_rotor
+        # Calculate each final ratio once, using the contour chord when blading was constructed.
+        values.update(chord_over_pitch_stator=meanline.c_stator / meanline.p_stator,
+                      chord_over_pitch_rotor=rotor_chord / meanline.p_rotor,
+                      rotor_width_to_chord=meanline.width_rotor / meanline.c_rotor,
+                      s_ax_over_pitch_rotor=meanline.s_ax / meanline.p_rotor)
         # Return only scalar diagnostics; gas, loss-model and other complex objects stay in the turbine object.
         return {name: value for name, value in values.items()
                 if value is None or isinstance(value, (RealNumber, bool, np.bool_))}
@@ -754,8 +755,8 @@ def optimize_turbine(gas, loss_model, Turbine1D_arguments, optimization_argument
               f"{len(variable_names)} search variables. CV=0 means feasible.", flush=True)
     # Use one thread pool for scouting and GA so worker-local gas and loss-model copies can be reused.
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
-        # Share the evaluator and progress callbacks with scouting; its batches retain the same cache and archive.
-        scouting_functions.prescout_design_domain(
+        # Share evaluation state with scouting and use its returned leader to initialize GA.
+        anchor = scouting_functions.prescout_design_domain(
             evaluate_batch=partial(evaluate_batch, executor=executor), sample_designs=sample_designs,
             local_designs=local_designs, report_progress=report_progress, update_plot=update_plot,
             evaluations=evaluations, rank=rank, scout_size=scout_size,
@@ -763,7 +764,6 @@ def optimize_turbine(gas, loss_model, Turbine1D_arguments, optimization_argument
         # Default to the exhausted-offspring reason if pymoo has no further generations to advance.
         termination = "GA produced no further unique offspring"
         # Seed half the GA locally and half globally; reuse the scout leader without reevaluation.
-        anchor = min(evaluations, key=rank)
         local_count = population_size // 2
         initial = [{name: anchor["design"][name] for name in variable_names}]
         initial += local_designs(anchor, max(0, local_count - 1))
@@ -817,7 +817,6 @@ def optimize_turbine(gas, loss_model, Turbine1D_arguments, optimization_argument
                 break
             # If pymoo cannot continue generating unique offspring, finish rather than repeating cached designs.
             if not algorithm.has_next():
-                termination = "GA produced no further unique offspring"
                 break
             # If enough generations have completed, test improvement over the stagnation window.
             if len(improvement_history) > stagnation_generations:
