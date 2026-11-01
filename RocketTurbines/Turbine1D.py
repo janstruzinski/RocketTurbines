@@ -639,7 +639,7 @@ class Turbine1D:
                                             bounds=(np.zeros(3), 5 * np.maximum(entropy_scales, initial_entropy)),
                                             method="dogbox", jac="2-point", x_scale=entropy_scales,
                                             loss="linear", tr_solver="exact", diff_step=1e-4,
-                                            xtol=1e-5, ftol=None, gtol=1e-5, max_nfev=300, verbose=2)
+                                            xtol=1e-5, ftol=None, gtol=1e-5, max_nfev=300, verbose=0)
             # Raise an error if not converged
             if not entropy_solution.success:
                 raise RuntimeError("Numerical solve for the stator and rotor entropy rises did not converge.")
