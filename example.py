@@ -73,7 +73,8 @@ Smith_chart_arguments = dict(
 Smith_chart_results = plot_Smith_chart(
     flow_coefficient_array=np.linspace(0.25, 3., 50),
     work_coefficient_array=np.linspace(1., 6., 50), efficiency_to_plot="eta_tt",
-    Turbine1D_arguments=Smith_chart_arguments, gas=gas, loss_model=loss_model)
+    Turbine1D_arguments=Smith_chart_arguments, gas=gas, loss_model=loss_model,
+    stator_angle_constraint=75, l_over_D_constraint=None, D_tip_constraint=None)
 
 # Now optimize the same turbine with geometry-informed scouting of the design space, followed by a mixed-integer GA.
 # Define the fixed inputs to Turbine1D
