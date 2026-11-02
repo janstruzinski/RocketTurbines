@@ -149,7 +149,7 @@ The model uses a calorically perfect ideal gas, axial subsonic inlet flow at sta
 blade metal angles or detailed blade profiles.
 
 Station 0 is before the stator, station 1 is between the stator and rotor, and station 2 is after the rotor. In the
-equations below, $`v`$ is absolute velocity, $`w`$ is rotor-relative velocity, $`u`$ is blade speed, $`h`$ is static enthalpy,
+equations below, <var>v</var> is absolute velocity, <var>w</var> is rotor-relative velocity, <var>u</var> is blade speed, <var>h</var> is static enthalpy,
 and $`h_t=h+v^2/2`$ is absolute total enthalpy. Naming convention uses `_t` for total properties, `_s` and `_r` for
 stationary and rotating reference frames, `_ideal` for isentropic reference quantities, and `_tt`, `_ts` and `_ss`
 for total-to-total, total-to-static and static-to-static quantities. `_ideal_r_real_s` means isentropic rotor expansion
@@ -178,7 +178,7 @@ u=\sqrt{\frac{\Delta h_t}{\psi_{tt}}}, \qquad
 \omega=\frac{2\pi N}{60}, \qquad D_E=\frac{2u}{\omega}.
 ```
 
-Here $`N`$ is `RPM`. Inlet and prescribed outlet total enthalpies are
+Here <var>N</var> is `RPM`. Inlet and prescribed outlet total enthalpies are
 
 ```math
 h_{t0}=c_pT_{t0}, \qquad h_{t2}=h_{t0}-\Delta h_t.
@@ -194,8 +194,8 @@ R_{h,tt,\mathrm{ideal}}=
 ```
 
 The remaining inputs prescribe radial clearance, stator and rotor blade counts, chord-to-pitch ratios, trailing-edge
-thickness and surface roughness. For admission fraction $`\varepsilon`$, stator blades number $`n_s`$ is blade count within
-the admitted arc and rotor blades number $`n_r`$ is blade count around the full circumference,
+thickness and surface roughness. For admission fraction <var>ε</var>, stator blades number <var>n<sub>s</sub></var> is blade count within
+the admitted arc and rotor blades number <var>n<sub>r</sub></var> is blade count around the full circumference,
 
 ```math
 p_s=\frac{\varepsilon\pi D_E}{n_s}, \qquad p_r=\frac{\pi D_E}{n_r}, \qquad
@@ -445,7 +445,7 @@ how a coefficient is evaluated in that situation:
   coefficient can continue increasing or decreasing outside the graph.
 
 Inside the sampled ranges, both choices use linear interpolation. Reynolds-number coordinates are logarithmic
-for $`\chi_R`$ and $`c_f`$, and both coordinates are logarithmic for $`C_M`$; linear extrapolation operates in those
+for <var>χ<sub>R</sub></var> and <var>c<sub>f</sub></var>, and both coordinates are logarithmic for <var>C<sub>M</sub></var>; linear extrapolation operates in those
 transformed coordinates. `warn_on_extrapolation=True` prints a warning whenever a coefficient is requested outside
 the sampled range. Disabling the warning does not change the coefficient calculation.
 
@@ -473,28 +473,28 @@ The ranges of sampled graphs with empirical coefficients are:
 
 | Coefficient | Input coordinates and grid limits |
 | --- | --- |
-| $`\chi_R`$ | $`Re=10^4`$ to $`10^7`$; $`k_s/c=10^{-4}`$ to $`2\times10^{-3}`$ |
-| $`\chi_M`$ | Regular: $`M=0`$ to 1.30; near-sonic: 0.65 to 1.40; low-M impulse: 0.15 to 0.75; high-M impulse: 0.65 to 1.30 |
-| $`\zeta_{p0}`$ | Traupel inlet angle: 20 to 120 degrees; outlet angle: 15 to 45 degrees |
+| <var>χ<sub>R</sub></var> | $`Re=10^4`$ to $`10^7`$; $`k_s/c=10^{-4}`$ to $`2\times10^{-3}`$ |
+| <var>χ<sub>M</sub></var> | Regular: $`M=0`$ to 1.30; near-sonic: 0.65 to 1.40; low-M impulse: 0.15 to 0.75; high-M impulse: 0.65 to 1.30 |
+| <var>ζ<sub>p0</sub></var> | Traupel inlet angle: 20 to 120 degrees; outlet angle: 15 to 45 degrees |
 | $`\zeta_{h,\infty}`$ | $`\delta_a/(\chi_M\chi_R\zeta_{p0})=1`$ to 10; $`\delta_a=0.04`$ to 0.20 |
-| $`\zeta_f`$ | $`l/D_m=0`$ to 0.20; $`\nu=0.5`$ to 0.9 |
-| $`F`$ | Turning: 10 to 140 degrees; inlet/outlet speed ratio: 0.2 to 1.0 |
-| $`c_f`$ | $`Re=10^4`$ to $`10^7`$; $`k_s/d_h=0`$ to $`2\times10^{-3}`$ |
+| <var>ζ<sub>f</sub></var> | $`l/D_m=0`$ to 0.20; $`\nu=0.5`$ to 0.9 |
+| <var>F</var> | Turning: 10 to 140 degrees; inlet/outlet speed ratio: 0.2 to 1.0 |
+| <var>c<sub>f</sub></var> | $`Re=10^4`$ to $`10^7`$; $`k_s/d_h=0`$ to $`2\times10^{-3}`$ |
 | $`K_\sigma`$ | Sine of outlet angle: 0.30 to 0.50; velocity-change ratio: 1 to 4; normalised clearance: 0.01 to 0.06 |
-| $`C_M`$ | Disk Reynolds number: $`7\times10^4`$ to $`10^7`$ |
-| $`z`$ | High curve: -50 to +43.7 degrees; low curve: -50 to +60 degrees |
+| <var>C<sub>M</sub></var> | Disk Reynolds number: $`7\times10^4`$ to $`10^7`$ |
+| <var>z</var> | High curve: -50 to +43.7 degrees; low curve: -50 to +60 degrees |
 | $`\Phi^2`$ | $`p_2/p_1=0.3`$ to 1; tooth spacing/clearance: 5 to 13; teeth: 4 to 15 |
 
 These limits describe the available empirical data. They are not recommended turbine-design limits.
-For example, an inlet/outlet speed ratio below 0.2 lies outside the sampled range of $`F`$ and is handled by the
+For example, an inlet/outlet speed ratio below 0.2 lies outside the sampled range of <var>F</var> and is handled by the
 chosen `extrapolation_method`. The prepared $`K_\sigma`$ grid includes extrapolated extensions, as explained in
 [Unshrouded rotor clearance](#unshrouded-rotor-clearance). Negative coefficient predictions are replaced by zero;
-$`\zeta_{p0}`$ is limited to a minimum of 0.001 because it appears in denominators.
+<var>ζ<sub>p0</sub></var> is limited to a minimum of 0.001 because it appears in denominators.
 
 #### Loss definitions and angle convention
 
 For a blade row, the aerodynamic-plus-incidence loss coefficient is defined by the dissipated static enthalpy divided
-by ideal outlet kinetic energy. Let $`q`$ denote stator absolute or rotor-relative outlet speed. Then
+by ideal outlet kinetic energy. Let <var>q</var> denote stator absolute or rotor-relative outlet speed. Then
 
 ```math
 \zeta_{\mathrm{row}}=\frac{\Delta h_{\mathrm{loss,row}}}{q_{\mathrm{ideal}}^2/2}, \qquad
@@ -519,8 +519,8 @@ angle from the negative circumferential direction. The `Turbine1D` to `TraupelLo
 \beta_{2,T}=\frac{\pi}{2}+\beta_{2,\mathrm{blade}}.
 ```
 
-In the following blade-row equations, $`a`$ and $`b`$ are Traupel inlet and outlet angles, $`c`$ is chord, $`l`$ is radial
-blade length, $`p`$ is pitch, $`D_m`$ is mean diameter, $`k_s`$ is equivalent sand roughness, and
+In the following blade-row equations, <var>a</var> and <var>b</var> are Traupel inlet and outlet angles, <var>c</var> is chord, <var>l</var> is radial
+blade length, <var>p</var> is pitch, <var>D<sub>m</sub></var> is mean diameter, <var>k<sub>s</sub></var> is equivalent sand roughness, and
 $`\delta_a=t_{TE}/p`$ is the circumferential trailing-edge blockage. Direct calls to `calculate_zeta_p0()`,
 `calculate_F()` and `calculate_z()` interpolators use degrees, but the methods that wrap these interpolators take
 angles in radians.
@@ -534,8 +534,8 @@ angles in radians.
 \zeta_C=\left(\frac{\delta_a}{1-\delta_a}\right)^2\sin^2 b.
 ```
 
-$`\chi_R`$ accounts for Reynolds number and roughness, $`\chi_M`$ for outlet Mach number, $`\zeta_{p0}`$ for inlet and
-outlet angles, $`\zeta_h`$ for trailing-edge underpressure, and $`\zeta_C`$ for trailing-edge mixing/blockage.
+<var>χ<sub>R</sub></var> accounts for Reynolds number and roughness, <var>χ<sub>M</sub></var> for outlet Mach number, <var>ζ<sub>p0</sub></var> for inlet and
+outlet angles, <var>ζ<sub>h</sub></var> for trailing-edge underpressure, and <var>ζ<sub>C</sub></var> for trailing-edge mixing/blockage.
 
 ![Mach correction, basic profile loss and trailing-edge underpressure coefficients](docs/figures/traupel_profile_coefficients.png)
 
@@ -569,7 +569,7 @@ coefficient used by the model:
 
 #### Fanning, endwall and secondary-flow losses
 
-The fanning coefficient $`\zeta_f`$ depends on $`l/D_m`$ and speed parameter
+The fanning coefficient <var>ζ<sub>f</sub></var> depends on $`l/D_m`$ and speed parameter
 $`\nu=1/\sqrt{2\psi_{ss,\mathrm{ideal}}}`$. Set $`\bar\zeta_p=\zeta_p+\zeta_f`$, $`L=l/p`$, and
 
 ```math
@@ -591,14 +591,14 @@ For $`L\lt L_{\mathrm{crit}}`$, it is
 +A_c\frac{c}{p}\left(\frac{1}{L}-\frac{1}{L_{\mathrm{crit}}}\right).
 ```
 
-$`A_c=0.035`$ for an impulse rotor and 0.02 for an accelerating cascade. $`F`$ depends on turning angle
+$`A_c=0.035`$ for an impulse rotor and 0.02 for an accelerating cascade. <var>F</var> depends on turning angle
 $`180^\circ-a-b`$ and inlet/outlet speed ratio. The complete aerodynamic row coefficient is
 
 ```math
 \zeta_{\mathrm{aerodynamic}}=\zeta_p+\zeta_f+\zeta_{\mathrm{rest}}.
 ```
 
-For the unshrouded stator, with axial row gap $`s_{ax}`$ and hydraulic diameter $`d_h=2l`$,
+For the unshrouded stator, with axial row gap <var>s<sub>ax</sub></var> and hydraulic diameter $`d_h=2l`$,
 
 ```math
 \zeta_a=\frac{c_f}{\sin b}\left(1+\frac{l}{D_m}\right)\frac{s_{ax}}{l}.
@@ -615,7 +615,7 @@ $`\zeta_a=0`$. For a shrouded row with axial shroud gap $`s_{ax,\mathrm{shroud}}
 
 #### Incidence loss
 
-`calculate_incidence_losses(...)` corrects the inlet-angle deviation $`i`$ for inlet Mach number before reading $`z`$:
+`calculate_incidence_losses(...)` corrects the inlet-angle deviation <var>i</var> for inlet Mach number before reading <var>z</var>:
 
 ```math
 M_c=\min(0.8,\max(0.5,M_{\mathrm{in}})), \qquad
@@ -630,7 +630,7 @@ The incidence-loss method accepts a nonzero deviation when used separately.
 #### Unshrouded rotor clearance
 
 `calculate_unshrouded_rotor_clearance_loss(...)` uses the rotor blade row velocities calculated without additional
-losses. Define radial clearance $`s_r`$, Traupel reaction $`R_T`$, normalised inlet relative velocity
+losses. Define radial clearance <var>s<sub>r</sub></var>, Traupel reaction <var>R<sub>T</sub></var>, normalised inlet relative velocity
 $`\bar w_1=w_{1,\mathrm{blade}}/u`$, and
 
 ```math
@@ -658,7 +658,7 @@ to the prepared grid bounds, which can extend beyond an original graph's measure
 #### Shrouded rotor clearance and half-labyrinth flow
 
 `calculate_shrouded_rotor_clearance_loss(...)` evaluates leakage through a half-labyrinth seal. With seal area
-$`A_{\mathrm{seal}}=\pi D_t s_r`$, tooth spacing $`a_{\mathrm{seal}}`$ and tooth count $`n`$,
+$`A_{\mathrm{seal}}=\pi D_t s_r`$, tooth spacing <var>a</var><sub>seal</sub> and tooth count <var>n</var>,
 
 ```math
 \dot{m}_{\mathrm{leak}}=\varepsilon A_{\mathrm{seal}}\Phi
@@ -666,7 +666,7 @@ $`A_{\mathrm{seal}}=\pi D_t s_r`$, tooth spacing $`a_{\mathrm{seal}}`$ and tooth
 \mu_{\mathrm{leak}}=\frac{\dot{m}_{\mathrm{leak}}}{\dot{m}-\dot{m}_{\mathrm{leak}}}.
 ```
 
-`calculate_phi(...)` obtains the critical pressure ratio $`r_{\mathrm{crit}}`$ from the tooth count and
+`calculate_phi(...)` obtains the critical pressure ratio <var>r</var><sub>crit</sub> from the tooth count and
 $`a_{\mathrm{seal}}/s_r`$. It then evaluates the digitised squared flow function at
 
 ```math
@@ -680,7 +680,7 @@ function for a spacing/clearance ratio of 7 and the critical-ratio curves for al
 
 ![Half-labyrinth flow functions and critical pressure ratios](docs/figures/traupel_labyrinth_coefficients.png)
 
-With design and operating speed parameters $`\nu_d`$ and $`\nu_o`$, both based on their static-to-static ideal loading,
+With design and operating speed parameters <var>ν<sub>d</sub></var> and <var>ν<sub>o</sub></var>, both based on their static-to-static ideal loading,
 
 ```math
 \zeta_{\mathrm{clearance}}=\mu_{\mathrm{leak}}
@@ -702,8 +702,8 @@ uses the prescribed main mass flow.
 +\frac{0.21(b_r/D_m)}{\varepsilon\sqrt{\psi_{ss,m,\mathrm{ideal}}}}.
 ```
 
-Here $`b_r`$ is the axial rotor width `width_rotor`, independently of the blade chord.
-The coefficient is exactly zero at full admission. Here $`\theta_m`$ and $`\psi_{ss,m,\mathrm{ideal}}`$ are normalised
+Here <var>b<sub>r</sub></var> is the axial rotor width `width_rotor`, independently of the blade chord.
+The coefficient is exactly zero at full admission. Here <var>θ<sub>m</sub></var> and $`\psi_{ss,m,\mathrm{ideal}}`$ are normalised
 by blade speed at the mean diameter. For `partial_admission_rotor="free"` (when the rotor is not enclosed on all
 sides),
 
@@ -720,7 +720,7 @@ C=0.0095+0.55\max\left(0.125-\frac{l}{D_m},0\right)^2.
 ```
 
 The enclosed-rotor relation is intended for $`l/D_m\lt0.125`$; the implementation continues it beyond that range using
-the limiting value due to lack of other data. `calculate_disk_friction_loss(...)` uses the $`C_M`$ curve shown above:
+the limiting value due to lack of other data. `calculate_disk_friction_loss(...)` uses the <var>C<sub>M</sub></var> curve shown above:
 
 ```math
 \zeta_{\mathrm{disk}}=
@@ -729,7 +729,7 @@ the limiting value due to lack of other data. `calculate_disk_friction_loss(...)
 Re_{\mathrm{disk}}=\frac{\omega D_h^2\rho_1}{2\mu_g(T_1)}.
 ```
 
-$`\mu_g`$ is gas dynamic viscosity. Mean-diameter normalisation is recovered from Euler-diameter quantities using
+<var>μ<sub>g</sub></var> is gas dynamic viscosity. Mean-diameter normalisation is recovered from Euler-diameter quantities using
 $`u_m=\omega D_m/2`$, $`\theta_m=\theta_2u/u_m`$ and
 $`\psi_{ss,m,\mathrm{ideal}}=\psi_{ss,\mathrm{ideal}}(u/u_m)^2`$.
 
@@ -743,7 +743,7 @@ The entropy rise associated with a dissipated static enthalpy at the same outlet
 \Delta s=-c_p\ln\left(1-\frac{\Delta h_{\mathrm{loss}}}{c_pT_{\mathrm{out}}}\right).
 ```
 
-The stator uses $`T_1`$, and the aerodynamic rotor passage uses $`T_{2,\mathrm{blade}}`$. Additional losses are work
+The stator uses <var>T<sub>1</sub></var>, and the aerodynamic rotor passage uses $`T_{2,\mathrm{blade}}`$. Additional losses are work
 losses rather than static enthalpy increments:
 
 ```math
@@ -761,7 +761,7 @@ complete rotor entropy calculation includes the kinetic-energy correction:
 +\frac{v_{2,\mathrm{blade}}^2-v_2^2}{2}.
 ```
 
-The model calculates total rotor entropy rise at $`T_2`$ with this static loss, then subtracts the passage entropy
+The model calculates total rotor entropy rise at <var>T<sub>2</sub></var> with this static loss, then subtracts the passage entropy
 rise to obtain `delta_s_rotor_additional`. It returns
 `(delta_s_stator, delta_s_rotor, delta_s_rotor_additional, loss_model_results)`. The additional work loss and its
 static enthalpy equivalent are stored separately in the loss results.
@@ -781,7 +781,7 @@ used to check that each active CoolProp species is gas or supercritical gas at t
 These two pressures are used for the gas-phase checks during `IdealGas` construction. The turbine inlet pressure
 is a separate input, `p_t0`, passed to `size_turbine`.
 
-For species molar masses $`M_i`$ and mass fractions $`Y_i`$, mole fractions are
+For species molar masses <var>M<sub>i</sub></var> and mass fractions <var>Y<sub>i</sub></var>, mole fractions are
 
 ```math
 X_i=\frac{Y_i/M_i}{\sum_jY_j/M_j}.
@@ -841,7 +841,7 @@ k_{\mathrm{mix}}=\sum_i\frac{X_i k_i}{\sum_jX_j\psi_{ij}}, \qquad \psi_{ii}=1,
 \left[1+2.41\frac{(M_i-M_j)(M_i-0.142M_j)}{(M_i+M_j)^2}\right], \qquad i\ne j.
 ```
 
-Here $`\eta_{ij}`$ is the CEA binary viscosity interaction parameter. ThermoProp uses its CEA fit when available
+Here <var>η<sub>ij</sub></var> is the CEA binary viscosity interaction parameter. ThermoProp uses its CEA fit when available
 at the evaluation temperature, otherwise CEA's rigid-sphere estimate from the pure-species viscosities and molar
 masses. The result is thermal conductivity with the gas composition held fixed; composition changes due to
 chemical reactions are outside the `IdealGas` model.
@@ -891,22 +891,22 @@ The following symbols refer to the axial view of a nozzle exit, looking along th
 
 | Symbol | Meaning |
 | --- | --- |
-| $`n`$ | Number of stator nozzles, `no_blades_stator`. |
-| $`R_h`$, $`R_t`$ | Hub and tip radii, `R_hub` and `R_tip`. |
-| $`R_E`$ | Euler radius, `R_Euler`; pitches and admission arcs are measured on this circle. |
-| $`R_m=(R_h+R_t)/2`$ | Annulus mean radius, `R_mean`; generally different from $`R_E`$. |
-| $`R_c`$ | Actual nozzle exit-centre radius, `turbine_meanline.R_nozzle`. |
+| <var>n</var> | Number of stator nozzles, `no_blades_stator`. |
+| <var>R<sub>h</sub></var>, <var>R<sub>t</sub></var> | Hub and tip radii, `R_hub` and `R_tip`. |
+| <var>R<sub>E</sub></var> | Euler radius, `R_Euler`; pitches and admission arcs are measured on this circle. |
+| $`R_m=(R_h+R_t)/2`$ | Annulus mean radius, `R_mean`; generally different from <var>R<sub>E</sub></var>. |
+| <var>R<sub>c</sub></var> | Actual nozzle exit-centre radius, `turbine_meanline.R_nozzle`. |
 | $`H_a=R_t-R_h`$ | Radial annulus height. |
 | $`p_s=2\pi R_E\varepsilon/n`$, $`p_r=2\pi R_E/n_r`$ | Total stator and rotor pitches, including metal blockage. |
 | $`\delta=p_s/R_E`$ | Angular pitch between neighbouring nozzle centre lines. |
-| $`w`$, $`H`$ | Straight circumferential width and radial height of one exit. |
-| $`H_{\max}`$ | Maximum permitted exit height for the selected construction. |
-| $`L_e`$ | Arc length of the Euler circle lying inside one nozzle exit. |
-| $`g`$ | Straight projected spacing between adjacent exits, used to assess minimum stator metal thickness. |
-| $`A^{\ast}_{\mathrm{total}}`$, $`b^{\ast}`$, $`d^{\ast}`$ | Total choked throat area, MOC throat width and de Laval throat diameter. |
-| $`b_e`$, $`d_e`$ | MOC exit width normal to the nozzle axis and de Laval exit diameter; $`d_e=H`$ for the elliptical exit. |
-| $`\alpha_m`$ | Outlet metal/nozzle-axis angle from the machine axis; $`w=b_e/\cos\alpha_m`$ for MOC and $`w=d_e/\cos\alpha_m`$ for de Laval. |
-| $`c_s`$, $`c_r`$ | Stator throat-centre to exit-centre chord and rotor LE-to-TE chord. |
+| <var>w</var>, <var>H</var> | Straight circumferential width and radial height of one exit. |
+| <var>H</var><sub>max</sub> | Maximum permitted exit height for the selected construction. |
+| <var>L<sub>e</sub></var> | Arc length of the Euler circle lying inside one nozzle exit. |
+| <var>g</var> | Straight projected spacing between adjacent exits, used to assess minimum stator metal thickness. |
+| $`A^{\ast}_{\mathrm{total}}`$, <var>b</var><sup>∗</sup>, <var>d</var><sup>∗</sup> | Total choked throat area, MOC throat width and de Laval throat diameter. |
+| <var>b<sub>e</sub></var>, <var>d<sub>e</sub></var> | MOC exit width normal to the nozzle axis and de Laval exit diameter; $`d_e=H`$ for the elliptical exit. |
+| <var>α<sub>m</sub></var> | Outlet metal/nozzle-axis angle from the machine axis; $`w=b_e/\cos\alpha_m`$ for MOC and $`w=d_e/\cos\alpha_m`$ for de Laval. |
+| <var>c<sub>s</sub></var>, <var>c<sub>r</sub></var> | Stator throat-centre to exit-centre chord and rotor LE-to-TE chord. |
 
 `t_TE_stator`, `t_TE_rotor` and `t_LE_rotor` denote circumferential projections of edge thicknesses. The inputs
 `t_min_stator` and `t_min_rotor` prescribe metal thickness measured perpendicular to the local flow direction.
@@ -923,10 +923,10 @@ its meanline `t_TE_stator` is fixed at zero, and no inter-nozzle metal-thickness
 
 ![Axial-view packing of multiple and single MOC and de Laval nozzles, with exit dimensions, radii, pitch, open arc and spacing](docs/figures/supersonic_nozzle_packing.png)
 
-The shaded regions are open exits. Blue dashed curves are Euler circles; the orange highlighted arc is $`L_e`$.
+The shaded regions are open exits. Blue dashed curves are Euler circles; the orange highlighted arc is <var>L<sub>e</sub></var>.
 For multiple nozzles, the Euler-circle arc $`p_s-L_e`$ is TE thickness that should be used for meanline calculations,
-whereas $`g`$ is a straight spacing between nozzles. This is minimum thickness projected on circumferential direction
-between nozzle edges. Both MOC diagrams show actual exits shifted inward from $`R_E`$ to keep their outer corners
+whereas <var>g</var> is a straight spacing between nozzles. This is minimum thickness projected on circumferential direction
+between nozzle edges. Both MOC diagrams show actual exits shifted inward from <var>R<sub>E</sub></var> to keep their outer corners
 at the tip. Their dashed maximum-height references are hub-tangent. These diagrams illustrate the construction rules
 rather than a particular converged turbine design.
 
@@ -1122,7 +1122,7 @@ For multiple nozzles, the five unknowns are
 \mathbf{x}=[(c/p)_s,\;(c/p)_r,\;t_{TE,r},\;t_{TE,s},\;(b/c)_r].
 ```
 
-For a single nozzle, the fourth unknown is $`\varepsilon`$, and $`t_{TE,s}=0`$. The fifth unknown is always
+For a single nozzle, the fourth unknown is <var>ε</var>, and $`t_{TE,s}=0`$. The fifth unknown is always
 `rotor_width_to_chord`: solving for it makes the meanline axial width agree with the constructed rotor shape.
 Each residual is the value measured from the constructed geometry minus the trial value passed to the meanline
 calculation. Rotor leading-edge thickness is calculated directly during each evaluation and is not a solver
@@ -1134,8 +1134,8 @@ uses $`0.12p_r`$. The fourth scale is $`0.12p_s`$ for multiple nozzles, or initi
 nozzle. The fifth scale, for `rotor_width_to_chord`, is exactly 1. The relaxed Aitken solver starts at relaxation 0.3,
 adapts within 0.05 to 1.5, allows 60 updates and requires every normalized fixed-point residual to be below $`10^{-3}`$ in absolute value.
 
-Bounds keep chord/pitch ratios at least $`10^{-8}`$, rotor TE thickness projection between zero and $`p_r`$ (one full rotor pitch),
-and stator TE thickness between zero and $`p_s`$ (one full stator pitch). For a single nozzle, admission is bounded by $`10^{-6}`$ and 1.
+Bounds keep chord/pitch ratios at least $`10^{-8}`$, rotor TE thickness projection between zero and <var>p<sub>r</sub></var> (one full rotor pitch),
+and stator TE thickness between zero and <var>p<sub>s</sub></var> (one full stator pitch). For a single nozzle, admission is bounded by $`10^{-6}`$ and 1.
 Rotor width/chord is at least $`10^{-8}`$, with no upper bound: the width measures the contour's full axial extent.
 These bounds constrain the coupling variables; nozzle-packing inequalities and rotor metal margins remain separate design checks.
 Nonfinite initial estimates or estimates outside these bounds trigger a `UserWarning` and are replaced by their
@@ -1177,7 +1177,7 @@ overwritten by the rotor geometry solve. SupersonicStatorNozzle uses `M_s1_ideal
 
 Goldman and Scullin's separation criterion (NASA TN D-4421, equations 36–40), implemented in
 `_calculate_separation_mach_limits`, gives a minimum
-pressure-side Mach $`M_{\ell,\min}`$ and maximum suction-side Mach $`M_{u,\max}`$. With $`m`$ denoting `separation_margin`,
+pressure-side Mach $`M_{\ell,\min}`$ and maximum suction-side Mach $`M_{u,\max}`$. With <var>m</var> denoting `separation_margin`,
 the selected surface Mach numbers are
 
 ```math
@@ -1222,7 +1222,7 @@ roundoff. The TE margin may be positive or negative and is calculated using the 
 outlet angle. Both margins are informational and do not drive the internal coupling solver; a negative TE margin
 reports metal thinner than the requested minimum. Matching circumferential LE/TE thickness projections does not
 imply equal normal thicknesses when inlet and outlet angles differ. The rotor chord is the straight
-distance between the blade LE and TE centres; its ratio to $`p_r`$ allows to calculate the rotor chord/pitch residual.
+distance between the blade LE and TE centres; its ratio to <var>p<sub>r</sub></var> allows to calculate the rotor chord/pitch residual.
 These measurements use the BL corrected rotor when available.
 
 The rotor axial width is $`b_r=\max(x)-\min(x)`$ over both blade surfaces. The fifth residual is:
@@ -1246,7 +1246,7 @@ A^{\ast}_{\mathrm{total}}=\frac{\dot m_{\mathrm{total}}}{G^{\ast}}.
 ```
 
 This area is stored as `turbine_meanline.A_throat_stator`. The rotor throat calculation follows it, measuring the
-minimum gap $`w_E`$ between the pressure- and suction-side passage contours at Euler radius.
+minimum gap <var>w<sub>E</sub></var> between the pressure- and suction-side passage contours at Euler radius.
 The measurement includes the straight segments joining the contour nodes. Assuming geometrically similar sections
 with $`w(r)=w_Er/R_E`$ and one passage per rotor blade, the admitted rotor throat area is
 
@@ -1257,7 +1257,7 @@ with $`w(r)=w_Er/R_E`$ and one passage per rotor blade, the admitted rotor throa
 
 This is stored as `turbine_meanline.A_throat_rotor`.
 
-Each of $`n`$ identical nozzles carries throat area $`A^{\ast}_{\mathrm{total}}/n`$. MOC nozzles have rectangular throats and
+Each of <var>n</var> identical nozzles carries throat area $`A^{\ast}_{\mathrm{total}}/n`$. MOC nozzles have rectangular throats and
 exits with a common radial height; their circumferential scale remains free until packing considerations fix it.
 Conical de Laval nozzles have circular throats, so mass flow fixes their throat diameter and hence the dimensional
 scale of the entire nozzle. Their angled exits appear elliptical in the axial view.
@@ -1266,7 +1266,7 @@ scale of the entire nozzle. Their angled exits appear elliptical in the axial vi
 
 The nozzle generator extends the suction-side wall to terminate the exit in the machine axial plane. The class
 measures the straight distance between the throat and exit opening centres, including that extension, and multiplies
-it by `stator_nozzle_chord_scale` to obtain $`c_s`$. `stator_nozzle_chord_scale` allows to account for blade turning
+it by `stator_nozzle_chord_scale` to obtain <var>c<sub>s</sub></var>. `stator_nozzle_chord_scale` allows to account for blade turning
 upstream of the nozzle throat, which is not constructed by `SupersonicTurbineBlading`. Every case uses the stator chord/pitch
 residual:
 
@@ -1280,11 +1280,11 @@ conditions as follows.
 
 ##### Multiple MOC nozzles
 
-Select `contour_method="moc"` and $`n\gt 1`$. Start each rectangular exit centre at Euler radius $`R_E`$ and shift it
+Select `contour_method="moc"` and $`n\gt 1`$. Start each rectangular exit centre at Euler radius <var>R<sub>E</sub></var> and shift it
 radially when necessary to fit between hub and tip. First calculate the width that provides the required metal
 spacing between adjacent exits when their inner edges touch the hub. Then apply `min_MOC_nozzle_width` as a lower
 limit on width. If that lower limit widens the exit, the metal spacing can fall below the requested minimum.
-For angular pitch $`\delta`$, the spacing between adjacent nozzle corners is:
+For angular pitch <var>δ</var>, the spacing between adjacent nozzle corners is:
 
 ```math
 g=2R_h\sin(\delta/2)-w\cos(\delta/2).
@@ -1292,28 +1292,28 @@ g=2R_h\sin(\delta/2)-w\cos(\delta/2).
 
 1. Set $`g=t_{s,\min}^{\mathrm{proj}}`$, giving
    $`w_{\mathrm{ref}}=[2R_h\sin(\delta/2)-t_{s,\min}^{\mathrm{proj}}]/\cos(\delta/2)`$.
-   Enforce $`w=\max(w_{\mathrm{ref}},w_{\min})`$, where $`w_{\min}`$ is `min_MOC_nozzle_width`, default 5 mm.
-   This permits construction even when $`w_{\mathrm{ref}}`$ is nonpositive. Widening the nozzle reduces the obtained
+   Enforce $`w=\max(w_{\mathrm{ref}},w_{\min})`$, where <var>w</var><sub>min</sub> is `min_MOC_nozzle_width`, default 5 mm.
+   This permits construction even when <var>w</var><sub>ref</sub> is nonpositive. Widening the nozzle reduces the obtained
    metal spacing and can cause adjacent exits to overlap. If the resulting circumferential spacing between neighbouring 
    exits is smaller than `t_min_stator / cos(alpha_1)`, `t_TE_stator_min_margin` is negative and reports that the design
    violates the minimum metal thickness requirement.
 2. Calculate the maximum height with the inner side tangent to the hub and outer corners at the tip:
    $`H_{\max}=\max(0,\sqrt{\max(0,R_t^2-w^2/4)}-R_h)`$. For the fixed width, this also maximizes exit area.
    If no positive height fits, $`H_{\max}=0`$ and the positive actual height produces a positive `height_optimality`.
-3. Pass $`w`$ as the MOC `reference_length`. The scaled contour supplies the uncorrected throat width $`b^{\ast}`$.
+3. Pass <var>w</var> as the MOC `reference_length`. The scaled contour supplies the uncorrected throat width <var>b</var><sup>∗</sup>.
 4. Enforce mass flow with $`H=A^{\ast}_{\mathrm{total}}/(n b^{\ast})`$. This is both throat and exit radial height.
 5. Calculate `height_optimality` as $`H-H_{\max}`$. Positive means the rectangle exceeds the available annulus;
    zero means the inner side touches the hub and outer corners touch the tip; negative means a shorter exit can fit.
 6. Place the actual exit with inner-side coordinate
    $`y_0=\max[R_h,\min(R_E-H/2,\;R_h+H_{\max}-H)]`$ and centre radius $`R_c=y_0+H/2`$.
-   Sum all Euler-circle arcs inside this exit to obtain $`L_e`$. If the circle crosses both radial sides and no tangential
+   Sum all Euler-circle arcs inside this exit to obtain <var>L<sub>e</sub></var>. If the circle crosses both radial sides and no tangential
    side, this reduces to $`L_e=2R_E\arcsin[w/(2R_E)]`$. The fourth residual is
    $`r_4=\max(0,p_s-L_e)-t_{TE,s}`$, matching the meanline stator TE thickness arc to the geometry.
    Clipping only this meanline TE thickness at zero prevents overlapping exits from passing negative thickness to `Turbine1D`.
 
 This placement has three regimes. While the Euler-centred exit fits, $`R_c=R_E`$. Once its outer corners reach the
 tip, shift the centre inward as height grows, keeping those corners at the tip and retaining a positive hub clearance.
-At $`H=H_{\max}`$ the inner side becomes hub-tangent. For $`H\gt H_{\max}`$ keep that side at $`R_h`$; the centre then moves
+At $`H=H_{\max}`$ the inner side becomes hub-tangent. For $`H\gt H_{\max}`$ keep that side at <var>R<sub>h</sub></var>; the centre then moves
 outward and the outer corners exceed the tip. The height coefficient is negative before maximum height, zero at it
 and positive afterwards.
 
@@ -1341,23 +1341,23 @@ feasible nozzle packing.
 ##### Single MOC nozzle
 
 Select `contour_method="moc"` and $`n=1`$. With one nozzle, width cannot be determined from metal spacing between
-adjacent nozzles. Instead, find the maximum-area rectangle within the tip circle whose centre is fixed at $`R_E`$.
-Its height $`H_E=2h`$ determines the reference width $`w`$, with
+adjacent nozzles. Instead, find the maximum-area rectangle within the tip circle whose centre is fixed at <var>R<sub>E</sub></var>.
+Its height $`H_E=2h`$ determines the reference width <var>w</var>, with
 
 ```math
 h=\frac{2(R_t^2-R_E^2)}{\sqrt{R_E^2+8R_t^2}+3R_E},\qquad
 H_E=2h,\qquad w=2\sqrt{R_t^2-(R_E+h)^2}.
 ```
 
-1. Keep this $`w`$ and calculate $`H_{\max}=\sqrt{R_t^2-w^2/4}-R_h`$. This is the maximum fitting height when the
-   centre may move: the inner side is hub-tangent and the outer corners touch the tip. It differs from $`H_E`$.
-2. Use $`w`$ as the MOC reference length to obtain $`b^{\ast}`$. Set the actual height from mass flow,
+1. Keep this <var>w</var> and calculate $`H_{\max}=\sqrt{R_t^2-w^2/4}-R_h`$. This is the maximum fitting height when the
+   centre may move: the inner side is hub-tangent and the outer corners touch the tip. It differs from <var>H<sub>E</sub></var>.
+2. Use <var>w</var> as the MOC reference length to obtain <var>b</var><sup>∗</sup>. Set the actual height from mass flow,
    $`H=A^{\ast}_{\mathrm{total}}/b^{\ast}`$, and report $`H-H_{\max}`$.
 3. Apply the same placement rule as for multiple MOC nozzles:
    $`y_0=\max[R_h,\min(R_E-H/2,\;R_h+H_{\max}-H)]`$ and $`R_c=y_0+H/2`$.
-   The centre remains at $`R_E`$ until the tip limits height, then shifts inward to maintain tip contact.
-   At $`H_{\max}`$ the inner side reaches the hub; for greater heights, retain hub tangency and allow tip overfill.
-4. Calculate $`L_e`$ from the Euler-circle intersections and obtain admission
+   The centre remains at <var>R<sub>E</sub></var> until the tip limits height, then shifts inward to maintain tip contact.
+   At <var>H</var><sub>max</sub> the inner side reaches the hub; for greater heights, retain hub tangency and allow tip overfill.
+4. Calculate <var>L<sub>e</sub></var> from the Euler-circle intersections and obtain admission
    $`\varepsilon_{\mathrm{geom}}=L_e/(2\pi R_E)`$.
 5. Solve $`r_4=\varepsilon_{\mathrm{geom}}-\varepsilon_{\mathrm{assumed}}=0`$ in place of a stator TE thickness residual.
 
@@ -1365,11 +1365,11 @@ The meanline stator TE thickness is zero. `width_optimality` and `t_TE_stator_mi
 nozzle is present. A negative height coefficient means the actual height can fit at the selected width; a positive
 coefficient means it is not possible to fit the nozzle and the stator must be adjusted. 
 
-The calculation of $`L_e`$ sums the parts of the Euler circle inside the actual, shifted rectangle. It includes
+The calculation of <var>L<sub>e</sub></var> sums the parts of the Euler circle inside the actual, shifted rectangle. It includes
 intersections with any of the four sides and returns zero if no part of the circle lies inside the exit.
 
 For either MOC construction method, parameterize the right semicircle as $`x=R_E\sin\theta`$, $`y=R_E\cos\theta`$,
-$`0\le\theta\le\pi`$. Use the placement rule above for $`y_0`$ with either single or multiple MOC nozzles. Define
+$`0\le\theta\le\pi`$. Use the placement rule above for <var>y<sub>0</sub></var> with either single or multiple MOC nozzles. Define
 
 ```math
 \theta_0=\arccos\!\left(\mathrm{clip}\!\left(\frac{y_0+H}{R_E},-1,1\right)\right),\quad
@@ -1393,13 +1393,13 @@ Select `contour_method="conical"` and $`n\gt 1`$. The circular throat fixes
 d^{\ast}=\sqrt{\frac{4A^{\ast}_{\mathrm{total}}}{n\pi}}.
 ```
 
-1. Pass $`d^{\ast}`$ as `reference_length` to generate the conical nozzle at the required isentropic exit Mach.
-2. Read $`w`$ from uncorrected `nozzle_passage_pitch` and $`H`$ from uncorrected `nozzle_exit_width`. Here $`H`$ is the
-   exit diameter normal to the nozzle axis; its angled cut gives circumferential ellipse width $`w`$.
-3. Centre each exit ellipse at $`R_m`$, with radial minor diameter $`H`$. Find its maximum radius $`R_{\max}`$,
+1. Pass <var>d</var><sup>∗</sup> as `reference_length` to generate the conical nozzle at the required isentropic exit Mach.
+2. Read <var>w</var> from uncorrected `nozzle_passage_pitch` and <var>H</var> from uncorrected `nozzle_exit_width`. Here <var>H</var> is the
+   exit diameter normal to the nozzle axis; its angled cut gives circumferential ellipse width <var>w</var>.
+3. Centre each exit ellipse at <var>R<sub>m</sub></var>, with radial minor diameter <var>H</var>. Find its maximum radius <var>R</var><sub>max</sub>,
    including its flanks, and report `height_optimality` as $`R_{\max}-R_t`$.
 4. Measure the straight projected gap between neighbouring ellipses and compare it with the required metal spacing.
-5. Intersect the ellipse with the Euler circle to find $`L_e`$. The fourth residual is
+5. Intersect the ellipse with the Euler circle to find <var>L<sub>e</sub></var>. The fourth residual is
    $`r_4=\max(0,p_s-L_e)-t_{TE,s}`$.
 
 For semi-axes $`a=w/2`$ and $`b=H/2`$, the maximum distance from the turbine axis to the ellipse is
@@ -1442,7 +1442,7 @@ It is set to zero if the centre spacing $`2R_m\sin\phi`$ is smaller than the req
 width and height after mass flow and expansion set its scale. Change nozzle count, admission fraction or stage
 coefficients if the resulting exit dimensions or metal spacing do not meet their limits.
 
-Only the meanline TE thickness arc in $`r_4`$ is clipped at zero when exits overlap. This lets the coupling evaluate an
+Only the meanline TE thickness arc in <var>r<sub>4</sub></var> is clipped at zero when exits overlap. This lets the coupling evaluate an
 infeasible packing without assigning negative meanline TE thickness to `Turbine1D`; the negative 
 `t_TE_stator_min_margin` still exposes the problem to the engineer or to the outer optimizer, just like for multiple
 MOC nozzles. Convergence alone therefore does not establish a usable stator.
@@ -1452,10 +1452,10 @@ MOC nozzles. Convergence alone therefore does not establish a usable stator.
 Select `contour_method="conical"` and $`n=1`$.
 
 1. Use the entire throat area to set $`d^{\ast}=\sqrt{4A^{\ast}_{\mathrm{total}}/\pi}`$ and generate the nozzle.
-2. Read the elliptical exit dimensions $`w`$ and $`H`$ as for multiple conical nozzles, and centre the ellipse at $`R_m`$.
+2. Read the elliptical exit dimensions <var>w</var> and <var>H</var> as for multiple conical nozzles, and centre the ellipse at <var>R<sub>m</sub></var>.
 3. Calculate `height_optimality` as $`R_{\max}-R_t`$ using the same maximum-radius calculation as for multiple
    de Laval nozzles.
-4. Find $`L_e`$ by intersecting the ellipse with the Euler circle. Obtain
+4. Find <var>L<sub>e</sub></var> by intersecting the ellipse with the Euler circle. Obtain
    $`\varepsilon_{\mathrm{geom}}=L_e/(2\pi R_E)`$ and solve the admission residual
    $`r_4=\varepsilon_{\mathrm{geom}}-\varepsilon_{\mathrm{assumed}}=0`$.
 
