@@ -1,0 +1,27 @@
+turbine,admission,extrapolation,clearance_losses,efficiency_type,literature_percent,model_percent,error_percentage_points,reference_kind
+Moffitt,1.0,linear,True,eta_ts,41.4,36.38934076921144,-5.010659230788561,reported measurement
+Moffitt,1.0,closest,True,eta_ts,41.4,41.42590095183182,0.025900951831825392,reported measurement
+Whitney,1.0,linear,True,eta_tt,85.0,80.99214642415295,-4.0078535758470535,reported peak at PR_tt=2.0-2.1
+Whitney,1.0,closest,True,eta_tt,85.0,81.22203971261457,-3.777960287385418,reported peak at PR_tt=2.0-2.1
+Rohlik,1.0,linear,True,eta_tt,67.0,46.14119067137196,-20.85880932862805,reported first-stage-alone measurement
+Rohlik,1.0,closest,True,eta_tt,67.0,49.22924191606742,-17.77075808393258,reported first-stage-alone measurement
+Rohlik,1.0,linear,False,eta_tt,67.0,76.56910984905102,9.569109849051017,diagnostic against the same measured turbine
+Rohlik,1.0,closest,False,eta_tt,67.0,76.23694499984002,9.236944999840013,diagnostic against the same measured turbine
+Klassen,1.0,linear,True,eta_ts,68.0,69.47045076971509,1.4704507697150815,report text
+Klassen,1.0,closest,True,eta_ts,68.0,69.19949884503104,1.199498845031044,report text
+Klassen,0.5098039215686274,linear,True,eta_ts,64.0,65.69925983695897,1.6992598369589773,Figure 5 visual reading; about +/-1 percentage point
+Klassen,0.5098039215686274,closest,True,eta_ts,64.0,65.81526704785556,1.815267047855551,Figure 5 visual reading; about +/-1 percentage point
+Klassen,0.3137254901960784,linear,True,eta_ts,62.5,62.39883109555166,-0.10116890444834548,Figure 5 visual reading; about +/-1 percentage point
+Klassen,0.3137254901960784,closest,True,eta_ts,62.5,62.8594304242622,0.35943042426219707,Figure 5 visual reading; about +/-1 percentage point
+Klassen,0.11764705882352941,linear,True,eta_ts,56.00000000000001,48.77839559196887,-7.221604408031141,report text
+Klassen,0.11764705882352941,closest,True,eta_ts,56.00000000000001,50.438604234116156,-5.561395765883848,report text
+Moffitt-Klag,1.0,linear,True,eta_ts,42.5,36.426279047258426,-6.073720952741573,"approximate reported mean trend, not separate exact measurements"
+Moffitt-Klag,1.0,closest,True,eta_ts,42.5,41.39970535845506,-1.100294641544941,"approximate reported mean trend, not separate exact measurements"
+Moffitt-Klag,0.75,linear,True,eta_ts,42.5,35.195140091828605,-7.304859908171396,"approximate reported mean trend, not separate exact measurements"
+Moffitt-Klag,0.75,closest,True,eta_ts,42.5,40.42571446300904,-2.0742855369909607,"approximate reported mean trend, not separate exact measurements"
+Moffitt-Klag,0.5,linear,True,eta_ts,42.5,34.47067195416358,-8.02932804583642,"approximate reported mean trend, not separate exact measurements"
+Moffitt-Klag,0.5,closest,True,eta_ts,42.5,39.90148975293108,-2.5985102470689245,"approximate reported mean trend, not separate exact measurements"
+Moffitt-Klag,0.25,linear,True,eta_ts,42.5,32.31439936523295,-10.185600634767045,"approximate reported mean trend, not separate exact measurements"
+Moffitt-Klag,0.25,closest,True,eta_ts,42.5,38.31737848243645,-4.182621517563545,"approximate reported mean trend, not separate exact measurements"
+Moffitt-Klag,0.125,linear,True,eta_ts,42.5,28.174557857384087,-14.325442142615913,"approximate reported mean trend, not separate exact measurements"
+Moffitt-Klag,0.125,closest,True,eta_ts,42.5,35.104367205764845,-7.395632794235158,"approximate reported mean trend, not separate exact measurements"

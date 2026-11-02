@@ -52,18 +52,31 @@ With kind regards, Jan
     - [Validity limits and failures](#validity-limits-and-failures)
   - [GA_optimizer: optimization_functions and scouting_functions](#ga_optimizer-optimization_functions-and-scouting_functions)
     - [Smith chart](#smith-chart)
+- [Tool Validation](#tool-validation)
+  - [How the comparisons were calculated](#how-the-comparisons-were-calculated)
+  - [Loss-model options used for the comparisons](#loss-model-options-used-for-the-comparisons)
+  - [Assumptions and numerical checks](#assumptions-and-numerical-checks)
+  - [Moffitt: full-admission supersonic turbine](#moffitt-full-admission-supersonic-turbine)
+  - [Whitney: 7-inch transonic turbine](#whitney-7-inch-transonic-turbine)
+  - [Rohlik: first stage and clearance-loss sensitivity](#rohlik-first-stage-and-clearance-loss-sensitivity)
+  - [Klassen: partial-admission comparison](#klassen-partial-admission-comparison)
+  - [Moffitt and Klag: partial-admission comparison](#moffitt-and-klag-partial-admission-comparison)
 
 ## General Overview
 
 RocketTurbines sizes a single turbine stage from prescribed shaft power, mass flow, RPM, work and flow
 coefficients and isentropic reaction. The stage flow calculations and its empirical losses are coupled: a numerical
-solver finds entropy rises that agree with the losses calculated for the resulting flow and geometry.
+solver adjusts entropy generation until the calculated flow states and the loss-model predictions agree.
+The meanline model represents the flow at one reference radius rather than resolving the complete three-dimensional flow.
 
 There are two design workflows: use [`Turbine1D`](#turbine1d) for meanline sizing with prescribed blade-row geometry,
-or [`SupersonicTurbine`](#supersonicturbine) to solve the additional coupling between meanline sizing and supersonic
-blading. The latter supports rectangular method-of-characteristics (MOC) stator nozzles and conical de Laval nozzles,
+or [`SupersonicTurbine`](#supersonicturbine) to adjust the stage dimensions and supersonic blade shapes together until
+the dimensions used by the flow model agree with the constructed shapes. `SupersonicTurbine` supports rectangular
+method-of-characteristics (MOC) stator nozzles and conical de Laval nozzles,
 with either one nozzle or multiple nozzles in an admitted sector. It also uses MOC to construct rotor blades.
-Its packing coefficients help the engineer or an outer optimizer choose nozzle count, admission and stage coefficients.
+Its nozzle height, width and metal-spacing margins show whether the nozzle exits fit between the hub and tip
+and whether enough metal separates adjacent nozzles. These margins can guide changes to nozzle count, admission
+fraction and stage coefficients, either manually or through an optimization algorithm.
 
 The repository is organised as follows:
 
@@ -90,11 +103,12 @@ The current workflows include design-point sizing. Meanline results are stored i
 `SupersonicTurbine` additionally stores the coupled meanline object, nozzle and rotor shapes, and packing margins.
 Independent off-design analysis and performance-map creation are not yet implemented.
 
-All dimensional inputs and outputs use SI units. Pressures are in Pa, temperatures in K, mass flow in kg/s, shaft
+The Python interface uses SI units. Pressures are in Pa, temperatures in K, mass flow in kg/s, shaft
 power in W, lengths in m, specific enthalpy in J/kg and specific entropy in J/(kg K). Rotational speed is in RPM.
 Flow angles are in radians unless degrees are explicitly stated. The `SupersonicTurbineBlading` argument dictionaries
 use that dependency's angle convention in degrees; `SupersonicTurbine` converts the meanline angles from radians to 
-degrees when supplying them.
+degrees when supplying them. The [literature comparison tables](#tool-validation) retain the units used in the reports;
+[`docs/validate_turbine1d.py`](docs/validate_turbine1d.py) converts those values to SI before calling the model.
 
 ## Installation
 
@@ -122,7 +136,11 @@ Its principal workflow is:
 1. Construct an `IdealGas` mixture and a `TraupelLossModel` object.
 2. Construct an empty `Turbine1D` object.
 3. Call `size_turbine(...)` with the required shaft power, flow conditions, stage coefficients and geometry inputs.
-4. Read the geometry attributes and the three stored design-point result dictionaries from `Turbine1D` object..
+4. Read the geometry attributes and the three stored design-point result dictionaries from the `Turbine1D` object.
+
+[`example.py`](example.py) provides a complete set of gas properties, loss-model choices and sizing inputs.
+LE means leading edge, TE means trailing edge, and BL means boundary layer throughout this README.
+Admission fraction is the fraction of the stator circumference that admits flow: 1 is full admission and 0.5 is half admission.
 
 #### Assumptions and nomenclature
 
@@ -300,10 +318,13 @@ The outer unknowns are the stator aerodynamic, rotor aerodynamic and additional 
 \mathbf{r}=\mathbf{x}_{\mathrm{loss\ model}}-\mathbf{x}.
 ```
 
-Theseare found using SciPy's bounded `least_squares()` with `dogbox` and a two-point numerical Jacobian.
-`delta_s_estimate` supplies three nonnegative initial estimates. Its default `[0, 0, 0]` is replaced by the loss-model
-estimate evaluated at zero entropy rise (in other words, the new estimate represents the first estimate from fixed point
-iteration scheme). At the accepted solution, each entropy residual must be below $`10^{-4}`$ J/(kg K) in absolute value.
+The solver first tries bounded, relaxed Aitken iterations. If those iterations fail, it falls back to SciPy's
+bounded `least_squares()` with `dogbox` and a two-point numerical Jacobian.
+`delta_s_estimate` supplies initial guesses for stator aerodynamic, rotor aerodynamic and additional rotor entropy
+generation, in that order. The loss model is evaluated at those guesses to produce the starting values for the solver.
+With the default `[0, 0, 0]`, the starting values therefore come from a loss calculation at zero assumed entropy rise.
+At the accepted solution, the difference between each assumed entropy rise and its loss-model prediction must be
+below $`10^{-3}`$ J/(kg K) in absolute value.
 
 During each outer evaluation, an inner solve varies $`h_2/h_{t0}`$ to satisfy
 
@@ -358,10 +379,10 @@ $`d_\theta=(\theta_2^2-\theta_1^2)/(2\psi_{tt})`$. The circumferential velocitie
 ```
 
 Relative velocities have $`w_\theta=v_\theta-u`$. Flow angles use `atan2(circumferential velocity, axial velocity)`.
-Additional flow solution is calculated for the rotor blade row alone with the aerodynamic entropy rise, but without
-entropy rise due to additional losses. This flow state represents flow in the test cascade and is used in Traupel
-loss model to calculate blade profile losses. Afterward, geometry is sized and losses are then recalculated. The
-entropy residuals can be then returned.
+A separate rotor-passage flow solution includes aerodynamic entropy generation while excluding clearance,
+disk-friction and partial-admission losses. The Traupel blade-profile correlations use this passage flow state,
+which corresponds to the flow through a blade cascade. The solver then calculates the annulus dimensions,
+recalculates the losses and returns the differences between assumed and predicted entropy generation.
 
 #### Stored results and efficiencies
 
@@ -413,21 +434,40 @@ interpolators in the class, so the reader can inspect the values used by the lib
 
 #### Configuration and coefficient interpolation
 
-Construct the model with `extrapolation_method="closest"` or `"linear"`. `"closest"` means no extrapolation of 
-empirical coefficients - closest sampled value is used instead. `"linear"` extends the interpolator with linear
-extrapolation. Reynolds-number axes are logarithmic for $`\chi_R`$ and $`c_f`$, and both axes are logarithmic for $`C_M`$.
-`warn_on_extrapolation=True` emits a warning for every out-of-bounds coefficient evaluation.
+`TraupelLossModel` stores sampled values from empirical graphs. A calculated Mach number, Reynolds number, flow
+angle or geometry ratio can lie outside a graph's sampled range. The `extrapolation_method` argument controls
+how a coefficient is evaluated in that situation:
+
+- `extrapolation_method="closest"` limits each out-of-range coordinate to the nearest boundary of the sampled
+  range, then interpolates at that boundary. For example, a Mach number above the graph's maximum uses the
+  coefficient at the maximum supported Mach number.
+- `extrapolation_method="linear"` extends the interpolated trend beyond the sampled range. The resulting
+  coefficient can continue increasing or decreasing outside the graph.
+
+Inside the sampled ranges, both choices use linear interpolation. Reynolds-number coordinates are logarithmic
+for $`\chi_R`$ and $`c_f`$, and both coordinates are logarithmic for $`C_M`$; linear extrapolation operates in those
+transformed coordinates. `warn_on_extrapolation=True` prints a warning whenever a coefficient is requested outside
+the sampled range. Disabling the warning does not change the coefficient calculation.
 
 The other constructor options are:
 
-| Argument | Values | Meaning                                                                                                           |
-| --- | --- |-------------------------------------------------------------------------------------------------------------------|
-| `incidence_loss` | `"high"`, `"medium"`, `"low"` | High, average or low empirical coefficient used for incidence losses. Default: `"medium"`.                        |
-| `stator` | `"regular"`, `"near_sonic_outlet"` | Determines stator type and what Mach correction is used for the profile loss of the stator. Default: `"regular"`. |
-| `rotor` | `"regular"`, `"near_sonic_outlet"`, `"impulse_low_M"`, `"impulse_high_M"` | Determines rotor type and what Mach correction is used for the profile loss of the rotor. Default: `"regular"`.   |
+| Argument | Accepted values | What it controls |
+|---|---|---|
+| `incidence_loss` | `"high"`, `"medium"`, `"low"` | Chooses the higher incidence-loss curve, the average of the two curves, or the lower curve. Incidence is the difference between incoming flow direction and the blade's design inlet direction. Default: `"medium"`. |
+| `stator` | `"regular"`, `"near_sonic_outlet"` | Selects the stator Mach-number correction from the curve families described below. Default: `"regular"`. |
+| `rotor` | `"regular"`, `"near_sonic_outlet"`, `"impulse_low_M"`, `"impulse_high_M"` | Selects the rotor Mach-number correction. An impulse choice also selects the impulse-rotor constants in the endwall and free-rotor partial-admission formulas. Default: `"regular"`. |
 
-The impulse options also select the corresponding endwall and free-rotor partial-admission coefficients.
-`"impulse_low_M"` represents a rounded leading edge; `"impulse_high_M"` represents a sharp leading edge.
+The curve names describe the blade cascades represented by Traupel's data:
+
+| Curve name | Blade-cascade description |
+|---|---|
+| `regular` | Strongly accelerating flow, as in stators and reaction rotors. |
+| `near_sonic_outlet` | Accelerating flow with the uncovered turning region adapted for near-sonic operation. |
+| `impulse_low_M` | Impulse-rotor blades with rounded leading edges. |
+| `impulse_high_M` | Impulse-rotor blades with sharp leading edges, suitable for high Mach numbers. |
+
+The user chooses the curve family. The code does not automatically switch between these families when the
+calculated Mach number changes.
 
 The ranges of sampled graphs with empirical coefficients are:
 
@@ -445,11 +485,11 @@ The ranges of sampled graphs with empirical coefficients are:
 | $`z`$ | High curve: -50 to +43.7 degrees; low curve: -50 to +60 degrees |
 | $`\Phi^2`$ | $`p_2/p_1=0.3`$ to 1; tooth spacing/clearance: 5 to 13; teeth: 4 to 15 |
 
-These are interpolation boundaries, rather than guidelines of a turbine design. For example, if the stator uses zero
-inlet/outlet speed ratio for $`F`$, which is outside that graph's digitised range, configured extrapolation method will
-be used for it. The $`K_\sigma`$ sampling grid was extended with extrapolation; otherwise the interpolation range would
-be very small. Negative interpolated coefficients are floored at zero; $`\zeta_{p0}`$ has a floor of 0.001 because it
-appears in denominators.
+These limits describe the available empirical data. They are not recommended turbine-design limits.
+For example, an inlet/outlet speed ratio below 0.2 lies outside the sampled range of $`F`$ and is handled by the
+chosen `extrapolation_method`. The prepared $`K_\sigma`$ grid includes extrapolated extensions, as explained in
+[Unshrouded rotor clearance](#unshrouded-rotor-clearance). Negative coefficient predictions are replaced by zero;
+$`\zeta_{p0}`$ is limited to a minimum of 0.001 because it appears in denominators.
 
 #### Loss definitions and angle convention
 
@@ -738,6 +778,8 @@ same order; the library checks list lengths and database availability but does n
 Mass fractions must be finite, nonnegative and sum to one within $`10^{-12}`$. Zero-fraction species are removed.
 The temperature limits must satisfy $`T_{\max}\gt T_{\min}\gt0`$. `P_max` and `P_min`, both defaulting to $`10^5`$ Pa, are
 used to check that each active CoolProp species is gas or supercritical gas at the corresponding temperature limit.
+These two pressures are used for the gas-phase checks during `IdealGas` construction. The turbine inlet pressure
+is a separate input, `p_t0`, passed to `size_turbine`.
 
 For species molar masses $`M_i`$ and mass fractions $`Y_i`$, mole fractions are
 
@@ -801,7 +843,8 @@ k_{\mathrm{mix}}=\sum_i\frac{X_i k_i}{\sum_jX_j\psi_{ij}}, \qquad \psi_{ii}=1,
 
 Here $`\eta_{ij}`$ is the CEA binary viscosity interaction parameter. ThermoProp uses its CEA fit when available
 at the evaluation temperature, otherwise CEA's rigid-sphere estimate from the pure-species viscosities and molar
-masses. The result includes the frozen contribution appropriate to the fixed composition of `IdealGas`.
+masses. The result is thermal conductivity with the gas composition held fixed; composition changes due to
+chemical reactions are outside the `IdealGas` model.
 
 The evaluation temperature is floored at the greatest of 300 K and the minimum fitted viscosity and conductivity
 temperatures of every active species; all transport data use this same temperature. The constructor checks
@@ -818,9 +861,9 @@ Density, sound-velocity, viscosity and thermal-conductivity methods cache up to 
 ### SupersonicTurbine
 
 `SupersonicTurbine` in `RocketTurbines/SupersonicTurbine.py` constructs a supersonic stage whose meanline geometry
-agrees with its stator nozzle and rotor blade contours. Constructing the object prepares inputs and leaves 
-some properties as `None`. Call `couple_meanline_and_blading()` to run the coupled design calculation and set these
-properties to converged objects representing Turbine1D and SupersonicTurbineBlading library objects.
+agrees with its stator nozzle and rotor blade contours. Constructing the object stores inputs but does not run the
+design calculation. Call `couple_meanline_and_blading()` to calculate the stage and populate `turbine_meanline`,
+`stator_shape`, `rotor_shape`, `x_solution` and `coefficients`; those attributes are initially `None`.
 The meanline solver supplies flow states and annulus dimensions to `SupersonicTurbineBlading`; the resulting contours
 supply chord-to-pitch ratios, rotor axial-width/chord ratio and edge thicknesses back to the meanline solver.
 
@@ -831,15 +874,18 @@ Its principal workflow is:
 3. Construct `SupersonicTurbine` with a flow separation margin and minimum stator/rotor metal thicknesses.
 4. Call `turbine.couple_meanline_and_blading()`, or use `evaluate_design(...)` to evaluate trial designs manually.
 5. Read `turbine_meanline`, `stator_shape`, `rotor_shape` and `coefficients` after coupling converges.
-6. Check nozzle packing; adjust the free design inputs and repeat if the stator nozzles do not fit in the turbine annulus.
+6. Check nozzle height, circumferential width and metal spacing. If the exits do not fit between the hub and tip
+   or neighbouring nozzles overlap, change nozzle count, admission fraction or stage coefficients and repeat.
 
 #### Assumptions and nomenclature
 
 The meanline assumptions in the [`Turbine1D`](#turbine1d) section still apply. The stator consists of identical
 nozzles placed at uniform angular pitch within one admitted sector. `no_blades_stator` is the number of nozzles in
 that sector; `no_blades_rotor` counts blades around the full circumference. Stator packing and chord measurements use
-the uncorrected nozzle contours. Nonsymmetric rotor measurements and plots use the BL-corrected contour when BL is
-enabled and the corrected shape is available; symmetric rotors and rotors without BL use the uncorrected contour.
+the uncorrected nozzle contours. Here, an uncorrected contour is the shape before the blading library's boundary-layer
+displacement correction. Nonsymmetric rotor measurements and plots use the boundary-layer-corrected contour when
+that calculation is enabled and returns a corrected shape. Symmetric rotors and rotors without a boundary-layer
+correction use the uncorrected contour.
 
 The following symbols refer to the axial view of a nozzle exit, looking along the machine axis:
 
@@ -863,16 +909,17 @@ The following symbols refer to the axial view of a nozzle exit, looking along th
 | $`c_s`$, $`c_r`$ | Stator throat-centre to exit-centre chord and rotor LE-to-TE chord. |
 
 `t_TE_stator`, `t_TE_rotor` and `t_LE_rotor` denote circumferential projections of edge thicknesses. The inputs
-`t_min_stator` and `t_min_rotor` instead prescribe true metal thickness approximately normal to the local flow 
-(assuming similar blade angle). With meanline angles measured from the axial direction, the required projected stator
-spacing is
+`t_min_stator` and `t_min_rotor` prescribe metal thickness measured perpendicular to the local flow direction.
+Using the flow angle for this conversion assumes that the metal-edge direction follows the calculated flow.
+With meanline angles measured from the axial direction, the required projected stator spacing is
 
 ```math
 t_{s,\min}^{\mathrm{proj}}=\frac{t_{\min,s}}{\cos\alpha_1}.
 ```
 
-Stator BL calculations and aftermixing for both rows are disabled. A single nozzle has no neighbouring nozzle wall: its meanline `t_TE_stator`
-is fixed at zero, and no inter-nozzle metal-thickness constraint is applied.
+Stator boundary-layer calculations are disabled. The blading library's aftermixing calculation, which estimates
+the mixed flow downstream of an exit, is disabled for both rows. A single nozzle has no neighbouring nozzle wall:
+its meanline `t_TE_stator` is fixed at zero, and no inter-nozzle metal-thickness constraint is applied.
 
 ![Axial-view packing of multiple and single MOC and de Laval nozzles, with exit dimensions, radii, pitch, open arc and spacing](docs/figures/supersonic_nozzle_packing.png)
 
@@ -948,16 +995,16 @@ match_thickness_with_mach = True
 match_thickness_with_angle = False
 ```
 
-This matches the LE/TE circumferential thicknesses by varying idela outlet Mach number used for the blade construction,
-helping prevent excessive TE thickness when the prescribed inlet and outlet angles differ. The outlet angle is held
-fixed; the meanline outlet ideal Mach initializes the matching solve. With `symmetric_blades=True`, these
-thickness-matching options are left as supplied by the user. `print_user_warnings=False` suppresses the warnings
-emitted by `SupersonicTurbine`.
+The blading library varies the ideal outlet Mach number used to construct the rotor until its leading-edge and
+trailing-edge circumferential thicknesses match. The outlet flow angle stays fixed, and the meanline ideal outlet
+Mach number is the starting guess. This thickness matching helps prevent an excessively thick trailing edge when
+the prescribed inlet and outlet angles differ. With `symmetric_blades=True`, the constructor leaves the user's
+thickness-matching options unchanged. `print_user_warnings=False` suppresses warnings emitted by `SupersonicTurbine`.
 
-With rotor BL calculations enabled, the blading library independently matches the corrected contour's own LE/TE
-thicknesses. The BL corrected design supplies then ideal outlet Mach number used for shape construction and geometry
-used by this class. BL displacement can reduce TE thickness and change the outlet Mach needed for matching;
-aftermixing remains disabled.
+When rotor boundary-layer calculations are enabled, the blading library matches the leading-edge and trailing-edge
+thicknesses of the corrected contour. `SupersonicTurbine` then uses that corrected geometry and the ideal outlet
+Mach number found during its construction. A boundary-layer correction can reduce trailing-edge thickness and
+change the outlet Mach number required to match the two edges. Downstream mixing remains disabled for the stator and rotor.
 
 #### Coupling logic and numerical solution
 
@@ -1076,9 +1123,10 @@ For multiple nozzles, the five unknowns are
 ```
 
 For a single nozzle, the fourth unknown is $`\varepsilon`$, and $`t_{TE,s}=0`$. The fifth unknown is always
-`rotor_width_to_chord`: coupling it makes the axial width agree with the rotor shape. All five residuals are
-obtained minus assumed quantities. Rotor LE thickness is calculated directly during each evaluation and is not
-a solver unknown. Thus the fixed-point map is $`F(\mathbf{x})=\mathbf{x}+\mathbf{r}(\mathbf{x})`$.
+`rotor_width_to_chord`: solving for it makes the meanline axial width agree with the constructed rotor shape.
+Each residual is the value measured from the constructed geometry minus the trial value passed to the meanline
+calculation. Rotor leading-edge thickness is calculated directly during each evaluation and is not a solver
+unknown. Thus the fixed-point map is $`F(\mathbf{x})=\mathbf{x}+\mathbf{r}(\mathbf{x})`$.
 
 Because this vector mixes ratios, lengths and possibly admission, `couple_meanline_and_blading()` solves for normalized variables
 $`\mathbf{z}=\mathbf{x}/\mathbf{s}`$. Chord/pitch scales are the larger of the initial ratio and 1; rotor TE thickness
@@ -1118,10 +1166,11 @@ the design.
 
 The rotor uses the actual relative inlet Mach `M_r1` and the isentropic rotor outlet Mach
 `M_r2_ideal_r_real_s` as the initial outlet Mach. Its inlet angle is `beta_1`. With `symmetric_blades=False`, its shaping
-outlet angle is `beta_2_blade` from the local blade-row solution, which excludes additional rotor losses. The blading
-library varies ideal outlet Mach used for blade construction at that fixed outlet angle to match LE/TE circumferential
-thicknesses. This can slightly (~1%) increase turbine's power output and increase its reaction, but this effect is not
-captured by the meanline analysis in `Turbine1D`. With `symmetric_blades=True`, the shaping outlet angle is `-beta_1`,
+outlet angle is `beta_2_blade` from the local blade-row solution, which excludes clearance, disk-friction and
+partial-admission losses. The blading library varies the ideal outlet Mach number at that fixed angle to match
+leading-edge and trailing-edge circumferential thicknesses. Any change in actual work or reaction caused by this
+geometry adjustment is outside the meanline calculation: `Turbine1D` keeps its calculated flow state.
+With `symmetric_blades=True`, the shaping outlet angle is `-beta_1`,
 and thickness matching is not automatically enabled. Equal and opposite shaping angles alone do not guarantee equal
 LE/TE thicknesses when the inlet and outlet Mach numbers differ. Mach numbers and angles in Turbine1D are not
 overwritten by the rotor geometry solve. SupersonicStatorNozzle uses `M_s1_ideal` and `alpha_1`.
@@ -1146,7 +1195,8 @@ t_{LE,r}^{\mathrm{input}}=\frac{t_{\min,r}}{\cos\beta_1}.
 ```
 
 Its ratio to total rotor pitch is supplied as `leading_edge_thickness_over_total_pitch`; a value supplied in the
-rotor argument dictionary is overridden. After dimensionalizing the contour, TE projections is measured:
+rotor argument dictionary is overridden. After converting the contour to dimensional coordinates, the rotor's
+trailing-edge circumferential thickness is measured:
 
 ```math
 t_{TE,r}^{\mathrm{geom}}=p_r-p_{\mathrm{open,out}}.
@@ -1217,7 +1267,7 @@ scale of the entire nozzle. Their angled exits appear elliptical in the axial vi
 The nozzle generator extends the suction-side wall to terminate the exit in the machine axial plane. The class
 measures the straight distance between the throat and exit opening centres, including that extension, and multiplies
 it by `stator_nozzle_chord_scale` to obtain $`c_s`$. `stator_nozzle_chord_scale` allows to account for blade turning
-upstream of the flow, which is not determined by `SupersonicBladingLibrary`. Every case has the same stator chord/pitch
+upstream of the nozzle throat, which is not constructed by `SupersonicTurbineBlading`. Every case uses the stator chord/pitch
 residual:
 
 ```math
@@ -1231,10 +1281,10 @@ conditions as follows.
 ##### Multiple MOC nozzles
 
 Select `contour_method="moc"` and $`n\gt 1`$. Start each rectangular exit centre at Euler radius $`R_E`$ and shift it
-radially when necessary to fit them in the annulus. Determine its width such that when the nozzle is tangent to the hub,
-minimum thickness is achieved. This calculation ensures that MOC nozzle width is not smaller than 
-`min_MOC_nozzle_width` - in this case minimum TE thickness is below required minimum thickness. For angular pitch
-$`\delta`$, the thickness between adjacent nozzle corners is:
+radially when necessary to fit between hub and tip. First calculate the width that provides the required metal
+spacing between adjacent exits when their inner edges touch the hub. Then apply `min_MOC_nozzle_width` as a lower
+limit on width. If that lower limit widens the exit, the metal spacing can fall below the requested minimum.
+For angular pitch $`\delta`$, the spacing between adjacent nozzle corners is:
 
 ```math
 g=2R_h\sin(\delta/2)-w\cos(\delta/2).
@@ -1290,8 +1340,8 @@ feasible nozzle packing.
 
 ##### Single MOC nozzle
 
-Select `contour_method="moc"` and $`n=1`$. There is no adjacent-nozzle that allows to calculate nozzle width based on
-minimum thickness. Instead, find the maximum-area rectangle within the tip circle whose centre is fixed at $`R_E`$.
+Select `contour_method="moc"` and $`n=1`$. With one nozzle, width cannot be determined from metal spacing between
+adjacent nozzles. Instead, find the maximum-area rectangle within the tip circle whose centre is fixed at $`R_E`$.
 Its height $`H_E=2h`$ determines the reference width $`w`$, with
 
 ```math
@@ -1315,8 +1365,8 @@ The meanline stator TE thickness is zero. `width_optimality` and `t_TE_stator_mi
 nozzle is present. A negative height coefficient means the actual height can fit at the selected width; a positive
 coefficient means it is not possible to fit the nozzle and the stator must be adjusted. 
 
-The calculation used for $`L_e`$ use the actual shifted exit, includes crossings through any side of the rectangle exit
-and retains a positive values.
+The calculation of $`L_e`$ sums the parts of the Euler circle inside the actual, shifted rectangle. It includes
+intersections with any of the four sides and returns zero if no part of the circle lies inside the exit.
 
 For either MOC construction method, parameterize the right semicircle as $`x=R_E\sin\theta`$, $`y=R_E\cos\theta`$,
 $`0\le\theta\le\pi`$. Use the placement rule above for $`y_0`$ with either single or multiple MOC nozzles. Define
@@ -1389,8 +1439,8 @@ w_{\mathrm{available}}=\frac{2}{\cos\phi}
 
 It is set to zero if the centre spacing $`2R_m\sin\phi`$ is smaller than the required projected metal thickness.
 `width_optimality` is $`w-w_{\mathrm{available}}`$. Unlike an MOC nozzle, a conical nozzle cannot independently vary
-width and height after mass flow and expansion set its scale. An outer design change may therefore be needed to
-satisfy both dimensions and metal spacing.
+width and height after mass flow and expansion set its scale. Change nozzle count, admission fraction or stage
+coefficients if the resulting exit dimensions or metal spacing do not meet their limits.
 
 Only the meanline TE thickness arc in $`r_4`$ is clipped at zero when exits overlap. This lets the coupling evaluate an
 infeasible packing without assigning negative meanline TE thickness to `Turbine1D`; the negative 
@@ -1428,13 +1478,17 @@ After `couple_meanline_and_blading()` converges, the public result attributes ar
 
 The entries of `coefficients` are:
 
+Despite the names `height_optimality` and `width_optimality`, these are signed geometric margins. A positive value
+means the nozzle exceeds the available height or width; zero reaches the limit; a negative value leaves space.
+The metal-thickness margins use the opposite sign convention: a negative value means metal is too thin.
+
 | Key | Meaning                                                                                                                                                                                                                                                                    |
 | --- |----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `height_optimality` | $`H-H_{\max}`$ for MOC; $`R_{\max}-R_t`$ for de Laval, in m. Require $`\le0`$; zero fills the permitted radial extent for the selected construction.                                                                                                                             |
 | `width_optimality` | $`w-w_{\mathrm{available}}`$ in m for multiple de Laval nozzles; require $`\le0`$. Zero by construction for MOC and single-nozzle cases.                                                                                                                                       |
 | `t_TE_stator_min_margin` | Obtained minus required projected spacing, in m; require $`\ge0`$. Multiple MOC and de Laval exits retain signed margins, including negative values (nozzle overlap). For MOC, enforcing `min_MOC_nozzle_width` can make this margin negative. Zero for single-nozzle cases. |
 | `t_LE_rotor_min_margin` | Obtained circumferential LE thickness minus `t_min_rotor / cos(beta_1)`, in m. Zero to roundoff by construction.                                                                                                                                                           |
-| `t_TE_rotor_min_margin` | Obtained circumferential TE thickness minus `t_min_rotor / cos(beta_2)`, in m, using the blade outlet angle. A negative value reports TE metal thikness value below the requested value.                                                                                   |
+| `t_TE_rotor_min_margin` | Constructed circumferential trailing-edge thickness minus `t_min_rotor / cos(beta_2)`, in m, using the blade outlet angle. A negative value means the trailing-edge metal is thinner than requested. |
 | `limited_TE_stator_losses` | Boolean: `True` when assumed stator TE thickness exceeds 24% of stator pitch and its loss-model input is limited. Always `False` for one stator nozzle, whose TE thickness is zero.                                                                                        |
 | `limited_TE_rotor_losses` | Boolean: `True` when assumed rotor TE thickness exceeds 24% of rotor pitch and its loss-model input is limited.                                                                                                                                                            |
 
@@ -1460,8 +1514,8 @@ single nozzle. The fifth residual is dimensionless.
 
 Manual calls of `evaluate_design` return trial objects and coefficients without changing the five stored result attributes or
 running the outer coupling loop. The meanline and blading calculations still include their own internal numerical solves.
-For example, after constructing the object, evaluate a trial design and print the coefficients describing all the packing
-with
+For example, evaluate a trial design and pass its returned coefficient dictionary to the printer to see nozzle-fit
+and metal-thickness margins:
 
 ```python
 residuals, meanline, stator, rotor, coefficients = turbine.evaluate_design(turbine.Turbine1D_arguments)
@@ -1505,8 +1559,11 @@ successful solve and must still be addressed by the engineer or outer optimizer 
 
 ### GA_optimizer: optimization_functions and scouting_functions
 
-`optimize_turbine` maximizes turbine efficiency using geometry-informed Sobol prescouting followed by
-[pymoo's mixed-variable genetic algorithm](https://pymoo.org/customization/mixed.html).
+`optimize_turbine` searches for the most efficient turbine within user-specified input ranges and design limits.
+It first samples those ranges with a Sobol sequence, which spreads candidate designs across the search domain.
+It then uses [pymoo's mixed-variable genetic algorithm](https://pymoo.org/customization/mixed.html) (GA) to select,
+combine and modify promising designs. Mixed variables means continuous inputs such as RPM can be optimized
+together with integer inputs such as blade count.
 
 The objective is one selected efficiency: isentropic or polytropic, on a total-to-total or total-to-static basis
 (`eta_tt`, `eta_ts`, `eta_poly_tt` or `eta_poly_ts`), chosen with `efficiency` and `efficiency_type`. RPM, coefficients,
@@ -1516,10 +1573,11 @@ With `mode="Turbine1D"`, evaluations use `Turbine1D` meanline sizing and its los
 through `SupersonicTurbine`; efficiency comes from the converged coupled meanline, and blading packing, thickness and
 manufacturing constraints can also be imposed. The selected mode and objective are used throughout both prescouting and GA.
 
-Scouting evaluates 64 proposals by default, then mixes local improvements and new global proposals until it finds
-a feasible seed or stagnates. GA can continue from the smallest violation if scouting finds
-no feasible design. A feasible seed supplied by the user is not required. These searches find good designs;
-they do not certify a global optimum.
+The initial sampling phase, called prescouting, evaluates 64 proposals by default. It then combines small changes
+around promising designs with new proposals across the full input ranges until it finds a feasible starting design
+or stops making progress. Feasible means the turbine can be calculated and meets all specified design constraints.
+If no feasible design is found, the GA starts from the design with the smallest constraint violation. The user does
+not need to supply a feasible starting design. The search does not certify a global optimum.
 
 This workflow is shown below:
 
@@ -1623,8 +1681,11 @@ print(result["termination"], result["statistics"])
 ```
 
 The `gas` and `loss_model` arguments are existing `IdealGas` and `TraupelLossModel` objects. `Turbine1D_arguments`
-contains fixed meanline inputs. `SupersonicTurbine_arguments` holds fixed meanline - blading construction settings,
-while the stator and rotor blading dictionaries keep settings for the respective SupersonicTurbineBlading library objects.
+contains fixed inputs for `Turbine1D.size_turbine`, such as power, inlet conditions and clearances.
+`SupersonicTurbine_arguments` holds fixed coupling inputs such as minimum metal thicknesses and symmetry choice.
+`SupersonicStatorNozzle_arguments` and `SupersonicRotorBlades_arguments` contain nozzle- and blade-construction
+options such as contour method, node count and boundary-layer calculation. Values that the search may vary belong
+in `optimization_arguments` as lower/upper bounds.
 
 Only the following names are accepted in `optimization_arguments`. Every entry requires two strictly increasing
 bounds, given as a list or tuple; scalars belong in the corresponding fixed-input dictionary. A name cannot occur
@@ -1650,7 +1711,8 @@ chord/pitch and thickness values from their fixed initial estimates; their outpu
 
 Unspecified optional inputs use the models' defaults. Unknown names, overlapping fixed/bounded inputs, invalid
 optimization intervals and missing required inputs raise errors before scouting. Requirements on input values
-remain with Python, NumPy/SciPy, pymoo and the turbine/blading classes; fixed input values are passed unchanged.
+are checked by the turbine and blading constructors and by the numerical routines they call. The optimizer passes
+fixed input values to those models unchanged.
 
 With `mode="Turbine1D"`, `SupersonicTurbine_arguments`, separation-margin bounds and blading dictionaries are ignored.
 Give only meanline constraints in that mode: nozzle packing coefficients and
@@ -1698,12 +1760,15 @@ individual continuous constraint residuals so feasibility guides GA selection.
 batches use a thread pool, with concurrency also limited by the number of candidates.
 Progress prints each scouting iteration and GA generation: elapsed time, evaluations,
 successful/failed construction attempts, feasible designs, best feasible efficiency, and smallest constraint
-violation (`CV`). With `verbose=True` (the default), every phase has explicit start/completion lines such as
+violation (`CV`). CV summarizes how far a design exceeds its constraints; smaller values mean less violation.
+With `verbose=True` (the default), every phase has explicit start/completion lines such as
 `Prescout iteration 0 started`, `GA generation 1 started` and `GA generation 1 completed | ...`.
 Set `verbose=False` to silence these lines. Progress rows are also retained in the
 returned `history`.
 
-`plot_axes=["input_x", "input_y"]` enables a live scatter plot of evaluations in **outer input** coordinates.
+`plot_axes=["input_x", "input_y"]` enables a live scatter plot using the candidate inputs passed to the model, such
+as flow coefficient and work coefficient. The axes use those search inputs rather than geometry values adjusted
+internally during meanline/blading coupling.
 Feasible designs are circles colored by efficiency using a colorbar. Successfully
 constructed but infeasible designs are squares. Construction failures are omitted from the plotted points.
 Omit `plot_axes` to disable plotting. By default, `optimize_turbine` keeps the final interactive plot open until its
@@ -1752,9 +1817,9 @@ pymoo_arguments = {
 
 `pop_size` overrides the separate `population_size` argument and controls the initial population as well.
 Without `n_offsprings`, pymoo uses the default population size. The four probability/eta entries configure
-SBX and polynomial mutation for both real and integer variables; integer rounding remains enabled.
-Native overrides `selection`, `crossover`, `mutation`, `mating`, `survival`, `repair`, `eliminate_duplicates`,
-and `advance_after_initial_infill` are also supported. Mixed crossover/mutation overrides must be operator
+simulated binary crossover (SBX) and polynomial mutation for both real and integer variables; integer rounding remains enabled.
+To replace pymoo's built-in operators, the dictionary also accepts `selection`, `crossover`, `mutation`, `mating`,
+`survival`, `repair`, `eliminate_duplicates` and `advance_after_initial_infill`. Mixed crossover/mutation overrides must be operator
 dictionaries keyed by pymoo's `Real`/`Integer` types. A custom `mating` object replaces the default mating
 configuration; do not combine it with individual operator settings. 
 
@@ -1816,3 +1881,302 @@ section. The function displays the plot and returns its figure, axes, coefficien
 best sampled coefficients and efficiency, and failure-reason counts. The grid is indexed as `[work, flow]` and
 stores efficiencies as fractions. All failed samples produce an explanatory empty plot with both best fields set
 to `None`.
+
+## Tool Validation
+
+The following comparisons use experimental data and original design information from these NACA/NASA reports.
+Page numbers below refer to the printed report pages.
+
+1. T. P. Moffitt, **Design and Experimental Investigation of a Single-Stage Turbine with a Rotor Entering Relative
+   Mach Number of 2**, NACA RM E58F20a (1958): pp. 4-8, Tables I-II and Figures 1 and 6.
+   [Original report](https://ntrs.nasa.gov/api/citations/19630010654/downloads/19630010654.pdf).
+2. W. J. Whitney and W. T. Wintucky, **Experimental Investigation of a 7-Inch-Tip-Diameter Transonic Turbine**,
+   NACA RM E57J29 (1958): pp. 2-4, Tables I-II and Figures 2 and 4(a).
+   [Original report](https://ntrs.nasa.gov/api/citations/19930089982/downloads/19930089982.pdf).
+3. W. J. Whitney, D. E. Monroe and R. Y. Wong, **Investigation of Transonic Turbine Designed for Zero Diffusion
+   of Suction-Surface Velocity**, NACA RM E54F23 (1954): pp. 4-5, design assumptions for the velocity diagram
+   shared by the scaled 7-inch turbine in NACA RM E57J29.
+   [Original report](https://ntrs.nasa.gov/api/citations/19930090527/downloads/19930090527.pdf).
+4. H. E. Rohlik, **Investigation of Eight-Stage Bleed-Type Turbine for Hydrogen-Propelled Nuclear Rocket
+   Applications. I - Design of Turbine and Experimental Performance of First Two Stages**, NASA TM X-475
+   (1961): pp. 6-12, Tables I-III and Figures 5-6.
+   [Original report](https://ntrs.nasa.gov/api/citations/19660030323/downloads/19660030323.pdf).
+5. H. A. Klassen, **Cold-Air Investigation of Effects of Partial Admission on Performance of 3.75-Inch
+   Mean-Diameter Single-Stage Axial-Flow Turbine**, NASA TN D-4700 (1968): pp. 2-8, Table I and Figures 1 and 5.
+   [Original report](https://ntrs.nasa.gov/api/citations/19680020769/downloads/19680020769.pdf).
+6. T. P. Moffitt and F. W. Klag Jr., **Experimental Investigation of the Partial-Admission Performance
+   Characteristics of a Single-Stage Mach 2 Supersonic Turbine**, NASA TM X-80 (1959): pp. 4-6 and Figures 1
+   and 6; blade coordinates are supplied by NACA RM E58F20a.
+   [Original report](https://ntrs.nasa.gov/api/citations/19670022828/downloads/19670022828.pdf).
+
+### How the comparisons were calculated
+
+The reports give turbine dimensions, rotational speeds and experimental pressure ratios. The sizing function
+`Turbine1D.size_turbine` instead requires shaft power, mass flow and dimensionless flow and reaction inputs.
+[`docs/validate_turbine1d.py`](docs/validate_turbine1d.py) calculates the missing sizing inputs from the reported operating conditions
+and the assumptions listed before each comparison.
+
+Total (stagnation) pressure includes the effect of bringing the flow to rest isentropically; static pressure is
+the local pressure in the moving gas. Both efficiencies divide actual specific shaft work by an ideal isentropic
+enthalpy drop starting from the inlet total state. Total-to-total efficiency uses outlet total pressure to define
+that ideal drop; total-to-static efficiency uses outlet static pressure. Moffitt, Klassen and Moffitt-Klag are
+compared on a total-to-static basis; Whitney and Rohlik on a total-to-total basis.
+
+The following terms describe those inputs:
+
+- **Flow coefficient** is outlet axial gas velocity divided by blade speed. The ratios are derived from each
+  report's design velocity diagram. When two velocities are divided by the same reference velocity in a diagram,
+  dividing those two ratios gives the required coefficient. For example, Whitney gives 0.724/0.550 = 1.31636.
+- **Critical velocity**, used in several report diagrams, is the sonic reference velocity calculated from the
+  local total temperature. A velocity divided by critical velocity is different from a Mach number, which uses
+  the speed of sound at the local static temperature.
+- **Isentropic reaction** is the rotor static-enthalpy drop divided by the stage total-to-total enthalpy drop
+  in a fully isentropic reference calculation. `docs/validate_turbine1d.py` derives this ratio from the reports' design pressures
+  and velocities using their heat-capacity ratio of 1.4. **Real reaction** uses the actual rotor static-enthalpy
+  drop and actual stage work, including losses. Klassen specifies zero real reaction; `docs/validate_turbine1d.py` holds that
+  value at zero and solves for the corresponding isentropic reaction.
+- **Admission** is the fraction of the stator circumference that supplies flow to the rotor. At 50% admission,
+  half of the stator circumference is active. The remaining circumference contains inactive passages.
+- **Blade-jet speed ratio** is blade speed divided by the jet velocity that an ideal isentropic expansion through
+  the specified pressure ratio would produce. **Equivalent speed** is speed corrected to the report's reference
+  inlet conditions so tests at different temperatures or with different gases can be compared. Each case states
+  how the actual blade speed or rpm used in the model is obtained.
+
+For each turbine and admission value, `docs/validate_turbine1d.py` performs these calculations:
+
+1. Fix inlet pressure, inlet temperature, rotational speed, annulus dimensions, blade geometry, clearances and
+   the selected pressure ratio at the values stated in the case's input table.
+2. Fix the design flow coefficient and isentropic reaction derived from the report. For Klassen, fix the design
+   flow coefficient and zero real reaction instead. Using these design values at the experimental operating point
+   is an assumption; `docs/validate_turbine1d.py` does not derive new values from measured flow conditions at each admission.
+3. Solve for specific shaft work and the three entropy rises until the flow and calculated losses agree and
+   the selected pressure ratio is reached. Calculate mass flow from outlet density, axial velocity and annulus area;
+   calculate shaft power as mass flow times specific work.
+4. Pass the resulting inputs to `Turbine1D.size_turbine` and calculate efficiency from its converged results.
+   Compare that efficiency with the measured value.
+
+Pressure ratio and annulus dimensions are therefore specified test conditions, while shaft work and efficiency
+are calculated results. In the admission graphs, outlet axial gas velocity divided by blade speed is held at its
+design value. Because rotational speed and diameter are also fixed within each admission series, this assumes
+the same outlet axial velocity at every admission. Moffitt-Klag also keeps the design isentropic reaction fixed;
+Klassen requires zero real reaction at every admission.
+
+The **Moffitt input data**, **Whitney input data**, **Rohlik input data**, **Klassen input data**, and
+**Moffitt-Klag input data** tables below use the units printed in the original reports. In those tables,
+psia means pounds per square inch absolute, in Hg means inches of mercury absolute, F means degrees Fahrenheit,
+and R means degrees Rankine. [`docs/validate_turbine1d.py`](docs/validate_turbine1d.py) converts the listed values
+to SI units before passing them to `Turbine1D`. Blade speed and flow coefficients taken at the annulus mean diameter are
+converted to the model's Euler diameter, defined as diameter that separates annulus into equal areas. This conversion preserves
+rotational speed and dimensional velocities. Isentropic reaction is unchanged by the radius conversion.
+
+### Loss-model options used for the comparisons
+
+The `extrapolation_method` argument of `TraupelLossModel` determines how the empirical loss coefficients are
+calculated when Mach number, Reynolds number, flow angle or a geometry ratio lies outside the stored data range:
+
+- **`extrapolation_method="linear"`** extends the trend at the edge of the coefficient table beyond its stored range.
+- **`extrapolation_method="closest"`** limits each out-of-range input to the nearest table boundary and interpolates
+  there. For example, a Mach number above the table's maximum uses the coefficient at the maximum supported Mach number.
+
+Both methods interpolate inside the stored ranges. The Moffitt, Whitney and Rohlik efficiency tables and the
+Klassen and Moffitt-Klag admission graphs compare these two ways of handling out-of-range inputs.
+For a given turbine, admission and clearance variant, changing this argument leaves the stated
+inlet conditions, speed, geometry, clearances, surface roughness, flow coefficient and reaction constraint fixed.
+Shaft work, mass flow, entropy generation and efficiency are recalculated for each method.
+
+The separate `rotor` argument chooses an empirical family of rotor-loss correlations. It controls the Mach-number
+correction and, for impulse rotors, the endwall and partial-admission constants. The selected families are:
+
+| Turbine | `TraupelLossModel` rotor argument | Physical reason for the choice |
+|---|---|---|
+| Moffitt and Moffitt-Klag | `rotor="impulse_high_M"` | Supersonic impulse blading. This correlation represents a sharp leading edge; applying it to the reports' finite leading edges is an approximation. |
+| Whitney and Rohlik | `rotor="regular"` | Reaction blading with accelerating relative flow. `regular` is the name of that empirical curve family. |
+| Klassen | `rotor="impulse_low_M"` | Impulse blading with rounded leading edges. |
+
+These choices are based on the reported blade designs and are kept fixed when comparing `linear` with `closest`.
+They are not selected according to which predicted efficiency is nearer the measurement. Every case uses
+`stator="regular"`, the empirical family for accelerating stator flow. The incidence-loss option is `"medium"`,
+which averages Traupel's higher and lower incidence-loss curves; the sizing calculation assumes zero incidence
+(no deviation from the design inlet flow direction).
+
+### Assumptions and numerical checks
+
+The following modelling choices apply to every comparison unless a case's input table states a different value.
+
+| Modelling choice | Value used and its meaning |
+|---|---|
+| Gas composition | Air is represented by nitrogen/oxygen mass fractions 0.767/0.233. Rohlik uses pure nitrogen. The composition stays fixed through the turbine. |
+| Heat capacities | Constant-pressure heat capacity is averaged between 150 K and inlet temperature. For inlet temperatures below 301 K, the averaging range is 150 K to 301 K instead. Constant-volume heat capacity is then constant-pressure heat capacity minus the gas constant. |
+| Gas viscosity | `IdealGas` uses NASA CEA species viscosity fits and Wilke's mixture rule. For the nitrogen/oxygen mixtures used here, viscosity is evaluated at 300 K whenever the calculated gas temperature is lower than 300 K. |
+| Annulus area | Stator inlet, stator exit and rotor exit use one ring-shaped flow area between hub and tip. The chosen mean diameter and radial passage height are listed for each turbine. Real changes in passage height between rows are approximated by that single height. |
+| Blade chord and rotor width | Aerodynamic losses use the reported blade chord. Axial rotor width is approximated by chord times the cosine of stagger angle, where stagger is the angle between the chord and machine axis. |
+| Trailing-edge thickness | Each reported edge radius is doubled to obtain its normal diameter. That diameter is divided by the cosine of the calculated outlet flow angle to obtain the circumferential thickness required by the loss model. The stator uses its absolute outlet angle; the rotor uses the relative outlet angle from the aerodynamic passage calculation. Using flow direction to represent metal-edge orientation is an assumption. |
+| Surface roughness | `Ra_roughness=0`: the blade surfaces are treated as smooth. |
+| Rotor tip and row gaps | Each case states its radial rotor-tip gap. Axial separation between stator and rotor is 0.35 rotor pitch unless a reported dimension is available. Rotor pitch is circumference divided by rotor blade count. |
+| Rotor shroud and partial-admission enclosure | Rotors are unshrouded: no band connects the blade tips. Partial-admission losses use `partial_admission_rotor="free"`, the formula for a rotor not enclosed on all sides. Each partially admitted stator has one active circumferential sector. |
+| Included losses | Aerodynamic blade-row losses, disk friction, rotor-tip clearance and partial admission are included. The Rohlik sensitivity calculation disables only rotor-tip clearance loss. Shaft-bearing losses are not calculated by `Turbine1D`. |
+
+There are 26 numerical cases: two extrapolation methods for Moffitt, two for Whitney, four combinations of
+extrapolation and clearance loss for Rohlik, eight admission/method combinations for Klassen, and ten for
+Moffitt-Klag. Each solution matches its specified pressure ratio and annulus dimensions and satisfies the entropy
+balance checks in `docs/validate_turbine1d.py`. Passing those checks establishes numerical consistency; agreement with measurements
+is shown separately in the efficiency tables and graphs.
+
+The entropy solver needs starting guesses for stator, rotor aerodynamic and additional rotor entropy generation.
+`docs/validate_turbine1d.py` supplies the guesses from its calculation of the test conditions, then verifies the result by calling
+`size_turbine`. Automatic starting guesses also converge in 14 cases. They fail in the 12 Moffitt and Moffitt-Klag
+cases, for which the supplied initial guesses are needed to reproduce the plotted and tabulated solutions.
+
+[`docs/validate_turbine1d.py`](docs/validate_turbine1d.py) reruns all cases and regenerates the two graphs.
+[`turbine1d_literature.json`](docs/validation/turbine1d_literature.json) records exact model inputs, starting guesses,
+gas properties, loss breakdowns and file hashes identifying the model version used.
+[`turbine1d_literature.csv`](docs/validation/turbine1d_literature.csv) contains the efficiency comparison as a table.
+The README's numerical tables are written separately and must be updated from those results after rerunning a
+changed model. The PNG files are the images displayed in this README.
+
+### Moffitt: full-admission supersonic turbine
+
+The selected point is design speed near the design inlet-total-to-outlet-static pressure ratio in NACA RM E58F20a.
+The comparison uses total-to-static efficiency.
+
+**Moffitt input data**
+
+| Input | Taken from the original report or derived from it | Assumption used for the comparison |
+|---|---|---|
+| Inlet conditions and speed | Air; 75 psia; 340 F; mean blade speed 424.8 ft/s (Figure 1) | Nominal inlet pressure and temperature are used as total conditions |
+| Pressure ratio | Approximately 30 at the reported maximum work point | Exactly 30 is imposed |
+| Annulus | Mean diameter 10.3 in; inlet/outlet hub-tip ratios 0.90/0.87 | The outlet passage height, 0.7160 in, is used for both rows |
+| Blading | 32 stator and 48 rotor blades; Tables I-II give the coordinates | Stator straight chord is approximated as 1.3293 in from the leading-face midpoint and trailing-edge centre; rotor chord is 1.595 in |
+| Width and trailing edges | Rotor stagger 9.6 degrees; stator and rotor trailing-edge radii both 0.005 in | Axial rotor width = 1.595 in times cos(9.6 degrees). Each 0.010-in edge diameter is divided by the cosine of its calculated outlet flow angle to obtain circumferential thickness. |
+| Flow coefficient | Exit angles 21.7 and 27.6 degrees from the circumferential direction (Figure 1) give outlet axial velocity / mean blade speed = 1.66648 | Hold the mean-diameter flow coefficient at 1.66648 while calculating work at the measured pressure ratio. |
+| Isentropic reaction | The design assumes 14% stator total-pressure loss. Stator-exit Mach 2.43, stage-exit Mach 1.69 and design outlet-static/inlet-total pressure ratio 0.0333 give isentropic reaction 0.15007 using heat-capacity ratio 1.4. | Hold isentropic reaction at 0.15007 for both loss extrapolation methods. |
+| Gaps and rotor loss correlation | The rotor has a recessed casing clearance and supersonic impulse blading | Assume radial clearance 0.010 in and axial gap 0.35 rotor pitch. Use `rotor="impulse_high_M"`, the sharp-leading-edge impulse correlation, as an approximation to the reported finite leading edge. |
+
+The recessed casing and changing passage height are represented approximately. The published 41.4% efficiency
+includes those physical features. Error is calculated efficiency minus measured efficiency, in percentage points (pp).
+
+| Extrapolation | Measured efficiency | Turbine1D efficiency | Error |
+|---|---:|---:|---:|
+| `linear` | 41.40% | 36.39% | -5.01 pp |
+| `closest` | 41.40% | 41.43% | +0.03 pp |
+
+### Whitney: 7-inch transonic turbine
+
+Whitney and Wintucky's NACA RM E57J29 places the measured peak total-to-total efficiency of 85% at design speed
+over total-pressure ratios including 2.0 and 2.1. The comparison uses the midpoint of that interval.
+
+**Whitney input data**
+
+| Input | Taken from the original reports or derived from them | Assumption used for the comparison |
+|---|---|---|
+| Inlet conditions | Dry air; 32 in Hg absolute; 600 R | Inlet pressure and temperature are treated as total conditions |
+| Pressure ratio and speed | The measured peak occurs over total-pressure ratios 2.0-2.1. The design diagram gives mean blade speed / inlet critical velocity = 0.498 (NACA RM E57J29, Figure 2). | Use total-to-total pressure ratio 2.05. Calculate actual speed from 0.498, inlet temperature and the nitrogen/oxygen gas properties: approximately 21,151 rpm. |
+| Annulus and blade counts | Tip diameter 6.970 in; hub/tip = 0.70; 32 stator and 37 rotor blades | Constant mean diameter 5.9245 in and common span 1.0455 in |
+| Chords, widths and edges | Stator chord 1.034 in; rotor chord 1.443 in; rotor stagger 7.9 degrees. Stator trailing-edge radius 0.008 in and rotor trailing-edge radius 0.010 in (Tables I-II). | Axial rotor width = 1.443 in times cos(7.9 degrees). Convert the 0.016-in stator and 0.020-in rotor edge diameters to circumferential thickness using their calculated outlet angles. |
+| Flow coefficient | Mean-section exit axial velocity / critical velocity = 0.724 and blade speed / the same critical velocity = 0.550 (Figure 2). Their quotient is 1.31636. | Hold the mean-diameter flow coefficient at 1.31636 while calculating the peak-condition comparison. |
+| Isentropic reaction | NACA RM E57J29 uses the velocity diagram of the larger turbine in NACA RM E54F23. That diagram assumes 3% stator total-pressure loss and 88% design total-to-total efficiency; its pressure and velocity data give isentropic reaction 0.29144. | Hold isentropic reaction at 0.29144. The 88% design assumption is used only to derive this input; the measured 85% comparison target is never used to solve the model. |
+| Clearance, gap and rotor loss correlation | Radial tip clearance 0.015 in; accelerating reaction rotor | Use the reported radial clearance, assume axial gap 0.35 rotor pitch, and select `rotor="regular"`, the accelerating-cascade correlation. |
+
+| Extrapolation | Measured peak efficiency | Turbine1D efficiency | Error |
+|---|---:|---:|---:|
+| `linear` | 85.00% | 80.99% | -4.01 pp |
+| `closest` | 85.00% | 81.22% | -3.78 pp |
+
+### Rohlik: first stage and clearance-loss sensitivity
+
+This comparison uses the **first stage operating alone**, whose measured total-to-total efficiency is about 67%
+at blade-jet speed ratio 0.284 (Rohlik's NASA TM X-475, Figure 5). The first-stage value of 68% within the two-stage
+assembly describes a different operating condition. The report also converts design quantities to equivalent air-test
+conditions. The pressure and velocity values from that conversion are used to derive the design isentropic
+reaction; the gas used in the actual model calculation is nitrogen.
+
+**Rohlik input data**
+
+| Input | Taken from the original report or derived from it | Assumption used for the comparison |
+|---|---|---|
+| Inlet conditions and speed | Nitrogen; nominal 100 psia; 52 F reference temperature; 6830 rpm at design equivalent speed | Nominal inlet values are used as total conditions |
+| Pressure ratio | Design blade-jet ratio 0.284; first-stage total-to-static pressure ratio converted to equivalent air conditions, 1.326 | Calculate the nitrogen pressure ratio from blade-jet ratio 0.284, speed 6830 rpm, mean diameter 6.81 in, inlet temperature and nitrogen gas properties. The resulting inlet-total/outlet-static pressure ratio is 1.34050. |
+| Annulus and blades | Mean diameter 6.81 in; passage height 0.268 in; 93 stator and 128 rotor blades (Tables I-II) | Use 0.268-in passage height for the stator and rotor flow areas, including the region occupied by the physical tip gap. |
+| Chords, widths and edges | Stator chord 0.333 in; rotor chord 0.307 in; rotor stagger 3 degrees 31 minutes; trailing-edge radii 0.004 in (Tables II-III) | Axial rotor width = 0.307 in times the cosine of 3 degrees 31 minutes. Convert each 0.008-in edge diameter to circumferential thickness using its calculated outlet angle. |
+| Flow coefficient | First-stage exit axial velocity / critical velocity = 0.152 and blade speed / the same critical velocity = 0.199 (Table I). Their quotient is 0.76382. | Hold the mean-diameter flow coefficient at 0.76382 in both clearance calculations. |
+| Isentropic reaction | The design assumes 4% stator total-pressure loss. Stator-exit velocity / critical velocity = 0.541, stage-exit velocity / critical velocity = 0.255, and air-equivalent pressure ratio 1.326 give isentropic reaction 0.26200 using heat-capacity ratio 1.4. | Hold isentropic reaction at 0.26200 with clearance loss enabled and disabled. |
+| Gaps and rotor loss correlation | Radial tip clearance 0.019 in; axial row gap 0.050 in; reaction rotor | Use both reported gaps and `rotor="regular"`, the accelerating-cascade correlation. For the sensitivity calculation, keep the physical gaps and set only the calculated tip-clearance loss to zero. |
+
+The clearance-off calculation retains the reported physical geometry, inlet conditions, speed, pressure-ratio
+target, flow coefficient and isentropic reaction. Work and mass flow are recalculated to satisfy those same
+conditions. Aerodynamic and disk-friction losses remain active.
+
+| Clearance loss | Extrapolation | Measured efficiency with physical clearance | Turbine1D efficiency | Error |
+|---|---|---:|---:|---:|
+| Included | `linear` | 67.00% | 46.14% | -20.86 pp |
+| Included | `closest` | 67.00% | 49.23% | -17.77 pp |
+| Disabled, diagnostic | `linear` | 67.00% | 76.57% | +9.57 pp |
+| Disabled, diagnostic | `closest` | 67.00% | 76.24% | +9.24 pp |
+
+The reported clearance is **7.09% of passage height**. Its calculated loss coefficient, clearance work loss divided
+by the ideal static-to-static enthalpy drop, is 0.21051 with `linear` and 0.17895 with `closest`. At full admission,
+the additional rotor work losses are tip-clearance loss and disk friction. Clearance contributes approximately
+99.6% of that additional loss total with `linear` and 99.5% with `closest`; aerodynamic blade-row losses are accounted for
+separately. Disabling clearance loss raises calculated efficiency by **30.43 pp** and **27.01 pp**, respectively. 
+The tip-clearance formula therefore produces most of the efficiency shortfall in these calculations. The rows
+labelled "Disabled, diagnostic" describe a hypothetical removal of that loss; the 67% measurement comes from a
+turbine with the physical 0.019-in gap. Rohlik's report identifies the unusually large gap as a real efficiency
+penalty. Its large value may thus explain why clearance loss model fails to predict efficiency penalty accurately for
+this validation case. 
+
+### Klassen: partial-admission comparison
+
+Klassen's NASA TN D-4700 compares four admissions at blade-jet speed ratio 0.377 and approximately the same
+total-to-static pressure ratio of 3.0. The graph uses total-to-static efficiency.
+
+**Klassen input data**
+
+| Input | Taken from the original report or derived from it | Assumption used for the comparison |
+|---|---|---|
+| Test conditions | Air; 25 psia; 540 R (300 K); pressure ratio 3.0; blade-jet speed ratio 0.377 | Nominal inlet values are total conditions; the report's approximately equivalent static/static and total/static pressure ratios are treated as equal |
+| Speed | Blade-jet speed ratio 0.377 | Calculate ideal jet velocity from pressure ratio 3.0, inlet temperature and nitrogen/oxygen gas properties; multiply by 0.377 to obtain mean blade speed 152.28 m/s, approximately 30,534 rpm. |
+| Annulus | Mean diameter 3.75 in; stator blade height 0.217 in; rotor blade height 0.226 in | Use passage height 0.217 in for both rows. |
+| Admission and blades | Admissions 100%, 50.98%, 31.37%, 11.76%; 95 rotor blades; 16 active stator blades at 31.37% | Active stator counts 51, 26, 16 and 6 follow the reported admissions and pitch |
+| Chords, widths and edges | Stator chord 0.453 in; rotor chord 0.312 in; rotor stagger 7.1 degrees. Stator trailing-edge radius 0.0024 in and rotor trailing-edge radius 0.0025 in (Table I). | Axial rotor width = 0.312 in times cos(7.1 degrees). Convert the 0.0048-in stator and 0.0050-in rotor edge diameters to circumferential thickness using their calculated outlet angles. |
+| Flow and reaction | Exit axial velocity / critical velocity = 0.372 and blade speed / the same critical velocity = 0.531 give flow coefficient 0.70056. Design real reaction is zero (Figure 1 and p. 2). | Hold the mean-diameter flow coefficient at 0.70056 and real reaction at zero for all four admissions. Solve for isentropic reaction separately in each calculation. |
+| Gaps and rotor loss correlation | Zero-reaction rotor with rounded leading edge | Assume radial clearance 0.10 mm and axial gap 0.35 rotor pitch. Use `rotor="impulse_low_M"`, the rounded-leading-edge impulse correlation. |
+
+The 68% and 56% endpoints are stated in the report text. The approximately 64% and 62.5% intermediate values
+are visual readings of Figure 5 at speed ratio 0.377; their error bars show about +/-1 pp reading precision.
+They are not experimental uncertainty bounds. Model lines connect the four computed admissions.
+
+![Klassen original-report efficiencies and current Turbine1D predictions for linear and closest extrapolation](docs/figures/validation_klassen.png)
+
+At 31-100% admission the efficiency differences are approximately 0.1-1.8 pp. At 11.76% admission the code gives
+48.78% (`linear`) and 50.44% (`closest`), compared with 56%. The calculated decrease toward low admission is
+stronger than the measured decrease when radial clearance is assumed to be 0.10 mm and the design flow coefficient
+and zero real reaction are held fixed across admissions.
+
+### Moffitt and Klag: partial-admission comparison
+
+Moffitt and Klag's NASA TM X-80 tests the supersonic turbine described in NACA RM E58F20a over five admissions.
+The selected comparison is at design equivalent speed and outlet-static/inlet-total pressure ratio 0.033.
+The graph uses total-to-static efficiency.
+
+**Moffitt-Klag input data**
+
+| Input | Taken from the original reports or derived from them | Assumption used for the comparison |
+|---|---|---|
+| Test conditions | Air; 75 psia; 200 F; outlet-static/inlet-total pressure ratio 0.033 | Nominal inlet values are total conditions; inverse pressure ratio is 30.30303 |
+| Speed | Equivalent mean blade speed 342 ft/s | Actual mean blade speed = 342 ft/s times the square root of inlet temperature in K divided by 288.15 K: 117.56 m/s, approximately 8582 rpm. |
+| Geometry | NASA TM X-80 uses the 10.3-in mean-diameter turbine from NACA RM E58F20a. Inlet hub-tip ratio is 0.90 and outlet hub-tip ratio is 0.87. | Use the outlet passage height, 0.7160 in, for both rows. Use stator chord 1.3293 in and rotor chord 1.595 in, derived from NACA RM E58F20a's blade coordinates. |
+| Admission and blades | 100%, 75%, 50%, 25%, 12.5%; active stator counts 32, 24, 16, 8, 4; 48 rotor blades | Treat the active nozzles as one continuous circumferential sector. |
+| Flow and reaction | The design velocity diagram in NASA TM X-80 gives mean-diameter flow coefficient 1.66648. The design pressures and Mach numbers in NACA RM E58F20a give isentropic reaction 0.15007. | Hold flow coefficient at 1.66648 and isentropic reaction at 0.15007 for all five admissions. |
+| Width, gaps and rotor loss correlation | Rotor stagger 9.6 degrees; trailing-edge radii 0.005 in; recessed casing clearance | Axial rotor width = 1.595 in times cos(9.6 degrees). Convert the 0.010-in edge diameters using calculated outlet angles. Assume radial clearance 0.010 in and axial gap 0.35 rotor pitch; select `rotor="impulse_high_M"`, the sharp-leading-edge impulse correlation. |
+
+The report describes approximately constant efficiency near 42.5% over the admission range, within its measurement
+accuracy. The dashed reference line represents that published mean trend; it does not represent five separate
+exact measurements. Model lines connect the five computed admissions.
+
+![Moffitt-Klag reported partial-admission efficiency trend and current Turbine1D predictions for linear and closest extrapolation](docs/figures/validation_moffitt_klag.png)
+
+The code predicts a decrease from 36.43% to 28.17% with `linear`, and from 41.40% to 35.10% with `closest`.
+Both extrapolation methods predict a greater efficiency decrease as admission falls than the report's approximately
+flat trend. The model uses one passage height of 0.7160 in, holds the design flow coefficient at 1.66648, and
+represents the recessed casing by an assumed uniform radial gap of 0.010 in. The comparison therefore depends on
+those approximations to the tested flow passage and operating flow.
